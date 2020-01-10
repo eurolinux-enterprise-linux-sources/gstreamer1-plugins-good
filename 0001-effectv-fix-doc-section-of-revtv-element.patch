@@ -1,0 +1,25 @@
+From c3accce1b80e9d330bdbecb47660eaf583acd426 Mon Sep 17 00:00:00 2001
+From: Wim Taymans <wtaymans@redhat.com>
+Date: Thu, 6 Feb 2014 12:21:07 +0100
+Subject: [PATCH] effectv: fix doc section of revtv element
+
+---
+ gst/effectv/gstrev.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/gst/effectv/gstrev.c b/gst/effectv/gstrev.c
+index 23a8866..a003a56 100644
+--- a/gst/effectv/gstrev.c
++++ b/gst/effectv/gstrev.c
+@@ -41,7 +41,7 @@
+  */
+ 
+ /**
+- * SECTION:element-quarktv
++ * SECTION:element-revtv
+  *
+  * RevTV acts like a video waveform monitor for each line of video
+  * processed. This creates a pseudo 3D effect based on the brightness
+-- 
+1.8.5.3
+

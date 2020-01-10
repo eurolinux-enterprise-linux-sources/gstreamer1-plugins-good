@@ -9,13 +9,14 @@
 
 Name:           gstreamer1-plugins-good
 Version:        1.0.7
-Release:        2%{?dist}
+Release:        5%{?dist}
 Summary:        GStreamer plugins with good code and licensing
 
 License:        LGPLv2+
 URL:            http://gstreamer.freedesktop.org/
 Source0:        http://gstreamer.freedesktop.org/src/gst-plugins-good/gst-plugins-good-%{version}.tar.xz
 Patch3:         0001-v4l2src-Check-for-obj-pool-NULL.patch
+Patch4:         0001-effectv-fix-doc-section-of-revtv-element.patch
 
 BuildRequires:  gstreamer1-devel >= %{version}
 BuildRequires:  gstreamer1-plugins-base-devel >= %{version}
@@ -86,6 +87,7 @@ to be installed.
 %prep
 %setup -q -n gst-plugins-good-%{version}
 %patch3 -p1
+%patch4 -p1
 
 
 %build
@@ -97,6 +99,7 @@ to be installed.
   --enable-orc \
   --disable-monoscope \
   --disable-aalib \
+  --disable-cairo \
   --disable-libcaca \
 %if %{with extras}
   --enable-jack \
@@ -203,6 +206,16 @@ find $RPM_BUILD_ROOT -name '*.la' -exec rm -f {} ';'
 
 
 %changelog
+* Thu Feb  6 2014 Wim Taymans <wtaymans@redhat.com> - 1.0.7-5
+- Fix wrong reference in docs (#884492)
+- Disable the cairo plugin, we don't package it (#1048513)
+
+* Fri Jan 24 2014 Daniel Mach <dmach@redhat.com> - 1.0.7-4
+- Mass rebuild 2014-01-24
+
+* Fri Dec 27 2013 Daniel Mach <dmach@redhat.com> - 1.0.7-3
+- Mass rebuild 2013-12-27
+
 * Mon Nov  4 2013 Matthias Clasen <mclasen@redhat.com> - 1.0.7-2
 - Rebuild with new gtk-doc to fix multilib conflict
 - Related: #884492
