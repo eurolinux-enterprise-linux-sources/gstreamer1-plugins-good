@@ -16,8 +16,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
@@ -59,8 +59,8 @@
 # endif /* HAVE_OSS_INCLUDE_IN_ROOT */
 #endif /* HAVE_OSS_INCLUDE_IN_SYS */
 
-#include "gstosssrc.h"
 #include "common.h"
+#include "gstosssrc.h"
 
 #include <gst/gst-i18n-plugin.h>
 
@@ -167,8 +167,8 @@ gst_oss_src_class_init (GstOssSrcClass * klass)
       "Capture from a sound card via OSS",
       "Erik Walthinsen <omega@cse.ogi.edu>, " "Wim Taymans <wim@fluendo.com>");
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&osssrc_src_factory));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &osssrc_src_factory);
 }
 
 static void
@@ -181,8 +181,7 @@ gst_oss_src_set_property (GObject * object, guint prop_id,
 
   switch (prop_id) {
     case PROP_DEVICE:
-      if (src->device)
-        g_free (src->device);
+      g_free (src->device);
       src->device = g_value_dup_string (value);
       break;
     default:

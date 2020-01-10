@@ -19,14 +19,14 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #include <gst/check/gstcheck.h>
 #include "parser.h"
 
-#define SRC_CAPS_CDATA "audio/mpeg, framed=(boolean)false, codec_data=(buffer)1190"
+#define SRC_CAPS_CDATA "audio/mpeg, mpegversion=(int)4, framed=(boolean)false, codec_data=(buffer)1190"
 #define SRC_CAPS_TMPL  "audio/mpeg, framed=(boolean)false, mpegversion=(int){2,4}"
 
 #define SINK_CAPS \
@@ -144,7 +144,9 @@ GST_END_TEST;
 GST_START_TEST (test_parse_adts_detect_mpeg_version)
 {
   gst_parser_test_output_caps (adts_frame_mpeg2, sizeof (adts_frame_mpeg2),
-      NULL, SINK_CAPS_MPEG2 ", stream-format=(string)adts");
+      NULL,
+      SINK_CAPS_MPEG2
+      ", stream-format=(string)adts, level=(string)2, profile=(string)lc");
 }
 
 GST_END_TEST;
@@ -185,12 +187,67 @@ GST_START_TEST (test_parse_handle_codec_data)
 
 GST_END_TEST;
 
+GST_START_TEST (test_parse_proxy_constraints)
+{
+  GstCaps *caps, *resultcaps;
+  GstElement *parse, *filter;
+  GstPad *sinkpad;
+  GstStructure *s;
+
+  parse = gst_element_factory_make ("aacparse", NULL);
+  filter = gst_element_factory_make ("capsfilter", NULL);
+
+  /* constraint on rate and version */
+  caps = gst_caps_from_string ("audio/mpeg,mpegversion=2,rate=44100");
+  g_object_set (filter, "caps", caps, NULL);
+  gst_caps_unref (caps);
+
+  gst_element_link (parse, filter);
+
+  sinkpad = gst_element_get_static_pad (parse, "sink");
+  caps = gst_pad_query_caps (sinkpad, NULL);
+  GST_LOG ("caps %" GST_PTR_FORMAT, caps);
+
+  fail_unless (gst_caps_get_size (caps) == 1);
+
+  /* getcaps should proxy the rate constraint */
+  s = gst_caps_get_structure (caps, 0);
+  fail_unless (gst_structure_has_name (s, "audio/mpeg"));
+  fail_unless_structure_field_int_equals (s, "rate", 44100);
+  gst_caps_unref (caps);
+
+  /* should accept without the constraint */
+  caps = gst_caps_from_string ("audio/mpeg,mpegversion=2");
+  resultcaps = gst_pad_query_caps (sinkpad, caps);
+  fail_if (gst_caps_is_empty (resultcaps));
+  gst_caps_unref (resultcaps);
+  gst_caps_unref (caps);
+
+  /* should not accept with conflicting version */
+  caps = gst_caps_from_string ("audio/mpeg,mpegversion=4");
+  resultcaps = gst_pad_query_caps (sinkpad, caps);
+  fail_unless (gst_caps_is_empty (resultcaps));
+  gst_caps_unref (resultcaps);
+  gst_caps_unref (caps);
+
+  gst_object_unref (sinkpad);
+
+  gst_object_unref (filter);
+  gst_object_unref (parse);
+}
+
+GST_END_TEST;
 
 static Suite *
 aacparse_suite (void)
 {
   Suite *s = suite_create ("aacparse");
   TCase *tc_chain = tcase_create ("general");
+
+  /* init test context */
+  ctx_factory = "aacparse";
+  ctx_sink_template = &sinktemplate;
+  ctx_src_template = &srctemplate;
 
   suite_add_tcase (s, tc_chain);
   /* ADIF tests */
@@ -207,6 +264,9 @@ aacparse_suite (void)
   /* Other tests */
   tcase_add_test (tc_chain, test_parse_handle_codec_data);
 
+  /* caps tests */
+  tcase_add_test (tc_chain, test_parse_proxy_constraints);
+
   return s;
 }
 
@@ -216,25 +276,4 @@ aacparse_suite (void)
  *   - Both push- and pull-modes need to be tested
  *      * Pull-mode & EOS
  */
-
-int
-main (int argc, char **argv)
-{
-  int nf;
-
-  Suite *s = aacparse_suite ();
-  SRunner *sr = srunner_create (s);
-
-  gst_check_init (&argc, &argv);
-
-  /* init test context */
-  ctx_factory = "aacparse";
-  ctx_sink_template = &sinktemplate;
-  ctx_src_template = &srctemplate;
-
-  srunner_run_all (sr, CK_NORMAL);
-  nf = srunner_ntests_failed (sr);
-  srunner_free (sr);
-
-  return nf;
-}
+GST_CHECK_MAIN (aacparse);

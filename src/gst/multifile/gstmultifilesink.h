@@ -18,15 +18,15 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifndef __GST_MULTIFILESINK_H__
 #define __GST_MULTIFILESINK_H__
 
 #include <gst/gst.h>
-#include <gst/base/gstbasesink.h>
+#include <gst/base/base.h>
 #include <errno.h>
 #include <stdio.h>
 #include <string.h>
@@ -59,9 +59,11 @@ typedef struct _GstMultiFileSinkClass GstMultiFileSinkClass;
  * @GST_MULTI_FILE_SINK_NEXT_KEY_FRAME: New file at each key frame
  *  (Useful for MPEG-TS segmenting)
  * @GST_MULTI_FILE_SINK_NEXT_KEY_UNIT_EVENT: New file after a force key unit
- *  event (Since: 0.10.31)
+ *  event
  * @GST_MULTI_FILE_SINK_NEXT_MAX_SIZE: New file when the configured maximum file
- *  size would be exceeded with the next buffer or buffer list (Since: 0.10.31)
+ *  size would be exceeded with the next buffer or buffer list
+ * @GST_MULTI_FILE_SINK_NEXT_MAX_DURATION: New file when the configured maximum duration
+ *  would be exceeded with the next buffer or buffer list
  *
  * File splitting modes.
  */
@@ -70,7 +72,8 @@ typedef enum {
   GST_MULTI_FILE_SINK_NEXT_DISCONT,
   GST_MULTI_FILE_SINK_NEXT_KEY_FRAME,
   GST_MULTI_FILE_SINK_NEXT_KEY_UNIT_EVENT,
-  GST_MULTI_FILE_SINK_NEXT_MAX_SIZE
+  GST_MULTI_FILE_SINK_NEXT_MAX_SIZE,
+  GST_MULTI_FILE_SINK_NEXT_MAX_DURATION
 } GstMultiFileSinkNext;
 
 struct _GstMultiFileSink
@@ -94,6 +97,13 @@ struct _GstMultiFileSink
 
   guint64 cur_file_size;
   guint64 max_file_size;
+
+  GstClockTime file_pts;
+  GstClockTime max_file_duration;
+
+  gboolean aggregate_gops;
+  GstAdapter *gop_adapter;  /* to aggregate GOPs */
+  GList *potential_next_gop;	/* To detect false-positives */
 };
 
 struct _GstMultiFileSinkClass

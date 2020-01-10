@@ -16,8 +16,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 /**
  * SECTION:element-dv1394src
@@ -201,12 +201,10 @@ gst_dv1394src_class_init (GstDV1394SrcClass * klass)
           "like 0xhhhhhhhhhhhhhhhh. (0 = no guid)", 0, G_MAXUINT64,
           DEFAULT_GUID, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
   /**
-   * GstDV1394Src:device-name
+   * GstDV1394Src:device-name:
    *
    * Descriptive name of the currently opened device
-   *
-   * Since: 0.10.7
-   **/
+   */
   g_object_class_install_property (G_OBJECT_CLASS (klass), PROP_DEVICE_NAME,
       g_param_spec_string ("device-name", "device name",
           "user-friendly name of the device", "Default",
@@ -220,8 +218,7 @@ gst_dv1394src_class_init (GstDV1394SrcClass * klass)
 
   gstpushsrc_class->create = gst_dv1394src_create;
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&src_factory));
+  gst_element_class_add_static_pad_template (gstelement_class, &src_factory);
 
   gst_element_class_set_static_metadata (gstelement_class,
       "Firewire (1394) DV video source", "Source/Video",
@@ -792,8 +789,12 @@ gst_dv1394src_start (GstBaseSrc * bsrc)
   READ_SOCKET (src) = control_sock[0];
   WRITE_SOCKET (src) = control_sock[1];
 
-  fcntl (READ_SOCKET (src), F_SETFL, O_NONBLOCK);
-  fcntl (WRITE_SOCKET (src), F_SETFL, O_NONBLOCK);
+  if (fcntl (READ_SOCKET (src), F_SETFL, O_NONBLOCK) < 0)
+    GST_ERROR_OBJECT (src, "failed to make read socket non-blocking: %s",
+        g_strerror (errno));
+  if (fcntl (WRITE_SOCKET (src), F_SETFL, O_NONBLOCK) < 0)
+    GST_ERROR_OBJECT (src, "failed to make write socket non-blocking: %s",
+        g_strerror (errno));
 
   src->handle = raw1394_new_handle ();
 
@@ -982,7 +983,7 @@ gst_dv1394src_query (GstBaseSrc * basesrc, GstQuery * query)
   switch (GST_QUERY_TYPE (query)) {
     case GST_QUERY_LATENCY:
     {
-      gst_query_set_latency (query, TRUE, GST_SECOND / 25, GST_CLOCK_TIME_NONE);
+      gst_query_set_latency (query, TRUE, GST_SECOND / 25, GST_SECOND / 25);
     }
       break;
     default:

@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -24,9 +24,11 @@
 #include <string.h>
 
 #include <gst/rtp/gstrtpbuffer.h>
+#include <gst/audio/audio.h>
 
 #include "fnv1hash.h"
 #include "gstrtpvorbispay.h"
+#include "gstrtputils.h"
 
 GST_DEBUG_CATEGORY_STATIC (rtpvorbispay_debug);
 #define GST_CAT_DEFAULT (rtpvorbispay_debug)
@@ -58,6 +60,14 @@ GST_STATIC_PAD_TEMPLATE ("sink",
     GST_STATIC_CAPS ("audio/x-vorbis")
     );
 
+#define DEFAULT_CONFIG_INTERVAL 0
+
+enum
+{
+  PROP_0,
+  PROP_CONFIG_INTERVAL
+};
+
 #define gst_rtp_vorbis_pay_parent_class parent_class
 G_DEFINE_TYPE (GstRtpVorbisPay, gst_rtp_vorbis_pay, GST_TYPE_RTP_BASE_PAYLOAD);
 
@@ -70,12 +80,24 @@ static GstFlowReturn gst_rtp_vorbis_pay_handle_buffer (GstRTPBasePayload * pad,
 static gboolean gst_rtp_vorbis_pay_sink_event (GstRTPBasePayload * payload,
     GstEvent * event);
 
+static gboolean gst_rtp_vorbis_pay_parse_id (GstRTPBasePayload * basepayload,
+    guint8 * data, guint size);
+static gboolean gst_rtp_vorbis_pay_finish_headers (GstRTPBasePayload *
+    basepayload);
+
+static void gst_rtp_vorbis_pay_set_property (GObject * object, guint prop_id,
+    const GValue * value, GParamSpec * pspec);
+static void gst_rtp_vorbis_pay_get_property (GObject * object, guint prop_id,
+    GValue * value, GParamSpec * pspec);
+
 static void
 gst_rtp_vorbis_pay_class_init (GstRtpVorbisPayClass * klass)
 {
+  GObjectClass *gobject_class;
   GstElementClass *gstelement_class;
   GstRTPBasePayloadClass *gstrtpbasepayload_class;
 
+  gobject_class = (GObjectClass *) klass;
   gstelement_class = (GstElementClass *) klass;
   gstrtpbasepayload_class = (GstRTPBasePayloadClass *) klass;
 
@@ -85,24 +107,36 @@ gst_rtp_vorbis_pay_class_init (GstRtpVorbisPayClass * klass)
   gstrtpbasepayload_class->handle_buffer = gst_rtp_vorbis_pay_handle_buffer;
   gstrtpbasepayload_class->sink_event = gst_rtp_vorbis_pay_sink_event;
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_vorbis_pay_src_template));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_vorbis_pay_sink_template));
+  gobject_class->set_property = gst_rtp_vorbis_pay_set_property;
+  gobject_class->get_property = gst_rtp_vorbis_pay_get_property;
+
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_vorbis_pay_src_template);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_vorbis_pay_sink_template);
 
   gst_element_class_set_static_metadata (gstelement_class,
-      "RTP Vorbis depayloader",
+      "RTP Vorbis payloader",
       "Codec/Payloader/Network/RTP",
       "Payload-encode Vorbis audio into RTP packets (RFC 5215)",
-      "Wim Taymans <wimi.taymans@gmail.com>");
+      "Wim Taymans <wim.taymans@gmail.com>");
 
   GST_DEBUG_CATEGORY_INIT (rtpvorbispay_debug, "rtpvorbispay", 0,
       "Vorbis RTP Payloader");
+
+  g_object_class_install_property (G_OBJECT_CLASS (klass), PROP_CONFIG_INTERVAL,
+      g_param_spec_uint ("config-interval", "Config Send Interval",
+          "Send Config Insertion Interval in seconds (configuration headers "
+          "will be multiplexed in the data stream when detected.) (0 = disabled)",
+          0, 3600, DEFAULT_CONFIG_INTERVAL,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)
+      );
 }
 
 static void
 gst_rtp_vorbis_pay_init (GstRtpVorbisPay * rtpvorbispay)
 {
+  rtpvorbispay->last_config = GST_CLOCK_TIME_NONE;
 }
 
 static void
@@ -111,28 +145,106 @@ gst_rtp_vorbis_pay_clear_packet (GstRtpVorbisPay * rtpvorbispay)
   if (rtpvorbispay->packet)
     gst_buffer_unref (rtpvorbispay->packet);
   rtpvorbispay->packet = NULL;
+  g_list_free_full (rtpvorbispay->packet_buffers,
+      (GDestroyNotify) gst_buffer_unref);
+  rtpvorbispay->packet_buffers = NULL;
 }
 
 static void
 gst_rtp_vorbis_pay_cleanup (GstRtpVorbisPay * rtpvorbispay)
 {
-  g_list_foreach (rtpvorbispay->headers, (GFunc) gst_mini_object_unref, NULL);
-  g_list_free (rtpvorbispay->headers);
-  rtpvorbispay->headers = NULL;
-
   gst_rtp_vorbis_pay_clear_packet (rtpvorbispay);
+  g_list_free_full (rtpvorbispay->headers, (GDestroyNotify) gst_buffer_unref);
+  rtpvorbispay->headers = NULL;
+  g_free (rtpvorbispay->config_data);
+  rtpvorbispay->config_data = NULL;
+  rtpvorbispay->last_config = GST_CLOCK_TIME_NONE;
 }
 
 static gboolean
 gst_rtp_vorbis_pay_setcaps (GstRTPBasePayload * basepayload, GstCaps * caps)
 {
   GstRtpVorbisPay *rtpvorbispay;
+  GstStructure *s;
+  const GValue *array;
+  gint asize, i;
+  GstBuffer *buf;
+  GstMapInfo map;
 
   rtpvorbispay = GST_RTP_VORBIS_PAY (basepayload);
 
+  s = gst_caps_get_structure (caps, 0);
+
   rtpvorbispay->need_headers = TRUE;
 
+  if ((array = gst_structure_get_value (s, "streamheader")) == NULL)
+    goto done;
+
+  if (G_VALUE_TYPE (array) != GST_TYPE_ARRAY)
+    goto done;
+
+  if ((asize = gst_value_array_get_size (array)) < 3)
+    goto done;
+
+  for (i = 0; i < asize; i++) {
+    const GValue *value;
+
+    value = gst_value_array_get_value (array, i);
+    if ((buf = gst_value_get_buffer (value)) == NULL)
+      goto null_buffer;
+
+    gst_buffer_map (buf, &map, GST_MAP_READ);
+    if (map.size < 1)
+      goto invalid_streamheader;
+
+    /* no data packets allowed */
+    if ((map.data[0] & 1) == 0)
+      goto invalid_streamheader;
+
+    /* we need packets with id 1, 3, 5 */
+    if (map.data[0] != (i * 2) + 1)
+      goto invalid_streamheader;
+
+    if (i == 0) {
+      /* identification, we need to parse this in order to get the clock rate. */
+      if (G_UNLIKELY (!gst_rtp_vorbis_pay_parse_id (basepayload, map.data,
+                  map.size)))
+        goto parse_id_failed;
+    }
+    GST_DEBUG_OBJECT (rtpvorbispay, "collecting header %d", i);
+    rtpvorbispay->headers =
+        g_list_append (rtpvorbispay->headers, gst_buffer_ref (buf));
+    gst_buffer_unmap (buf, &map);
+  }
+  if (!gst_rtp_vorbis_pay_finish_headers (basepayload))
+    goto finish_failed;
+
+done:
   return TRUE;
+
+  /* ERRORS */
+null_buffer:
+  {
+    GST_WARNING_OBJECT (rtpvorbispay, "streamheader with null buffer received");
+    return FALSE;
+  }
+invalid_streamheader:
+  {
+    GST_WARNING_OBJECT (rtpvorbispay, "unable to parse initial header");
+    gst_buffer_unmap (buf, &map);
+    return FALSE;
+  }
+parse_id_failed:
+  {
+    GST_WARNING_OBJECT (rtpvorbispay, "unable to parse initial header");
+    gst_buffer_unmap (buf, &map);
+    return FALSE;
+  }
+finish_failed:
+  {
+    GST_WARNING_OBJECT (rtpvorbispay, "unable to finish headers");
+    return FALSE;
+  }
 }
 
 static void
@@ -160,15 +272,15 @@ gst_rtp_vorbis_pay_init_packet (GstRtpVorbisPay * rtpvorbispay, guint8 VDT,
 {
   GST_LOG_OBJECT (rtpvorbispay, "starting new packet, VDT: %d", VDT);
 
-  if (rtpvorbispay->packet)
-    gst_buffer_unref (rtpvorbispay->packet);
+  gst_rtp_vorbis_pay_clear_packet (rtpvorbispay);
 
   /* new packet allocate max packet size */
   rtpvorbispay->packet =
       gst_rtp_buffer_new_allocate_len (GST_RTP_BASE_PAYLOAD_MTU
       (rtpvorbispay), 0, 0);
   gst_rtp_vorbis_pay_reset_packet (rtpvorbispay, VDT);
-  GST_BUFFER_TIMESTAMP (rtpvorbispay->packet) = timestamp;
+
+  GST_BUFFER_PTS (rtpvorbispay->packet) = timestamp;
 }
 
 static GstFlowReturn
@@ -178,6 +290,7 @@ gst_rtp_vorbis_pay_flush_packet (GstRtpVorbisPay * rtpvorbispay)
   guint8 *payload;
   guint hlen;
   GstRTPBuffer rtp = { NULL };
+  GList *l;
 
   /* check for empty packet */
   if (!rtpvorbispay->packet || rtpvorbispay->payload_pos <= 4)
@@ -215,6 +328,15 @@ gst_rtp_vorbis_pay_flush_packet (GstRtpVorbisPay * rtpvorbispay)
 
   GST_BUFFER_DURATION (rtpvorbispay->packet) = rtpvorbispay->payload_duration;
 
+  for (l = g_list_last (rtpvorbispay->packet_buffers); l; l = l->prev) {
+    GstBuffer *buf = GST_BUFFER_CAST (l->data);
+    gst_rtp_copy_meta (GST_ELEMENT_CAST (rtpvorbispay), rtpvorbispay->packet,
+        buf, g_quark_from_static_string (GST_META_TAG_AUDIO_STR));
+    gst_buffer_unref (buf);
+  }
+  g_list_free (rtpvorbispay->packet_buffers);
+  rtpvorbispay->packet_buffers = NULL;
+
   /* push, this gives away our ref to the packet, so clear it. */
   ret =
       gst_rtp_base_payload_push (GST_RTP_BASE_PAYLOAD (rtpvorbispay),
@@ -229,7 +351,7 @@ gst_rtp_vorbis_pay_finish_headers (GstRTPBasePayload * basepayload)
 {
   GstRtpVorbisPay *rtpvorbispay = GST_RTP_VORBIS_PAY (basepayload);
   GList *walk;
-  guint length, size, n_headers, configlen;
+  guint length, size, n_headers, configlen, extralen;
   gchar *cstr, *configuration;
   guint8 *data, *config;
   guint32 ident;
@@ -288,6 +410,7 @@ gst_rtp_vorbis_pay_finish_headers (GstRTPBasePayload * basepayload)
   length = 0;
   n_headers = 0;
   ident = fnv1_hash_32_new ();
+  extralen = 1;
   for (walk = rtpvorbispay->headers; walk; walk = g_list_next (walk)) {
     GstBuffer *buf = GST_BUFFER_CAST (walk->data);
     GstMapInfo map;
@@ -302,6 +425,7 @@ gst_rtp_vorbis_pay_finish_headers (GstRTPBasePayload * basepayload)
     if (g_list_next (walk)) {
       do {
         size++;
+        extralen++;
         bsize >>= 7;
       } while (bsize);
     }
@@ -377,9 +501,19 @@ gst_rtp_vorbis_pay_finish_headers (GstRTPBasePayload * basepayload)
     gst_buffer_extract (buf, 0, data, gst_buffer_get_size (buf));
     data += gst_buffer_get_size (buf);
   }
+  rtpvorbispay->need_headers = FALSE;
 
   /* serialize to base64 */
   configuration = g_base64_encode (config, configlen);
+
+  /* store for later re-sending */
+  g_free (rtpvorbispay->config_data);
+  rtpvorbispay->config_size = configlen - 4 - 3 - 2;
+  rtpvorbispay->config_data = g_malloc (rtpvorbispay->config_size);
+  rtpvorbispay->config_extra_len = extralen;
+  memcpy (rtpvorbispay->config_data, config + 4 + 3 + 2,
+      rtpvorbispay->config_size);
+
   g_free (config);
 
   /* configure payloader settings */
@@ -468,73 +602,19 @@ invalid_channels:
 }
 
 static GstFlowReturn
-gst_rtp_vorbis_pay_handle_buffer (GstRTPBasePayload * basepayload,
-    GstBuffer * buffer)
+gst_rtp_vorbis_pay_payload_buffer (GstRtpVorbisPay * rtpvorbispay, guint8 VDT,
+    GstBuffer * buffer, guint8 * data, guint size, GstClockTime timestamp,
+    GstClockTime duration, guint not_in_length)
 {
-  GstRtpVorbisPay *rtpvorbispay;
-  GstFlowReturn ret;
+  GstFlowReturn ret = GST_FLOW_OK;
   guint newsize;
-  GstMapInfo map;
-  gsize size;
-  guint8 *data;
   guint packet_len;
-  GstClockTime duration, newduration, timestamp;
+  GstClockTime newduration;
   gboolean flush;
-  guint8 VDT;
   guint plen;
   guint8 *ppos, *payload;
   gboolean fragmented;
   GstRTPBuffer rtp = { NULL };
-
-  rtpvorbispay = GST_RTP_VORBIS_PAY (basepayload);
-
-  gst_buffer_map (buffer, &map, GST_MAP_READ);
-  data = map.data;
-  size = map.size;
-  duration = GST_BUFFER_DURATION (buffer);
-  timestamp = GST_BUFFER_TIMESTAMP (buffer);
-
-  GST_LOG_OBJECT (rtpvorbispay, "size %" G_GSIZE_FORMAT
-      ", duration %" GST_TIME_FORMAT, size, GST_TIME_ARGS (duration));
-
-  if (G_UNLIKELY (size < 1 || size > 0xffff))
-    goto wrong_size;
-
-  /* find packet type */
-  if (data[0] & 1) {
-    /* header */
-    if (data[0] == 1) {
-      /* identification, we need to parse this in order to get the clock rate. */
-      if (G_UNLIKELY (!gst_rtp_vorbis_pay_parse_id (basepayload, data, size)))
-        goto parse_id_failed;
-      VDT = 1;
-    } else if (data[0] == 3) {
-      /* comment */
-      VDT = 2;
-    } else if (data[0] == 5) {
-      /* setup */
-      VDT = 1;
-    } else
-      goto unknown_header;
-  } else
-    /* data */
-    VDT = 0;
-
-  if (rtpvorbispay->need_headers) {
-    /* we need to collect the headers and construct a config string from them */
-    if (VDT != 0) {
-      GST_DEBUG_OBJECT (rtpvorbispay, "collecting header");
-      /* append header to the list of headers */
-      gst_buffer_unmap (buffer, &map);
-      rtpvorbispay->headers = g_list_append (rtpvorbispay->headers, buffer);
-      ret = GST_FLOW_OK;
-      goto done;
-    } else {
-      if (!gst_rtp_vorbis_pay_finish_headers (basepayload))
-        goto header_error;
-      rtpvorbispay->need_headers = FALSE;
-    }
-  }
 
   /* size increases with packet length and 2 bytes size eader. */
   newduration = rtpvorbispay->payload_duration;
@@ -545,14 +625,18 @@ gst_rtp_vorbis_pay_handle_buffer (GstRTPBasePayload * basepayload,
   packet_len = gst_rtp_buffer_calc_packet_len (newsize, 0, 0);
 
   /* check buffer filled against length and max latency */
-  flush = gst_rtp_base_payload_is_filled (basepayload, packet_len, newduration);
+  flush = gst_rtp_base_payload_is_filled (GST_RTP_BASE_PAYLOAD (rtpvorbispay),
+      packet_len, newduration);
   /* we can store up to 15 vorbis packets in one RTP packet. */
   flush |= (rtpvorbispay->payload_pkts == 15);
   /* flush if we have a new VDT */
   if (rtpvorbispay->packet)
     flush |= (rtpvorbispay->payload_VDT != VDT);
   if (flush)
-    gst_rtp_vorbis_pay_flush_packet (rtpvorbispay);
+    ret = gst_rtp_vorbis_pay_flush_packet (rtpvorbispay);
+
+  if (ret != GST_FLOW_OK)
+    goto done;
 
   /* create new packet if we must */
   if (!rtpvorbispay->packet) {
@@ -564,19 +648,37 @@ gst_rtp_vorbis_pay_handle_buffer (GstRTPBasePayload * basepayload,
   ppos = payload + rtpvorbispay->payload_pos;
   fragmented = FALSE;
 
-  ret = GST_FLOW_OK;
-
   /* put buffer in packet, it either fits completely or needs to be fragmented
    * over multiple RTP packets. */
-  while (size) {
+  do {
     plen = MIN (rtpvorbispay->payload_left - 2, size);
 
     GST_LOG_OBJECT (rtpvorbispay, "append %u bytes", plen);
 
     /* data is copied in the payload with a 2 byte length header */
-    ppos[0] = (plen >> 8) & 0xff;
-    ppos[1] = (plen & 0xff);
-    memcpy (&ppos[2], data, plen);
+    ppos[0] = ((plen - not_in_length) >> 8) & 0xff;
+    ppos[1] = ((plen - not_in_length) & 0xff);
+    if (plen)
+      memcpy (&ppos[2], data, plen);
+
+    if (buffer) {
+      if (!rtpvorbispay->packet_buffers
+          || rtpvorbispay->packet_buffers->data != (gpointer) buffer)
+        rtpvorbispay->packet_buffers =
+            g_list_prepend (rtpvorbispay->packet_buffers,
+            gst_buffer_ref (buffer));
+    } else {
+      GList *l;
+
+      for (l = rtpvorbispay->headers; l; l = l->next)
+        rtpvorbispay->packet_buffers =
+            g_list_prepend (rtpvorbispay->packet_buffers,
+            gst_buffer_ref (l->data));
+    }
+
+    /* only first (only) configuration cuts length field */
+    /* NOTE: spec (if any) is not clear on this ... */
+    not_in_length = 0;
 
     size -= plen;
     data += plen;
@@ -620,10 +722,124 @@ gst_rtp_vorbis_pay_handle_buffer (GstRTPBasePayload * basepayload,
       if (duration != GST_CLOCK_TIME_NONE)
         rtpvorbispay->payload_duration += duration;
     }
-  }
+  } while (size && ret == GST_FLOW_OK);
 
   if (rtp.buffer)
     gst_rtp_buffer_unmap (&rtp);
+
+done:
+
+  return ret;
+}
+
+static GstFlowReturn
+gst_rtp_vorbis_pay_handle_buffer (GstRTPBasePayload * basepayload,
+    GstBuffer * buffer)
+{
+  GstRtpVorbisPay *rtpvorbispay;
+  GstFlowReturn ret;
+  GstMapInfo map;
+  gsize size;
+  guint8 *data;
+  GstClockTime duration, timestamp;
+  guint8 VDT;
+
+  rtpvorbispay = GST_RTP_VORBIS_PAY (basepayload);
+
+  gst_buffer_map (buffer, &map, GST_MAP_READ);
+  data = map.data;
+  size = map.size;
+  duration = GST_BUFFER_DURATION (buffer);
+  timestamp = GST_BUFFER_PTS (buffer);
+
+  GST_LOG_OBJECT (rtpvorbispay, "size %" G_GSIZE_FORMAT
+      ", duration %" GST_TIME_FORMAT, size, GST_TIME_ARGS (duration));
+
+  if (G_UNLIKELY (size < 1))
+    goto wrong_size;
+
+  /* find packet type */
+  if (data[0] & 1) {
+    /* header */
+    if (data[0] == 1) {
+      /* identification, we need to parse this in order to get the clock rate. */
+      if (G_UNLIKELY (!gst_rtp_vorbis_pay_parse_id (basepayload, data, size)))
+        goto parse_id_failed;
+      VDT = 1;
+    } else if (data[0] == 3) {
+      /* comment */
+      VDT = 2;
+    } else if (data[0] == 5) {
+      /* setup */
+      VDT = 1;
+    } else
+      goto unknown_header;
+  } else
+    /* data */
+    VDT = 0;
+
+  /* we need to collect the headers and construct a config string from them */
+  if (VDT != 0) {
+    GST_DEBUG_OBJECT (rtpvorbispay, "collecting header");
+    /* append header to the list of headers */
+    gst_buffer_unmap (buffer, &map);
+    rtpvorbispay->headers = g_list_append (rtpvorbispay->headers, buffer);
+    ret = GST_FLOW_OK;
+    goto done;
+  } else if (rtpvorbispay->headers && rtpvorbispay->need_headers) {
+    if (!gst_rtp_vorbis_pay_finish_headers (basepayload))
+      goto header_error;
+  }
+
+  /* there is a config request, see if we need to insert it */
+  if (rtpvorbispay->config_interval > 0 && rtpvorbispay->config_data) {
+    gboolean send_config = FALSE;
+
+    if (rtpvorbispay->last_config != -1) {
+      guint64 diff;
+
+      GST_LOG_OBJECT (rtpvorbispay,
+          "now %" GST_TIME_FORMAT ", last config %" GST_TIME_FORMAT,
+          GST_TIME_ARGS (timestamp), GST_TIME_ARGS (rtpvorbispay->last_config));
+
+      /* calculate diff between last config in milliseconds */
+      if (timestamp > rtpvorbispay->last_config) {
+        diff = timestamp - rtpvorbispay->last_config;
+      } else {
+        diff = 0;
+      }
+
+      GST_DEBUG_OBJECT (rtpvorbispay,
+          "interval since last config %" GST_TIME_FORMAT, GST_TIME_ARGS (diff));
+
+      /* bigger than interval, queue config */
+      /* FIXME should convert timestamps to running time */
+      if (GST_TIME_AS_SECONDS (diff) >= rtpvorbispay->config_interval) {
+        GST_DEBUG_OBJECT (rtpvorbispay, "time to send config");
+        send_config = TRUE;
+      }
+    } else {
+      /* no known previous config time, send now */
+      GST_DEBUG_OBJECT (rtpvorbispay, "no previous config time, send now");
+      send_config = TRUE;
+    }
+
+    if (send_config) {
+      /* we need to send config now first */
+      /* different TDT type forces flush */
+      gst_rtp_vorbis_pay_payload_buffer (rtpvorbispay, 1,
+          NULL, rtpvorbispay->config_data, rtpvorbispay->config_size,
+          timestamp, GST_CLOCK_TIME_NONE, rtpvorbispay->config_extra_len);
+
+      if (timestamp != -1) {
+        rtpvorbispay->last_config = timestamp;
+      }
+    }
+  }
+
+  ret =
+      gst_rtp_vorbis_pay_payload_buffer (rtpvorbispay, VDT, buffer, data, size,
+      timestamp, duration, 0);
 
   gst_buffer_unmap (buffer, &map);
   gst_buffer_unref (buffer);
@@ -635,8 +851,7 @@ done:
 wrong_size:
   {
     GST_ELEMENT_WARNING (rtpvorbispay, STREAM, DECODE,
-        ("Invalid packet size (1 < %" G_GSIZE_FORMAT " <= 0xffff)", size),
-        (NULL));
+        ("Invalid packet size (1 < %" G_GSIZE_FORMAT ")", size), (NULL));
     gst_buffer_unmap (buffer, &map);
     gst_buffer_unref (buffer);
     return GST_FLOW_OK;
@@ -705,6 +920,40 @@ gst_rtp_vorbis_pay_change_state (GstElement * element,
       break;
   }
   return ret;
+}
+
+static void
+gst_rtp_vorbis_pay_set_property (GObject * object, guint prop_id,
+    const GValue * value, GParamSpec * pspec)
+{
+  GstRtpVorbisPay *rtpvorbispay;
+
+  rtpvorbispay = GST_RTP_VORBIS_PAY (object);
+
+  switch (prop_id) {
+    case PROP_CONFIG_INTERVAL:
+      rtpvorbispay->config_interval = g_value_get_uint (value);
+      break;
+    default:
+      break;
+  }
+}
+
+static void
+gst_rtp_vorbis_pay_get_property (GObject * object, guint prop_id,
+    GValue * value, GParamSpec * pspec)
+{
+  GstRtpVorbisPay *rtpvorbispay;
+
+  rtpvorbispay = GST_RTP_VORBIS_PAY (object);
+
+  switch (prop_id) {
+    case PROP_CONFIG_INTERVAL:
+      g_value_set_uint (value, rtpvorbispay->config_interval);
+      break;
+    default:
+      break;
+  }
 }
 
 gboolean

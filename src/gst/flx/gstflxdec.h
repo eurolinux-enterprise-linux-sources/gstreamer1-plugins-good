@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifndef __GST_FLX_DECODER_H__
@@ -23,6 +23,8 @@
 #include <gst/gst.h>
 
 #include <gst/base/gstadapter.h>
+#include <gst/base/gstbytereader.h>
+#include <gst/base/gstbytewriter.h>
 #include "flx_color.h"
 
 G_BEGIN_DECLS
@@ -39,13 +41,16 @@ typedef struct _GstFlxDec  GstFlxDec;
 struct _GstFlxDec {
   GstElement element;
 
-  GstPad *sinkpad,*srcpad;
+  GstPad *sinkpad, *srcpad;
+
+  GstSegment segment;
+  gboolean need_segment;
 
   gboolean active, new_meta;
 
   guint8 *delta_data, *frame_data;
   GstAdapter *adapter;
-  gulong size;
+  gsize size;
   GstFlxDecState state;
   gint64 frame_time;
   gint64 next_time;

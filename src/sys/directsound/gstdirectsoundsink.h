@@ -17,8 +17,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  *
  * The development of this code was made possible due to the involvement
  * of Pioneers of the Inevitable, the creators of the Songbird Music player
@@ -30,10 +30,10 @@
 #define __GST_DIRECTSOUNDSINK_H__
 
 #include <gst/gst.h>
+#include <gst/audio/audio.h>
 #include <gst/audio/gstaudiosink.h>
 
 #include <windows.h>
-#include <dxerr9.h>
 #include <dsound.h>
 #include <mmreg.h> 
 #include <ks.h> 
@@ -73,6 +73,9 @@ struct _GstDirectSoundSink
   /* current volume setup by mixer interface */
   glong volume;
   gboolean mute;
+  
+  /* current directsound device ID */
+  gchar * device_id;
 
   GstCaps *cached_caps;
   /* lock used to protect writes and resets */

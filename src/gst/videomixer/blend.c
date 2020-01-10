@@ -18,8 +18,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -27,7 +27,7 @@
 #endif
 
 #include "blend.h"
-#include "blendorc.h"
+#include "videomixerorc.h"
 
 #include <string.h>
 
@@ -86,9 +86,11 @@ method##_ ##name (GstVideoFrame * srcframe, gint xpos, gint ypos, \
     src_height = dest_height - ypos; \
   } \
   \
-  dest = dest + 4 * xpos + (ypos * dest_stride); \
+  if (src_height > 0 && src_width > 0) { \
+    dest = dest + 4 * xpos + (ypos * dest_stride); \
   \
-  LOOP (dest, src, src_height, src_width, src_stride, dest_stride, s_alpha); \
+    LOOP (dest, src, src_height, src_width, src_stride, dest_stride, s_alpha); \
+  } \
 }
 
 #define BLEND_A32_LOOP(name, method)			\
@@ -268,23 +270,23 @@ blend_##format_name (GstVideoFrame * srcframe, gint xpos, gint ypos, \
     xpos = 0; \
   } \
   if (ypos < 0) { \
-    yoffset += -ypos; \
+    yoffset = -ypos; \
     b_src_height -= -ypos; \
     ypos = 0; \
   } \
   /* If x or y offset are larger then the source it's outside of the picture */ \
-  if (xoffset > src_width || yoffset > src_height) { \
+  if (xoffset >= src_width || yoffset >= src_height) { \
     return; \
   } \
   \
   /* adjust width/height if the src is bigger than dest */ \
-  if (xpos + src_width > dest_width) { \
+  if (xpos + b_src_width > dest_width) { \
     b_src_width = dest_width - xpos; \
   } \
-  if (ypos + src_height > dest_height) { \
+  if (ypos + b_src_height > dest_height) { \
     b_src_height = dest_height - ypos; \
   } \
-  if (b_src_width < 0 || b_src_height < 0) { \
+  if (b_src_width <= 0 || b_src_height <= 0) { \
     return; \
   } \
   \
@@ -443,7 +445,7 @@ PLANAR_YUV_FILL_CHECKER (y41b, GST_VIDEO_FORMAT_Y41B, memset);
 PLANAR_YUV_FILL_COLOR (y41b, GST_VIDEO_FORMAT_Y41B, memset);
 
 /* NV12, NV21 */
-#define NV_YUV_BLEND(format_name,first_component,MEMCPY,BLENDLOOP) \
+#define NV_YUV_BLEND(format_name,MEMCPY,BLENDLOOP) \
 inline static void \
 _blend_##format_name (const guint8 * src, guint8 * dest, \
     gint src_stride, gint dest_stride, gint src_width, gint src_height, \
@@ -550,8 +552,8 @@ blend_##format_name (GstVideoFrame * srcframe, gint xpos, gint ypos, \
       dest_comp_rowstride, src_comp_width, src_comp_height, \
       src_alpha); \
   \
-  b_src = GST_VIDEO_FRAME_COMP_DATA (srcframe, first_component); \
-  b_dest = GST_VIDEO_FRAME_COMP_DATA (destframe, first_component); \
+  b_src = GST_VIDEO_FRAME_PLANE_DATA (srcframe, 1); \
+  b_dest = GST_VIDEO_FRAME_PLANE_DATA (destframe, 1); \
   src_comp_rowstride = GST_VIDEO_FRAME_COMP_STRIDE (srcframe, 1); \
   dest_comp_rowstride = GST_VIDEO_FRAME_COMP_STRIDE (destframe, 1); \
   src_comp_width = GST_VIDEO_FORMAT_INFO_SCALE_WIDTH(info, 1, b_src_width); \
@@ -567,7 +569,7 @@ blend_##format_name (GstVideoFrame * srcframe, gint xpos, gint ypos, \
       src_alpha); \
 }
 
-#define NV_YUV_FILL_CHECKER(format_name, first_component, MEMSET)        \
+#define NV_YUV_FILL_CHECKER(format_name, MEMSET)        \
 static void \
 fill_checker_##format_name (GstVideoFrame * frame) \
 { \
@@ -589,7 +591,7 @@ fill_checker_##format_name (GstVideoFrame * frame) \
     p += rowstride - comp_width; \
   } \
   \
-  p = GST_VIDEO_FRAME_COMP_DATA (frame, first_component); \
+  p = GST_VIDEO_FRAME_PLANE_DATA (frame, 1); \
   comp_width = GST_VIDEO_FRAME_COMP_WIDTH (frame, 1); \
   comp_height = GST_VIDEO_FRAME_COMP_HEIGHT (frame, 1); \
   rowstride = GST_VIDEO_FRAME_COMP_STRIDE (frame, 1); \
@@ -636,11 +638,11 @@ fill_color_##format_name (GstVideoFrame * frame, \
   } \
 }
 
-NV_YUV_BLEND (nv12, 1, memcpy, video_mixer_orc_blend_u8);
-NV_YUV_FILL_CHECKER (nv12, 1, memset);
+NV_YUV_BLEND (nv12, memcpy, video_mixer_orc_blend_u8);
+NV_YUV_FILL_CHECKER (nv12, memset);
 NV_YUV_FILL_COLOR (nv12, memset);
-NV_YUV_BLEND (nv21, 2, memcpy, video_mixer_orc_blend_u8);
-NV_YUV_FILL_CHECKER (nv21, 2, memset);
+NV_YUV_BLEND (nv21, memcpy, video_mixer_orc_blend_u8);
+NV_YUV_FILL_CHECKER (nv21, memset);
 
 /* RGB, BGR, xRGB, xBGR, RGBx, BGRx */
 
@@ -892,7 +894,7 @@ fill_checker_##name##_c (GstVideoFrame * frame) \
   width = GST_VIDEO_FRAME_WIDTH (frame); \
   width = GST_ROUND_UP_2 (width); \
   height = GST_VIDEO_FRAME_HEIGHT (frame); \
-  dest = GST_VIDEO_FRAME_COMP_DATA (frame, 0); \
+  dest = GST_VIDEO_FRAME_PLANE_DATA (frame, 0); \
   dest_add = GST_VIDEO_FRAME_COMP_STRIDE (frame, 0) - width * 2; \
   width /= 2; \
   \
@@ -922,7 +924,7 @@ fill_color_##name (GstVideoFrame * frame, \
   width = GST_VIDEO_FRAME_WIDTH (frame); \
   width = GST_ROUND_UP_2 (width); \
   height = GST_VIDEO_FRAME_HEIGHT (frame); \
-  dest = GST_VIDEO_FRAME_COMP_DATA (frame, 0); \
+  dest = GST_VIDEO_FRAME_PLANE_DATA (frame, 0); \
   dest_stride = GST_VIDEO_FRAME_COMP_STRIDE (frame, 0); \
   width /= 2; \
   \

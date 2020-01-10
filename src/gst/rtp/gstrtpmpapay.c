@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -24,8 +24,10 @@
 #include <string.h>
 
 #include <gst/rtp/gstrtpbuffer.h>
+#include <gst/audio/audio.h>
 
 #include "gstrtpmpapay.h"
+#include "gstrtputils.h"
 
 GST_DEBUG_CATEGORY_STATIC (rtpmpapay_debug);
 #define GST_CAT_DEFAULT (rtpmpapay_debug)
@@ -85,10 +87,10 @@ gst_rtp_mpa_pay_class_init (GstRtpMPAPayClass * klass)
 
   gstelement_class->change_state = gst_rtp_mpa_pay_change_state;
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_mpa_pay_src_template));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_mpa_pay_sink_template));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_mpa_pay_src_template);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_mpa_pay_sink_template);
 
   gst_element_class_set_static_metadata (gstelement_class,
       "RTP MPEG audio payloader", "Codec/Payloader/Network/RTP",
@@ -104,6 +106,8 @@ static void
 gst_rtp_mpa_pay_init (GstRtpMPAPay * rtpmpapay)
 {
   rtpmpapay->adapter = gst_adapter_new ();
+
+  GST_RTP_BASE_PAYLOAD (rtpmpapay)->pt = GST_RTP_PAYLOAD_MPA;
 }
 
 static void
@@ -133,7 +137,8 @@ gst_rtp_mpa_pay_setcaps (GstRTPBasePayload * payload, GstCaps * caps)
 {
   gboolean res;
 
-  gst_rtp_base_payload_set_options (payload, "audio", TRUE, "MPA", 90000);
+  gst_rtp_base_payload_set_options (payload, "audio",
+      payload->pt != GST_RTP_PAYLOAD_MPA, "MPA", 90000);
   res = gst_rtp_base_payload_set_outcaps (payload, NULL);
 
   return res;
@@ -164,6 +169,8 @@ gst_rtp_mpa_pay_sink_event (GstRTPBasePayload * payload, GstEvent * event)
   return ret;
 }
 
+#define RTP_HEADER_LEN 12
+
 static GstFlowReturn
 gst_rtp_mpa_pay_flush (GstRtpMPAPay * rtpmpapay)
 {
@@ -171,6 +178,7 @@ gst_rtp_mpa_pay_flush (GstRtpMPAPay * rtpmpapay)
   GstBuffer *outbuf;
   GstFlowReturn ret;
   guint16 frag_offset;
+  GstBufferList *list;
 
   /* the data available in the adapter is either smaller
    * than the MTU or bigger. In the case it is smaller, the complete
@@ -182,6 +190,10 @@ gst_rtp_mpa_pay_flush (GstRtpMPAPay * rtpmpapay)
 
   ret = GST_FLOW_OK;
 
+  list =
+      gst_buffer_list_new_sized (avail / (GST_RTP_BASE_PAYLOAD_MTU (rtpmpapay) -
+          RTP_HEADER_LEN) + 1);
+
   frag_offset = 0;
   while (avail > 0) {
     guint towrite;
@@ -189,6 +201,7 @@ gst_rtp_mpa_pay_flush (GstRtpMPAPay * rtpmpapay)
     guint payload_len;
     guint packet_len;
     GstRTPBuffer rtp = { NULL };
+    GstBuffer *paybuf;
 
     /* this will be the total length of the packet */
     packet_len = gst_rtp_buffer_calc_packet_len (4 + avail, 0, 0);
@@ -200,7 +213,7 @@ gst_rtp_mpa_pay_flush (GstRtpMPAPay * rtpmpapay)
     payload_len = gst_rtp_buffer_calc_payload_len (towrite, 0, 0);
 
     /* create buffer to hold the payload */
-    outbuf = gst_rtp_buffer_new_allocate (payload_len, 0, 0);
+    outbuf = gst_rtp_buffer_new_allocate (4, 0, 0);
 
     gst_rtp_buffer_map (outbuf, GST_MAP_WRITE, &rtp);
 
@@ -221,9 +234,6 @@ gst_rtp_mpa_pay_flush (GstRtpMPAPay * rtpmpapay)
     payload[2] = frag_offset >> 8;
     payload[3] = frag_offset & 0xff;
 
-    gst_adapter_copy (rtpmpapay->adapter, &payload[4], 0, payload_len);
-    gst_adapter_flush (rtpmpapay->adapter, payload_len);
-
     avail -= payload_len;
     frag_offset += payload_len;
 
@@ -232,11 +242,17 @@ gst_rtp_mpa_pay_flush (GstRtpMPAPay * rtpmpapay)
 
     gst_rtp_buffer_unmap (&rtp);
 
-    GST_BUFFER_TIMESTAMP (outbuf) = rtpmpapay->first_ts;
-    GST_BUFFER_DURATION (outbuf) = rtpmpapay->duration;
+    paybuf = gst_adapter_take_buffer_fast (rtpmpapay->adapter, payload_len);
+    gst_rtp_copy_meta (GST_ELEMENT_CAST (rtpmpapay), outbuf, paybuf,
+        g_quark_from_static_string (GST_META_TAG_AUDIO_STR));
+    outbuf = gst_buffer_append (outbuf, paybuf);
 
-    ret = gst_rtp_base_payload_push (GST_RTP_BASE_PAYLOAD (rtpmpapay), outbuf);
+    GST_BUFFER_PTS (outbuf) = rtpmpapay->first_ts;
+    GST_BUFFER_DURATION (outbuf) = rtpmpapay->duration;
+    gst_buffer_list_add (list, outbuf);
   }
+
+  ret = gst_rtp_base_payload_push_list (GST_RTP_BASE_PAYLOAD (rtpmpapay), list);
 
   return ret;
 }
@@ -255,7 +271,7 @@ gst_rtp_mpa_pay_handle_buffer (GstRTPBasePayload * basepayload,
 
   size = gst_buffer_get_size (buffer);
   duration = GST_BUFFER_DURATION (buffer);
-  timestamp = GST_BUFFER_TIMESTAMP (buffer);
+  timestamp = GST_BUFFER_PTS (buffer);
 
   if (GST_BUFFER_IS_DISCONT (buffer)) {
     GST_DEBUG_OBJECT (rtpmpapay, "DISCONT");

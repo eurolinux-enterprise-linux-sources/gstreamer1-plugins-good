@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -24,8 +24,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <gst/rtp/gstrtpbuffer.h>
+#include <gst/video/video.h>
 
 #include "gstrtpmpvpay.h"
+#include "gstrtputils.h"
 
 GST_DEBUG_CATEGORY_STATIC (rtpmpvpay_debug);
 #define GST_CAT_DEFAULT (rtpmpvpay_debug)
@@ -39,12 +41,16 @@ GST_STATIC_PAD_TEMPLATE ("sink",
     );
 
 static GstStaticPadTemplate gst_rtp_mpv_pay_src_template =
-GST_STATIC_PAD_TEMPLATE ("src",
+    GST_STATIC_PAD_TEMPLATE ("src",
     GST_PAD_SRC,
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS ("application/x-rtp, "
         "media = (string) \"video\", "
         "payload = (int) " GST_RTP_PAYLOAD_MPV_STRING ", "
+        "clock-rate = (int) 90000, " "encoding-name = (string) \"MPV\"; "
+        "application/x-rtp, "
+        "media = (string) \"video\", "
+        "payload = (int) " GST_RTP_PAYLOAD_DYNAMIC_STRING ", "
         "clock-rate = (int) 90000, " "encoding-name = (string) \"MPV\"")
     );
 
@@ -79,10 +85,10 @@ gst_rtp_mpv_pay_class_init (GstRTPMPVPayClass * klass)
 
   gstelement_class->change_state = gst_rtp_mpv_pay_change_state;
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_mpv_pay_sink_template));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_mpv_pay_src_template));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_mpv_pay_sink_template);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_mpv_pay_src_template);
 
   gst_element_class_set_static_metadata (gstelement_class,
       "RTP MPEG2 ES video payloader", "Codec/Payloader/Network/RTP",
@@ -131,7 +137,8 @@ gst_rtp_mpv_pay_reset (GstRTPMPVPay * pay)
 static gboolean
 gst_rtp_mpv_pay_setcaps (GstRTPBasePayload * payload, GstCaps * caps)
 {
-  gst_rtp_base_payload_set_options (payload, "video", FALSE, "MPV", 90000);
+  gst_rtp_base_payload_set_options (payload, "video",
+      payload->pt != GST_RTP_PAYLOAD_MPV, "MPV", 90000);
   return gst_rtp_base_payload_set_outcaps (payload, NULL);
 }
 
@@ -160,12 +167,15 @@ gst_rtp_mpv_pay_sink_event (GstRTPBasePayload * payload, GstEvent * event)
   return ret;
 }
 
+#define RTP_HEADER_LEN 12
+
 static GstFlowReturn
 gst_rtp_mpv_pay_flush (GstRTPMPVPay * rtpmpvpay)
 {
-  GstBuffer *outbuf;
   GstFlowReturn ret;
   guint avail;
+  GstBufferList *list;
+  GstBuffer *outbuf;
 
   guint8 *payload;
 
@@ -173,19 +183,26 @@ gst_rtp_mpv_pay_flush (GstRTPMPVPay * rtpmpvpay)
 
   ret = GST_FLOW_OK;
 
+  list =
+      gst_buffer_list_new_sized (avail / (GST_RTP_BASE_PAYLOAD_MTU (rtpmpvpay) -
+          RTP_HEADER_LEN) + 1);
+
   while (avail > 0) {
     guint towrite;
     guint packet_len;
     guint payload_len;
     GstRTPBuffer rtp = { NULL };
+    GstBuffer *paybuf;
 
-    packet_len = gst_rtp_buffer_calc_packet_len (avail, 4, 0);
+    packet_len = gst_rtp_buffer_calc_packet_len (avail + 4, 0, 0);
 
     towrite = MIN (packet_len, GST_RTP_BASE_PAYLOAD_MTU (rtpmpvpay));
 
-    payload_len = gst_rtp_buffer_calc_payload_len (towrite, 4, 0);
+    payload_len = gst_rtp_buffer_calc_payload_len (towrite, 0, 0);
 
-    outbuf = gst_rtp_buffer_new_allocate (payload_len, 4, 0);
+    outbuf = gst_rtp_buffer_new_allocate (4, 0, 0);
+
+    payload_len -= 4;
 
     gst_rtp_buffer_map (outbuf, GST_MAP_WRITE, &rtp);
 
@@ -205,18 +222,21 @@ gst_rtp_mpv_pay_flush (GstRTPMPVPay * rtpmpvpay)
      */
     memset (payload, 0x0, 4);
 
-    gst_adapter_copy (rtpmpvpay->adapter, payload + 4, 0, payload_len);
-    gst_adapter_flush (rtpmpvpay->adapter, payload_len);
-
     avail -= payload_len;
 
     gst_rtp_buffer_set_marker (&rtp, avail == 0);
     gst_rtp_buffer_unmap (&rtp);
 
-    GST_BUFFER_TIMESTAMP (outbuf) = rtpmpvpay->first_ts;
+    paybuf = gst_adapter_take_buffer_fast (rtpmpvpay->adapter, payload_len);
+    gst_rtp_copy_meta (GST_ELEMENT_CAST (rtpmpvpay), outbuf, paybuf,
+        g_quark_from_static_string (GST_META_TAG_VIDEO_STR));
+    outbuf = gst_buffer_append (outbuf, paybuf);
 
-    ret = gst_rtp_base_payload_push (GST_RTP_BASE_PAYLOAD (rtpmpvpay), outbuf);
+    GST_BUFFER_PTS (outbuf) = rtpmpvpay->first_ts;
+    gst_buffer_list_add (list, outbuf);
   }
+
+  ret = gst_rtp_base_payload_push_list (GST_RTP_BASE_PAYLOAD (rtpmpvpay), list);
 
   return ret;
 }
@@ -232,7 +252,7 @@ gst_rtp_mpv_pay_handle_buffer (GstRTPBasePayload * basepayload,
 
   rtpmpvpay = GST_RTP_MPV_PAY (basepayload);
 
-  timestamp = GST_BUFFER_TIMESTAMP (buffer);
+  timestamp = GST_BUFFER_PTS (buffer);
   duration = GST_BUFFER_DURATION (buffer);
 
   if (GST_BUFFER_IS_DISCONT (buffer)) {

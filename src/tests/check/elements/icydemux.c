@@ -14,8 +14,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 #ifdef HAVE_CONFIG_H
 #include "config.h"
@@ -31,11 +31,22 @@
 #define ICY_METADATA \
     "StreamTitle='" TEST_METADATA "';\0\0\0\0"
 
+#define EMPTY_ICY_STREAM_TITLE_METADATA \
+    "StreamTitle='';\0"
+
 #define ICY_DATA \
     "aaaaaaaa" \
     "\x02" \
     ICY_METADATA \
     "bbbbbbbb"
+
+#define ICY_DATA_EMPTY_METADATA \
+    ICY_DATA \
+    "\x00" \
+    "dddddddd" \
+    "\x01" \
+    EMPTY_ICY_STREAM_TITLE_METADATA \
+    "cccccccc"
 
 #define ICYCAPS "application/x-icy, metadata-interval = (int)8"
 
@@ -148,6 +159,7 @@ cleanup_icydemux (void)
   gst_object_unref (bus);
   bus = NULL;
 
+  gst_check_drop_buffers ();
   gst_check_teardown_src_pad (icydemux);
   if (sinkpad)
     gst_check_teardown_sink_pad (icydemux);
@@ -159,7 +171,7 @@ cleanup_icydemux (void)
 }
 
 static void
-push_data (const guint8 * data, int len, GstCaps * caps, gint64 offset)
+push_data (const guint8 * data, int len, gint64 offset)
 {
   GstFlowReturn res;
   GstBuffer *buffer = gst_buffer_new_and_alloc (len);
@@ -168,7 +180,6 @@ push_data (const guint8 * data, int len, GstCaps * caps, gint64 offset)
 
   GST_BUFFER_OFFSET (buffer) = offset;
 
-  gst_pad_set_caps (srcpad, caps);
   res = gst_pad_push (srcpad, buffer);
 
   fail_unless (res == GST_FLOW_OK, "Failed pushing buffer: %d", res);
@@ -191,8 +202,9 @@ GST_START_TEST (test_demux)
   caps = gst_caps_from_string (ICYCAPS);
 
   create_icydemux ();
+  gst_check_setup_events (srcpad, icydemux, caps, GST_FORMAT_TIME);
 
-  push_data ((guint8 *) ICY_DATA, sizeof (ICY_DATA), caps, -1);
+  push_data ((guint8 *) ICY_DATA, sizeof (ICY_DATA), -1);
 
   message = gst_bus_poll (bus, GST_MESSAGE_TAG, -1);
   fail_unless (message != NULL);
@@ -219,6 +231,71 @@ GST_START_TEST (test_demux)
 
 GST_END_TEST;
 
+GST_START_TEST (test_demux_empty_data)
+{
+  GstMessage *message;
+  GstTagList *tags;
+  const GValue *tag_val;
+  const gchar *tag;
+  GstCaps *caps;
+
+  fail_unless (gst_type_find_register (NULL, "success", GST_RANK_PRIMARY,
+          typefind_succeed, NULL, gst_static_caps_get (&typefind_caps), NULL,
+          NULL));
+
+  fake_typefind_caps = TRUE;
+
+  caps = gst_caps_from_string (ICYCAPS);
+
+  create_icydemux ();
+  gst_check_setup_events (srcpad, icydemux, caps, GST_FORMAT_TIME);
+
+  push_data ((guint8 *) ICY_DATA_EMPTY_METADATA,
+      sizeof (ICY_DATA_EMPTY_METADATA), -1);
+
+  message = gst_bus_poll (bus, GST_MESSAGE_TAG, -1);
+  fail_unless (message != NULL);
+
+  gst_message_parse_tag (message, &tags);
+  fail_unless (tags != NULL);
+
+  tag_val = gst_tag_list_get_value_index (tags, GST_TAG_TITLE, 0);
+  fail_unless (tag_val != NULL);
+
+  tag = g_value_get_string (tag_val);
+  fail_unless (tag != NULL);
+
+  fail_unless_equals_string (TEST_METADATA, (char *) tag);
+
+  gst_tag_list_unref (tags);
+  gst_message_unref (message);
+
+  message = gst_bus_poll (bus, GST_MESSAGE_TAG, -1);
+  fail_unless (message != NULL);
+
+  gst_message_parse_tag (message, &tags);
+  fail_unless (tags != NULL);
+
+  tag_val = gst_tag_list_get_value_index (tags, GST_TAG_TITLE, 0);
+  fail_unless (tag_val == NULL);
+
+  gst_message_unref (message);
+
+  /* Ensure that no further tag messages are received, i.e. the empty ICY tag
+   * is skipped */
+  message = gst_bus_poll (bus, GST_MESSAGE_TAG, 100000000);
+  fail_unless (message == NULL);
+
+  gst_tag_list_unref (tags);
+  gst_caps_unref (caps);
+
+  cleanup_icydemux ();
+
+  fake_typefind_caps = FALSE;
+}
+
+GST_END_TEST;
+
 /* run this test first before the custom typefind function is set up */
 GST_START_TEST (test_first_buf_offset_when_merged_for_typefinding)
 {
@@ -235,12 +312,14 @@ GST_START_TEST (test_first_buf_offset_when_merged_for_typefinding)
 
   icy_caps = gst_caps_from_string (ICYCAPS);
 
-  push_data (buf1, G_N_ELEMENTS (buf1), icy_caps, 0);
+  gst_check_setup_events (srcpad, icydemux, icy_caps, GST_FORMAT_TIME);
+
+  push_data (buf1, G_N_ELEMENTS (buf1), 0);
 
   /* one byte isn't really enough for typefinding, can't have a srcpad yet */
   fail_unless (gst_element_get_static_pad (icydemux, "src") == NULL);
 
-  push_data (buf2, G_N_ELEMENTS (buf2), icy_caps, -1);
+  push_data (buf2, G_N_ELEMENTS (buf2), -1);
 
   /* should have been enough to create a audio/x-musepack source pad .. */
   icy_srcpad = gst_element_get_static_pad (icydemux, "src");
@@ -262,8 +341,13 @@ GST_END_TEST;
 GST_START_TEST (test_not_negotiated)
 {
   GstBuffer *buf;
+  GstSegment segment;
 
   create_icydemux ();
+
+  gst_segment_init (&segment, GST_FORMAT_BYTES);
+  gst_pad_push_event (srcpad, gst_event_new_stream_start ("test"));
+  gst_pad_push_event (srcpad, gst_event_new_segment (&segment));
 
   buf = gst_buffer_new_and_alloc (0);
   GST_BUFFER_OFFSET (buf) = 0;
@@ -284,6 +368,7 @@ icydemux_suite (void)
 
   suite_add_tcase (s, tc_chain);
   tcase_add_test (tc_chain, test_demux);
+  tcase_add_test (tc_chain, test_demux_empty_data);
   tcase_add_test (tc_chain, test_first_buf_offset_when_merged_for_typefinding);
   tcase_add_test (tc_chain, test_not_negotiated);
 

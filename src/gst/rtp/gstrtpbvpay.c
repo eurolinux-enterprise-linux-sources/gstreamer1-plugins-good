@@ -13,8 +13,16 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
+ */
+
+/**
+ * SECTION:element-rtpbvpay
+ * @see_also: rtpbvdepay
+ *
+ * Payload BroadcomVoice audio into RTP packets according to RFC 4298.
+ * For detailed information see: http://www.rfc-editor.org/rfc/rfc4298.txt
  */
 
 #ifdef HAVE_CONFIG_H
@@ -73,10 +81,10 @@ gst_rtp_bv_pay_class_init (GstRTPBVPayClass * klass)
   gstelement_class = (GstElementClass *) klass;
   gstrtpbasepayload_class = (GstRTPBasePayloadClass *) klass;
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_bv_pay_sink_template));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_bv_pay_src_template));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_bv_pay_sink_template);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_bv_pay_src_template);
 
   gst_element_class_set_static_metadata (gstelement_class, "RTP BV Payloader",
       "Codec/Payloader/Network/RTP",
@@ -209,6 +217,17 @@ gst_rtp_bv_pay_sink_getcaps (GstRTPBasePayload * rtppayload, GstPad * pad,
     }
     gst_caps_unref (otherpadcaps);
   }
+
+  if (filter) {
+    GstCaps *tmp;
+
+    GST_DEBUG_OBJECT (rtppayload, "Intersect %" GST_PTR_FORMAT " and filter %"
+        GST_PTR_FORMAT, caps, filter);
+    tmp = gst_caps_intersect_full (filter, caps, GST_CAPS_INTERSECT_FIRST);
+    gst_caps_unref (caps);
+    caps = tmp;
+  }
+
   return caps;
 }
 

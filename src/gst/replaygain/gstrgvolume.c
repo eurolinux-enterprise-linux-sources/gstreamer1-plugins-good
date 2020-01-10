@@ -162,8 +162,7 @@ gst_rg_volume_class_init (GstRgVolumeClass * klass)
    *
    * If album mode is enabled but the album gain tag is absent in the stream,
    * the track gain is used instead.  If both gain tags are missing, the value
-   * of the <link linkend="GstRgVolume--fallback-gain">fallback-gain</link>
-   * property is used instead.
+   * of the #GstRgVolume:fallback-gain property is used instead.
    */
   g_object_class_install_property (gobject_class, PROP_ALBUM_MODE,
       g_param_spec_boolean ("album-mode", "Album mode",
@@ -223,24 +222,22 @@ gst_rg_volume_class_init (GstRgVolumeClass * klass)
    *
    * Applied gain [dB].  This gain is applied to processed buffer data.
    *
-   * This is set to the <link linkend="GstRgVolume--target-gain">target
-   * gain</link> if amplification by that amount can be applied safely.
-   * "Safely" means that the volume adjustment does not inflict clipping
-   * distortion.  Should this not be the case, the result gain is set to an
-   * appropriately reduced value (by applying peak normalization).  The proposed
-   * standard calls this "clipping prevention".
+   * This is set to the #GstRgVolume:target-gain if amplification by that amount
+   * can be applied safely. "Safely" means that the volume adjustment does not
+   * inflict clipping distortion.  Should this not be the case, the result gain
+   * is set to an appropriately reduced value (by applying peak normalization).
+   * The proposed standard calls this "clipping prevention".
    *
    * The difference between target and result gain reflects the necessary amount
    * of reduction.  Applications can make use of this information to temporarily
-   * reduce the <link linkend="GstRgVolume--pre-amp">pre-amp</link> for
-   * subsequent streams, as recommended by the ReplayGain standard.
+   * reduce the #GstRgVolume:pre-amp for subsequent streams, as recommended by
+   * the ReplayGain standard.
    *
    * Note that target and result gain differing for a great majority of streams
    * indicates a problem: What happens in this case is that most streams receive
    * peak normalization instead of amplification by the ideal replay gain.  To
-   * prevent this, the <link linkend="GstRgVolume--pre-amp">pre-amp</link> has
-   * to be lowered and/or a limiter has to be used which facilitates the use of
-   * <link linkend="GstRgVolume--headroom">headroom</link>.
+   * prevent this, the #GstRgVolume:pre-amp has to be lowered and/or a limiter
+   * has to be used which facilitates the use of #GstRgVolume:headroom.
    */
   g_object_class_install_property (gobject_class, PROP_RESULT_GAIN,
       g_param_spec_double ("result-gain", "Result-gain", "Applied gain [dB]",
@@ -250,18 +247,14 @@ gst_rg_volume_class_init (GstRgVolumeClass * klass)
    *
    * Applicable gain [dB].  This gain is supposed to be applied.
    *
-   * Depending on the value of the <link
-   * linkend="GstRgVolume--album-mode">album-mode</link> property and the
+   * Depending on the value of the #GstRgVolume:album-mode property and the
    * presence of ReplayGain tags in the stream, this is set according to one of
    * these simple formulas:
    *
    * <itemizedlist>
-   * <listitem><link linkend="GstRgVolume--pre-amp">pre-amp</link> + album gain
-   * of the stream</listitem>
-   * <listitem><link linkend="GstRgVolume--pre-amp">pre-amp</link> + track gain
-   * of the stream</listitem>
-   * <listitem><link linkend="GstRgVolume--pre-amp">pre-amp</link> + <link
-   * linkend="GstRgVolume--fallback-gain">fallback gain</link></listitem>
+   * <listitem>#GstRgVolume:pre-amp + album gain of the stream</listitem>
+   * <listitem>#GstRgVolume:pre-amp + track gain of the stream</listitem>
+   * <listitem>#GstRgVolume:pre-amp + #GstRgVolume:fallback-gain</listitem>
    * </itemizedlist>
    */
   g_object_class_install_property (gobject_class, PROP_TARGET_GAIN,
@@ -278,10 +271,8 @@ gst_rg_volume_class_init (GstRgVolumeClass * klass)
   bin_class->add_element = NULL;
   bin_class->remove_element = NULL;
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&src_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&sink_template));
+  gst_element_class_add_static_pad_template (element_class, &src_template);
+  gst_element_class_add_static_pad_template (element_class, &sink_template);
   gst_element_class_set_static_metadata (element_class, "ReplayGain volume",
       "Filter/Effect/Audio",
       "Apply ReplayGain volume adjustment",
@@ -327,14 +318,14 @@ gst_rg_volume_init (GstRgVolume * self)
 
   volume_pad = gst_element_get_static_pad (self->volume_element, "sink");
   ghost_pad = gst_ghost_pad_new_from_template ("sink", volume_pad,
-      gst_pad_get_pad_template (volume_pad));
+      GST_PAD_PAD_TEMPLATE (volume_pad));
   gst_object_unref (volume_pad);
   gst_pad_set_event_function (ghost_pad, gst_rg_volume_sink_event);
   gst_element_add_pad (GST_ELEMENT_CAST (self), ghost_pad);
 
   volume_pad = gst_element_get_static_pad (self->volume_element, "src");
   ghost_pad = gst_ghost_pad_new_from_template ("src", volume_pad,
-      gst_pad_get_pad_template (volume_pad));
+      GST_PAD_PAD_TEMPLATE (volume_pad));
   gst_object_unref (volume_pad);
   gst_element_add_pad (GST_ELEMENT_CAST (self), ghost_pad);
 }
@@ -448,12 +439,10 @@ static gboolean
 gst_rg_volume_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
 {
   GstRgVolume *self;
-  GstPad *volume_sink_pad;
   GstEvent *send_event = event;
   gboolean res;
 
   self = GST_RG_VOLUME (parent);
-  volume_sink_pad = gst_ghost_pad_get_target (GST_GHOST_PAD (pad));
 
   switch (GST_EVENT_TYPE (event)) {
     case GST_EVENT_TAG:
@@ -477,11 +466,9 @@ gst_rg_volume_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
   }
 
   if (G_LIKELY (send_event != NULL))
-    res = gst_pad_send_event (volume_sink_pad, send_event);
+    res = gst_pad_event_default (pad, parent, send_event);
   else
     res = TRUE;
-
-  gst_object_unref (volume_sink_pad);
 
   return res;
 }
@@ -570,9 +557,7 @@ gst_rg_volume_tag_event (GstRgVolume * self, GstEvent * event)
   self->has_album_gain |= has_album_gain;
   self->has_album_peak |= has_album_peak;
 
-  event = (GstEvent *) gst_mini_object_make_writable (GST_MINI_OBJECT (event));
-  gst_event_parse_tag (event, &tag_list);
-
+  tag_list = gst_tag_list_copy (tag_list);
   gst_tag_list_remove_tag (tag_list, GST_TAG_TRACK_GAIN);
   gst_tag_list_remove_tag (tag_list, GST_TAG_TRACK_PEAK);
   gst_tag_list_remove_tag (tag_list, GST_TAG_ALBUM_GAIN);
@@ -581,12 +566,13 @@ gst_rg_volume_tag_event (GstRgVolume * self, GstEvent * event)
 
   gst_rg_volume_update_gain (self);
 
+  gst_event_unref (event);
   if (gst_tag_list_is_empty (tag_list)) {
-    gst_event_unref (event);
-    event = NULL;
+    gst_tag_list_unref (tag_list);
+    return NULL;
   }
 
-  return event;
+  return gst_event_new_tag (tag_list);
 }
 
 static void

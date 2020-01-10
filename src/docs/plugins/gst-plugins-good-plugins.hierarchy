@@ -1,8 +1,10 @@
 GObject
+  GIOStream
+    GTlsConnection
   GInitiallyUnowned
     GstObject
       GstAllocator
-        GstDefaultAllocator
+        GstAllocatorSysmem
       GstAudioRingBuffer
         GstAudioSinkRingBuffer
         GstAudioSrcRingBuffer
@@ -14,20 +16,28 @@ GObject
           GstAudioClock
       GstControlBinding
       GstControlSource
+      GstDeviceProvider
+        GstPulseDeviceProvider
+        GstV4l2DeviceProvider
       GstElement
         Gst3GPPMux
-        GstALawDec
-        GstALawEnc
         GstAsteriskh263
         GstAuParse
         GstAudioDecoder
+          GstALawDec
           GstFlacDec
+          GstMuLawDec
           GstSpeexDec
           GstWavpackDec
         GstAudioEncoder
+          GstALawEnc
           GstFlacEnc
+          GstMuLawEnc
           GstSpeexEnc
           GstWavpackEnc
+        GstAudioVisualizer
+          GstGoom
+          GstGoom2k1
         GstAviDemux
         GstAviMux
         GstAviSubtitle
@@ -38,6 +48,8 @@ GObject
           GstDcaParse
           GstFlacParse
           GstMpegAudioParse
+          GstRtpStreamDepay
+          GstSbcParse
           GstWavpackParse
         GstBaseSink
           GstAudioBaseSink
@@ -59,6 +71,7 @@ GObject
             GstGdkPixbufSink
             GstV4l2Sink
         GstBaseSrc
+          GstDTMFSrc
           GstPushSrc
             GstAudioBaseSrc
               GstAudioSrc
@@ -73,6 +86,7 @@ GObject
             GstUDPSrc
             GstV4l2Src
             GstXImageSrc
+          GstRTPDTMFSrc
           GstSplitFileSrc
         GstBaseTransform
           GstAudioFilter
@@ -103,6 +117,7 @@ GObject
           GstProgressReport
           GstRgAnalysis
           GstRgLimiter
+          GstScaletempo
           GstTagInject
           GstVideoFilter
             GstAgingTV
@@ -131,16 +146,19 @@ GObject
             GstWarpTV
         GstBin
           GstAspectRatioCrop
-          GstAutoAudioSink
-          GstAutoAudioSrc
-          GstAutoVideoSink
-          GstAutoVideoSrc
+          GstAutoDetect
+            GstAutoAudioSink
+            GstAutoAudioSrc
+            GstAutoVideoSink
+            GstAutoVideoSrc
           GstPipeline
             GstQTMoovRecover
           GstPushFileSrc
           GstRTSPSrc
           GstRgVolume
           GstRtpBin
+          GstSplitMuxSink
+          GstSplitMuxSrc
         GstCutter
         GstDVDec
         GstDVDemux
@@ -151,8 +169,6 @@ GObject
         GstFlvMux
         GstFlxDec
         GstGdkPixbufDec
-        GstGoom
-        GstGoom2k1
         GstICYDemux
         GstISMLMux
         GstImageFreeze
@@ -163,8 +179,6 @@ GObject
         GstMatroskaMux
           GstWebMMux
         GstMatroskaParse
-        GstMuLawDec
-        GstMuLawEnc
         GstMultipartDemux
         GstMultipartMux
         GstQTDemux
@@ -173,22 +187,28 @@ GObject
           GstRTPBVDepay
           GstRTPDVDepay
           GstRTPGSMDepay
+          GstRTPOpusDepay
           GstRTPSirenDepay
           GstRTPiLBCDepay
           GstRtpAC3Depay
           GstRtpAMRDepay
           GstRtpCELTDepay
+          GstRtpDTMFDepay
           GstRtpG722Depay
           GstRtpG723Depay
           GstRtpG726Depay
           GstRtpG729Depay
           GstRtpGSTDepay
+          GstRtpH261Depay
           GstRtpH263Depay
           GstRtpH263PDepay
           GstRtpH264Depay
+          GstRtpH265Depay
           GstRtpJ2KDepay
           GstRtpJPEGDepay
+          GstRtpKlvDepay
           GstRtpL16Depay
+          GstRtpL24Depay
           GstRtpMP1SDepay
           GstRtpMP2TDepay
           GstRtpMP4ADepay
@@ -203,7 +223,10 @@ GObject
           GstRtpQDM2Depay
           GstRtpSPEEXDepay
           GstRtpSV3VDepay
+          GstRtpSbcDepay
           GstRtpTheoraDepay
+          GstRtpVP8Depay
+          GstRtpVP9Depay
           GstRtpVRawDepay
           GstRtpVorbisDepay
           GstRtpXQTDepay
@@ -215,6 +238,7 @@ GObject
             GstRtpG722Pay
             GstRtpG726Pay
             GstRtpL16Pay
+            GstRtpL24Pay
             GstRtpPcmaPay
             GstRtpPcmuPay
           GstRTPDVPay
@@ -227,25 +251,38 @@ GObject
           GstRtpAMRPay
           GstRtpCELTPay
           GstRtpGSTPay
+          GstRtpH261Pay
           GstRtpH263PPay
           GstRtpH263Pay
           GstRtpH264Pay
+          GstRtpH265Pay
           GstRtpJ2KPay
           GstRtpJPEGPay
+          GstRtpKlvPay
           GstRtpMP4APay
           GstRtpMP4GPay
           GstRtpMP4VPay
           GstRtpMPAPay
+          GstRtpOPUSPay
+          GstRtpSBCPay
           GstRtpSPEEXPay
           GstRtpTheoraPay
+          GstRtpVP8Pay
+          GstRtpVP9Pay
           GstRtpVRawPay
           GstRtpVorbisPay
         GstRTPDec
+        GstRTPMux
+          GstRTPDTMFMux
+        GstRTPRtxQueue
         GstRndBufferSize
         GstRtpJitterBuffer
         GstRtpPtDemux
+        GstRtpRtxReceive
+        GstRtpRtxSend
         GstRtpSession
         GstRtpSsrcDemux
+        GstRtpStreamPay
         GstSMPTE
         GstShapeWipe
         GstTagDemux
@@ -258,27 +295,46 @@ GObject
         GstVideoDecoder
           GstJpegDec
           GstPngDec
-          GstVP8Dec
+          GstVPXDec
+            GstVP8Dec
+            GstVP9Dec
         GstVideoEncoder
           GstJpegEnc
           GstPngEnc
-          GstVP8Enc
+          GstVPXEnc
+            GstVP8Enc
+            GstVP9Enc
+          GstY4mEncode
         GstVideoMixer2
         GstWavEnc
         GstWavParse
-        GstY4mEncode
       GstPad
         GstInterleavePad
         GstVideoMixer2Pad
       GstPadTemplate
       GstPlugin
       GstPluginFeature
+        GstDeviceProviderFactory
         GstElementFactory
+        GstTracerFactory
         GstTypeFindFactory
       GstRegistry
       GstTask
       GstTaskPool
+  GResolver
   GSocket
+  GSocketAddress
+    GInetSocketAddress
+      GProxyAddress
+  GSocketClient
+  GSocketControlMessage
+    GstIPPktinfoMessage
+    GstIPV6PktinfoMessage
+  GSocketListener
+    GSocketService
+  GTlsCertificate
+  GTlsDatabase
+  GTlsInteraction
   GdkPixbuf
   GstColorBalanceChannel
   GstTunerChannel
@@ -286,12 +342,15 @@ GObject
   RTPSession
   SoupSession
 GInterface
+  GDatagramBased
   GIcon
   GInitable
+  GLoadableIcon
+  GProxyResolver
+  GSocketConnectable
   GTypePlugin
   GstChildProxy
   GstColorBalance
-  GstNavigation
   GstPreset
   GstStreamVolume
   GstTagSetter
@@ -299,5 +358,5 @@ GInterface
   GstTocSetter
   GstTuner
   GstURIHandler
+  GstVideoDirection
   GstVideoOrientation
-  GstVideoOverlay

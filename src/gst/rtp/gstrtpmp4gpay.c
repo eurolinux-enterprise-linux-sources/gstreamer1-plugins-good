@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -27,6 +27,7 @@
 #include <gst/rtp/gstrtpbuffer.h>
 
 #include "gstrtpmp4gpay.h"
+#include "gstrtputils.h"
 
 GST_DEBUG_CATEGORY_STATIC (rtpmp4gpay_debug);
 #define GST_CAT_DEFAULT (rtpmp4gpay_debug)
@@ -106,10 +107,10 @@ G_DEFINE_TYPE (GstRtpMP4GPay, gst_rtp_mp4g_pay, GST_TYPE_RTP_BASE_PAYLOAD)
   gstrtpbasepayload_class->handle_buffer = gst_rtp_mp4g_pay_handle_buffer;
   gstrtpbasepayload_class->sink_event = gst_rtp_mp4g_pay_sink_event;
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_mp4g_pay_src_template));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_mp4g_pay_sink_template));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_mp4g_pay_src_template);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_mp4g_pay_sink_template);
 
   gst_element_class_set_static_metadata (gstelement_class,
       "RTP MPEG4 ES payloader",
@@ -133,7 +134,6 @@ gst_rtp_mp4g_pay_reset (GstRtpMP4GPay * rtpmp4gpay)
   GST_DEBUG_OBJECT (rtpmp4gpay, "reset");
 
   gst_adapter_clear (rtpmp4gpay->adapter);
-  rtpmp4gpay->offset = 0;
 }
 
 static void
@@ -469,6 +469,7 @@ gst_rtp_mp4g_pay_flush (GstRtpMP4GPay * rtpmp4gpay)
     guint payload_len;
     guint packet_len;
     GstRTPBuffer rtp = { NULL };
+    GstBuffer *paybuf;
 
     /* this will be the total lenght of the packet */
     packet_len = gst_rtp_buffer_calc_packet_len (avail, 0, 0);
@@ -485,7 +486,7 @@ gst_rtp_mp4g_pay_flush (GstRtpMP4GPay * rtpmp4gpay)
         packet_len, payload_len);
 
     /* create buffer to hold the payload, also make room for the 4 header bytes. */
-    outbuf = gst_rtp_buffer_new_allocate (payload_len + 4, 0, 0);
+    outbuf = gst_rtp_buffer_new_allocate (4, 0, 0);
 
     gst_rtp_buffer_map (outbuf, GST_MAP_WRITE, &rtp);
 
@@ -526,21 +527,24 @@ gst_rtp_mp4g_pay_flush (GstRtpMP4GPay * rtpmp4gpay)
     payload[2] = (total & 0x1fe0) >> 5;
     payload[3] = (total & 0x1f) << 3;   /* we use 13 bits for the size, 3 bits index */
 
-    /* copy stuff from adapter to payload */
-    gst_adapter_copy (rtpmp4gpay->adapter, &payload[4], 0, payload_len);
-    gst_adapter_flush (rtpmp4gpay->adapter, payload_len);
-
     /* marker only if the packet is complete */
     gst_rtp_buffer_set_marker (&rtp, avail <= payload_len);
 
     gst_rtp_buffer_unmap (&rtp);
 
-    GST_BUFFER_TIMESTAMP (outbuf) = rtpmp4gpay->first_timestamp;
+    paybuf = gst_adapter_take_buffer_fast (rtpmp4gpay->adapter, payload_len);
+    gst_rtp_copy_meta (GST_ELEMENT_CAST (rtpmp4gpay), outbuf, paybuf, 0);
+    outbuf = gst_buffer_append (outbuf, paybuf);
+
+    GST_BUFFER_PTS (outbuf) = rtpmp4gpay->first_timestamp;
     GST_BUFFER_DURATION (outbuf) = rtpmp4gpay->first_duration;
 
-    if (rtpmp4gpay->frame_len) {
-      GST_BUFFER_OFFSET (outbuf) = rtpmp4gpay->offset;
-      rtpmp4gpay->offset += rtpmp4gpay->frame_len;
+    GST_BUFFER_OFFSET (outbuf) = GST_BUFFER_OFFSET_NONE;
+
+    if (rtpmp4gpay->discont) {
+      GST_BUFFER_FLAG_SET (outbuf, GST_BUFFER_FLAG_DISCONT);
+      /* Only the first outputted buffer has the DISCONT flag */
+      rtpmp4gpay->discont = FALSE;
     }
 
     ret = gst_rtp_base_payload_push (GST_RTP_BASE_PAYLOAD (rtpmp4gpay), outbuf);
@@ -561,8 +565,9 @@ gst_rtp_mp4g_pay_handle_buffer (GstRTPBasePayload * basepayload,
 
   rtpmp4gpay = GST_RTP_MP4G_PAY (basepayload);
 
-  rtpmp4gpay->first_timestamp = GST_BUFFER_TIMESTAMP (buffer);
+  rtpmp4gpay->first_timestamp = GST_BUFFER_PTS (buffer);
   rtpmp4gpay->first_duration = GST_BUFFER_DURATION (buffer);
+  rtpmp4gpay->discont = GST_BUFFER_IS_DISCONT (buffer);
 
   /* we always encode and flush a full AU */
   gst_adapter_push (rtpmp4gpay->adapter, buffer);

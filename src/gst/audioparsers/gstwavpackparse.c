@@ -15,8 +15,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 /**
  * SECTION:element-wavpackparse
@@ -41,7 +41,8 @@
 
 #include "gstwavpackparse.h"
 
-#include <gst/base/gstbytereader.h>
+#include <gst/base/base.h>
+#include <gst/pbutils/pbutils.h>
 #include <gst/audio/audio.h>
 
 GST_DEBUG_CATEGORY_STATIC (wavpack_parse_debug);
@@ -70,6 +71,8 @@ static GstFlowReturn gst_wavpack_parse_handle_frame (GstBaseParse * parse,
     GstBaseParseFrame * frame, gint * skipsize);
 static GstCaps *gst_wavpack_parse_get_sink_caps (GstBaseParse * parse,
     GstCaps * filter);
+static GstFlowReturn gst_wavpack_parse_pre_push_frame (GstBaseParse * parse,
+    GstBaseParseFrame * frame);
 
 #define gst_wavpack_parse_parent_class parent_class
 G_DEFINE_TYPE (GstWavpackParse, gst_wavpack_parse, GST_TYPE_BASE_PARSE);
@@ -92,11 +95,11 @@ gst_wavpack_parse_class_init (GstWavpackParseClass * klass)
       GST_DEBUG_FUNCPTR (gst_wavpack_parse_handle_frame);
   parse_class->get_sink_caps =
       GST_DEBUG_FUNCPTR (gst_wavpack_parse_get_sink_caps);
+  parse_class->pre_push_frame =
+      GST_DEBUG_FUNCPTR (gst_wavpack_parse_pre_push_frame);
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&sink_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&src_template));
+  gst_element_class_add_static_pad_template (element_class, &sink_template);
+  gst_element_class_add_static_pad_template (element_class, &src_template);
 
   gst_element_class_set_static_metadata (element_class,
       "Wavpack audio stream parser", "Codec/Parser/Audio",
@@ -111,12 +114,15 @@ gst_wavpack_parse_reset (GstWavpackParse * wvparse)
   wvparse->sample_rate = -1;
   wvparse->width = -1;
   wvparse->total_samples = 0;
+  wvparse->sent_codec_tag = FALSE;
 }
 
 static void
 gst_wavpack_parse_init (GstWavpackParse * wvparse)
 {
   gst_wavpack_parse_reset (wvparse);
+  GST_PAD_SET_ACCEPT_INTERSECT (GST_BASE_PARSE_SINK_PAD (wvparse));
+  GST_PAD_SET_ACCEPT_TEMPLATE (GST_BASE_PARSE_SINK_PAD (wvparse));
 }
 
 static void
@@ -536,11 +542,12 @@ gst_wavpack_parse_handle_frame (GstBaseParse * parse,
 
   GST_LOG_OBJECT (parse, "rate: %u, width: %u, chans: %u", rate, width, chans);
 
-  GST_BUFFER_TIMESTAMP (buf) =
+  GST_BUFFER_PTS (buf) =
       gst_util_uint64_scale_int (wph.block_index, GST_SECOND, rate);
+  GST_BUFFER_DTS (buf) = GST_BUFFER_PTS (buf);
   GST_BUFFER_DURATION (buf) =
       gst_util_uint64_scale_int (wph.block_index + wph.block_samples,
-      GST_SECOND, rate) - GST_BUFFER_TIMESTAMP (buf);
+      GST_SECOND, rate) - GST_BUFFER_PTS (buf);
 
   if (G_UNLIKELY (wvparse->sample_rate != rate || wvparse->channels != chans
           || wvparse->width != width || wvparse->channel_mask != mask)) {
@@ -608,6 +615,19 @@ more:
   return GST_FLOW_OK;
 }
 
+static void
+remove_fields (GstCaps * caps)
+{
+  guint i, n;
+
+  n = gst_caps_get_size (caps);
+  for (i = 0; i < n; i++) {
+    GstStructure *s = gst_caps_get_structure (caps, i);
+
+    gst_structure_remove_field (s, "framed");
+  }
+}
+
 static GstCaps *
 gst_wavpack_parse_get_sink_caps (GstBaseParse * parse, GstCaps * filter)
 {
@@ -615,29 +635,23 @@ gst_wavpack_parse_get_sink_caps (GstBaseParse * parse, GstCaps * filter)
   GstCaps *res;
 
   templ = gst_pad_get_pad_template_caps (GST_BASE_PARSE_SINK_PAD (parse));
-  peercaps = gst_pad_peer_query_caps (GST_BASE_PARSE_SRC_PAD (parse), filter);
+  if (filter) {
+    GstCaps *fcopy = gst_caps_copy (filter);
+    /* Remove the fields we convert */
+    remove_fields (fcopy);
+    peercaps = gst_pad_peer_query_caps (GST_BASE_PARSE_SRC_PAD (parse), fcopy);
+    gst_caps_unref (fcopy);
+  } else
+    peercaps = gst_pad_peer_query_caps (GST_BASE_PARSE_SRC_PAD (parse), NULL);
 
   if (peercaps) {
-    guint i, n;
-
     /* Remove the framed field */
     peercaps = gst_caps_make_writable (peercaps);
-    n = gst_caps_get_size (peercaps);
-    for (i = 0; i < n; i++) {
-      GstStructure *s = gst_caps_get_structure (peercaps, i);
-
-      gst_structure_remove_field (s, "framed");
-    }
+    remove_fields (peercaps);
 
     res = gst_caps_intersect_full (peercaps, templ, GST_CAPS_INTERSECT_FIRST);
     gst_caps_unref (peercaps);
-    res = gst_caps_make_writable (res);
-
-    /* Append the template caps because we still want to accept
-     * caps without any fields in the case upstream does not
-     * know anything.
-     */
-    gst_caps_append (res, templ);
+    gst_caps_unref (templ);
   } else {
     res = templ;
   }
@@ -652,4 +666,41 @@ gst_wavpack_parse_get_sink_caps (GstBaseParse * parse, GstCaps * filter)
   }
 
   return res;
+}
+
+static GstFlowReturn
+gst_wavpack_parse_pre_push_frame (GstBaseParse * parse,
+    GstBaseParseFrame * frame)
+{
+  GstWavpackParse *wavpackparse = GST_WAVPACK_PARSE (parse);
+
+  if (!wavpackparse->sent_codec_tag) {
+    GstTagList *taglist;
+    GstCaps *caps;
+
+    /* codec tag */
+    caps = gst_pad_get_current_caps (GST_BASE_PARSE_SRC_PAD (parse));
+    if (G_UNLIKELY (caps == NULL)) {
+      if (GST_PAD_IS_FLUSHING (GST_BASE_PARSE_SRC_PAD (parse))) {
+        GST_INFO_OBJECT (parse, "Src pad is flushing");
+        return GST_FLOW_FLUSHING;
+      } else {
+        GST_INFO_OBJECT (parse, "Src pad is not negotiated!");
+        return GST_FLOW_NOT_NEGOTIATED;
+      }
+    }
+
+    taglist = gst_tag_list_new_empty ();
+    gst_pb_utils_add_codec_description_to_tag_list (taglist,
+        GST_TAG_AUDIO_CODEC, caps);
+    gst_caps_unref (caps);
+
+    gst_base_parse_merge_tags (parse, taglist, GST_TAG_MERGE_REPLACE);
+    gst_tag_list_unref (taglist);
+
+    /* also signals the end of first-frame processing */
+    wavpackparse->sent_codec_tag = TRUE;
+  }
+
+  return GST_FLOW_OK;
 }

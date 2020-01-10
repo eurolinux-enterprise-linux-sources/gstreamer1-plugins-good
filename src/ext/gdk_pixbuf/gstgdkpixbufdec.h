@@ -14,8 +14,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifndef __GST_GDK_PIXBUF_DEC_H__
@@ -47,13 +47,15 @@ struct _GstGdkPixbufDec
 
   GstPad *sinkpad, *srcpad;
 
-  GstClockTime    last_timestamp;
-  GdkPixbufLoader *pixbuf_loader;
+  GstClockTime      last_timestamp;
+  GdkPixbufLoader  *pixbuf_loader;
 
   gint in_fps_n, in_fps_d;
 
-  GstVideoInfo info;
+  GstVideoInfo   info;
   GstBufferPool *pool;
+  GList         *pending_events;
+  gboolean       packetized;
 };
 
 struct _GstGdkPixbufDecClass

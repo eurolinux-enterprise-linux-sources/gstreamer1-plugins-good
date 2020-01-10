@@ -35,38 +35,21 @@ include $(top_srcdir)/common/release.mak
 include $(top_srcdir)/common/po.mak
 
 check-valgrind:
-	cd tests/check && make check-valgrind
+	$(MAKE) -C tests/check check-valgrind
 
 if HAVE_GST_CHECK
 check-torture:
-	cd tests/check && make torture
+	$(MAKE) -C tests/check torture
+build-checks:
+	$(MAKE) -C tests/check build-checks
 else
 check-torture:
+	true
+build-checks:
 	true
 endif
 
 win32-update:
-	for f in gst/udp/gstudp-marshal.c \
-		 gst/udp/gstudp-marshal.h \
-		 gst/udp/gstudp-enumtypes.c \
-		 gst/udp/gstudp-enumtypes.h \
-		 gst/rtpmanager/gstrtpbin-marshal.c \
-		 gst/rtpmanager/gstrtpbin-marshal.h \
-		 sys/v4l2/tuner-enumtypes.c \
-		 sys/v4l2/tuner-enumtypes.h \
-		 sys/v4l2/tuner-marshal.c \
-		 sys/v4l2/tuner-marshal.h; do \
-		cp $(top_builddir)/$$f win32/common; done
-	$(top_srcdir)/common/gst-indent win32/common/gstudp-marshal.c
-	$(top_srcdir)/common/gst-indent win32/common/gstudp-marshal.c
-	$(top_srcdir)/common/gst-indent win32/common/gstudp-enumtypes.c
-	$(top_srcdir)/common/gst-indent win32/common/gstudp-enumtypes.c
-	$(top_srcdir)/common/gst-indent win32/common/gstrtpbin-marshal.c
-	$(top_srcdir)/common/gst-indent win32/common/gstrtpbin-marshal.c
-	$(top_srcdir)/common/gst-indent win32/common/tuner-enumtypes.c
-	$(top_srcdir)/common/gst-indent win32/common/tuner-enumtypes.c
-	$(top_srcdir)/common/gst-indent win32/common/tuner-marshal.c
-	$(top_srcdir)/common/gst-indent win32/common/tuner-marshal.c
 	cp $(top_builddir)/win32/common/config.h-new \
 	    $(top_srcdir)/win32/common/config.h
 
@@ -85,6 +68,7 @@ CRUFT_FILES = \
 	$(top_builddir)/gst/videofilter/.libs/*gamma.{so,dll,DLL,dylib}
 
 CRUFT_DIRS = \
+	$(top_srcdir)/docs/plugins/tmpl \
 	$(top_srcdir)/gst/median \
 	$(top_srcdir)/gst/qtdemux \
 	$(top_srcdir)/gst/quicktime \

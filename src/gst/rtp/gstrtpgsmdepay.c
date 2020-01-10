@@ -14,8 +14,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -24,7 +24,9 @@
 
 #include <string.h>
 #include <gst/rtp/gstrtpbuffer.h>
+#include <gst/audio/audio.h>
 #include "gstrtpgsmdepay.h"
+#include "gstrtputils.h"
 
 GST_DEBUG_CATEGORY_STATIC (rtpgsmdepay_debug);
 #define GST_CAT_DEFAULT (rtpgsmdepay_debug)
@@ -49,7 +51,6 @@ static GstStaticPadTemplate gst_rtp_gsm_depay_sink_template =
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS ("application/x-rtp, "
         "media = (string) \"audio\", "
-        "payload = (int) " GST_RTP_PAYLOAD_DYNAMIC_STRING ", "
         "clock-rate = (int) 8000, " "encoding-name = (string) \"GSM\";"
         "application/x-rtp, "
         "media = (string) \"audio\", "
@@ -58,7 +59,7 @@ static GstStaticPadTemplate gst_rtp_gsm_depay_sink_template =
     );
 
 static GstBuffer *gst_rtp_gsm_depay_process (GstRTPBaseDepayload * _depayload,
-    GstBuffer * buf);
+    GstRTPBuffer * rtp);
 static gboolean gst_rtp_gsm_depay_setcaps (GstRTPBaseDepayload * _depayload,
     GstCaps * caps);
 
@@ -74,16 +75,16 @@ gst_rtp_gsm_depay_class_init (GstRTPGSMDepayClass * klass)
   gstelement_class = (GstElementClass *) klass;
   gstrtpbase_depayload_class = (GstRTPBaseDepayloadClass *) klass;
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_gsm_depay_src_template));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_gsm_depay_sink_template));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_gsm_depay_src_template);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_gsm_depay_sink_template);
 
   gst_element_class_set_static_metadata (gstelement_class,
       "RTP GSM depayloader", "Codec/Depayloader/Network/RTP",
       "Extracts GSM audio from RTP packets", "Zeeshan Ali <zeenix@gmail.com>");
 
-  gstrtpbase_depayload_class->process = gst_rtp_gsm_depay_process;
+  gstrtpbase_depayload_class->process_rtp_packet = gst_rtp_gsm_depay_process;
   gstrtpbase_depayload_class->set_caps = gst_rtp_gsm_depay_setcaps;
 
   GST_DEBUG_CATEGORY_INIT (rtpgsmdepay_debug, "rtpgsmdepay", 0,
@@ -118,27 +119,27 @@ gst_rtp_gsm_depay_setcaps (GstRTPBaseDepayload * depayload, GstCaps * caps)
 }
 
 static GstBuffer *
-gst_rtp_gsm_depay_process (GstRTPBaseDepayload * _depayload, GstBuffer * buf)
+gst_rtp_gsm_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
 {
   GstBuffer *outbuf = NULL;
   gboolean marker;
-  GstRTPBuffer rtp = { NULL };
 
-  gst_rtp_buffer_map (buf, GST_MAP_READ, &rtp);
-
-  marker = gst_rtp_buffer_get_marker (&rtp);
+  marker = gst_rtp_buffer_get_marker (rtp);
 
   GST_DEBUG ("process : got %" G_GSIZE_FORMAT " bytes, mark %d ts %u seqn %d",
-      gst_buffer_get_size (buf), marker,
-      gst_rtp_buffer_get_timestamp (&rtp), gst_rtp_buffer_get_seq (&rtp));
+      gst_buffer_get_size (rtp->buffer), marker,
+      gst_rtp_buffer_get_timestamp (rtp), gst_rtp_buffer_get_seq (rtp));
 
-  outbuf = gst_rtp_buffer_get_payload_buffer (&rtp);
-
-  gst_rtp_buffer_unmap (&rtp);
+  outbuf = gst_rtp_buffer_get_payload_buffer (rtp);
 
   if (marker && outbuf) {
-    /* mark start of talkspurt with DISCONT */
-    GST_BUFFER_FLAG_SET (outbuf, GST_BUFFER_FLAG_DISCONT);
+    /* mark start of talkspurt with RESYNC */
+    GST_BUFFER_FLAG_SET (outbuf, GST_BUFFER_FLAG_RESYNC);
+  }
+
+  if (outbuf) {
+    gst_rtp_drop_meta (GST_ELEMENT_CAST (depayload), outbuf,
+        g_quark_from_static_string (GST_META_TAG_AUDIO_STR));
   }
 
   return outbuf;

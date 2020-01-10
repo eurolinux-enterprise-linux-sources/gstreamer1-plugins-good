@@ -20,8 +20,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
@@ -275,14 +275,12 @@ gst_optv_set_info (GstVideoFilter * vfilter, GstCaps * incaps,
   height = GST_VIDEO_INFO_HEIGHT (in_info);
 
   for (i = 0; i < 4; i++) {
-    if (filter->opmap[i])
-      g_free (filter->opmap[i]);
+    g_free (filter->opmap[i]);
     filter->opmap[i] = g_new (gint8, width * height);
   }
   setOpmap (filter->opmap, width, height);
 
-  if (filter->diff)
-    g_free (filter->diff);
+  g_free (filter->diff);
   filter->diff = g_new (guint8, width * height);
 
   return TRUE;
@@ -307,14 +305,12 @@ gst_optv_finalize (GObject * object)
     gint i;
 
     for (i = 0; i < 4; i++) {
-      if (filter->opmap[i])
-        g_free (filter->opmap[i]);
+      g_free (filter->opmap[i]);
       filter->opmap[i] = NULL;
     }
   }
 
-  if (filter->diff)
-    g_free (filter->diff);
+  g_free (filter->diff);
   filter->diff = NULL;
 
   G_OBJECT_CLASS (parent_class)->finalize (object);
@@ -400,10 +396,10 @@ gst_optv_class_init (GstOpTVClass * klass)
       "FUKUCHI, Kentarou <fukuchi@users.sourceforge.net>, "
       "Sebastian Dröge <sebastian.droege@collabora.co.uk>");
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_optv_sink_template));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_optv_src_template));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_optv_sink_template);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_optv_src_template);
 
   trans_class->start = GST_DEBUG_FUNCPTR (gst_optv_start);
 

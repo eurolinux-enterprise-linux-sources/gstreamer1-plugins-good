@@ -13,29 +13,46 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
+/**
+ * SECTION:element-rtpamrdepay
+ * @see_also: rtpamrpay
+ *
+ * Extract AMR audio from RTP packets according to RFC 3267.
+ * For detailed information see: http://www.rfc-editor.org/rfc/rfc3267.txt
+ *
+ * <refsect2>
+ * <title>Example pipeline</title>
+ * |[
+ * gst-launch-1.0 udpsrc caps='application/x-rtp, media=(string)audio, clock-rate=(int)8000, encoding-name=(string)AMR, encoding-params=(string)1, octet-align=(string)1, payload=(int)96' ! rtpamrdepay ! amrnbdec ! pulsesink
+ * ]| This example pipeline will depayload and decode an RTP AMR stream. Refer to
+ * the rtpamrpay example to create the RTP stream.
+ * </refsect2>
+ */
+
+/*
+ * RFC 3267 - Real-Time Transport Protocol (RTP) Payload Format and File
+ * Storage Format for the Adaptive Multi-Rate (AMR) and Adaptive Multi-Rate
+ * Wideband (AMR-WB) Audio Codecs.
+ *
+ */
 #ifdef HAVE_CONFIG_H
 #  include "config.h"
 #endif
 
 #include <gst/rtp/gstrtpbuffer.h>
+#include <gst/audio/audio.h>
 
 #include <stdlib.h>
 #include <string.h>
 #include "gstrtpamrdepay.h"
+#include "gstrtputils.h"
 
 GST_DEBUG_CATEGORY_STATIC (rtpamrdepay_debug);
 #define GST_CAT_DEFAULT (rtpamrdepay_debug)
-
-/* references:
- *
- * RFC 3267 - Real-Time Transport Protocol (RTP) Payload Format and File
- * Storage Format for the Adaptive Multi-Rate (AMR) and Adaptive Multi-Rate
- * Wideband (AMR-WB) Audio Codecs.
- */
 
 /* RtpAMRDepay signals and args */
 enum
@@ -46,7 +63,7 @@ enum
 
 enum
 {
-  ARG_0
+  PROP_0
 };
 
 /* input is an RTP packet
@@ -59,17 +76,17 @@ static GstStaticPadTemplate gst_rtp_amr_depay_sink_template =
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS ("application/x-rtp, "
         "media = (string) \"audio\", "
-        "payload = (int) " GST_RTP_PAYLOAD_DYNAMIC_STRING ", "
-        "clock-rate = (int) 8000, "
-        "encoding-name = (string) \"AMR\", "
-        "encoding-params = (string) \"1\", "
+        "clock-rate = (int) 8000, " "encoding-name = (string) \"AMR\", "
+        /* This is the default, so the peer doesn't have to specify it
+         * "encoding-params = (string) \"1\", " */
         /* NOTE that all values must be strings in orde to be able to do SDP <->
          * GstCaps mapping. */
-        "octet-align = (string) \"1\", "
-        "crc = (string) { \"0\", \"1\" }, "
-        "robust-sorting = (string) \"0\", " "interleaving = (string) \"0\";"
+        "octet-align = (string) \"1\";"
         /* following options are not needed for a decoder
          *
+         "crc = (string) { \"0\", \"1\" }, "
+         "robust-sorting = (string) \"0\", "
+         "interleaving = (string) \"0\";"
          "mode-set = (int) [ 0, 7 ], "
          "mode-change-period = (int) [ 1, MAX ], "
          "mode-change-neighbor = (boolean) { TRUE, FALSE }, "
@@ -78,17 +95,17 @@ static GstStaticPadTemplate gst_rtp_amr_depay_sink_template =
          */
         "application/x-rtp, "
         "media = (string) \"audio\", "
-        "payload = (int) " GST_RTP_PAYLOAD_DYNAMIC_STRING ", "
-        "clock-rate = (int) 16000, "
-        "encoding-name = (string) \"AMR-WB\", "
-        "encoding-params = (string) \"1\", "
+        "clock-rate = (int) 16000, " "encoding-name = (string) \"AMR-WB\", "
+        /* This is the default, so the peer doesn't have to specify it
+         * "encoding-params = (string) \"1\", " */
         /* NOTE that all values must be strings in orde to be able to do SDP <->
          * GstCaps mapping. */
-        "octet-align = (string) \"1\", "
-        "crc = (string) { \"0\", \"1\" }, "
-        "robust-sorting = (string) \"0\", " "interleaving = (string) \"0\""
+        "octet-align = (string) \"1\";"
         /* following options are not needed for a decoder
          *
+         "crc = (string) { \"0\", \"1\" }, "
+         "robust-sorting = (string) \"0\", "
+         "interleaving = (string) \"0\""
          "mode-set = (int) [ 0, 7 ], "
          "mode-change-period = (int) [ 1, MAX ], "
          "mode-change-neighbor = (boolean) { TRUE, FALSE }, "
@@ -109,7 +126,7 @@ static GstStaticPadTemplate gst_rtp_amr_depay_src_template =
 static gboolean gst_rtp_amr_depay_setcaps (GstRTPBaseDepayload * depayload,
     GstCaps * caps);
 static GstBuffer *gst_rtp_amr_depay_process (GstRTPBaseDepayload * depayload,
-    GstBuffer * buf);
+    GstRTPBuffer * rtp);
 
 #define gst_rtp_amr_depay_parent_class parent_class
 G_DEFINE_TYPE (GstRtpAMRDepay, gst_rtp_amr_depay, GST_TYPE_RTP_BASE_DEPAYLOAD);
@@ -123,17 +140,17 @@ gst_rtp_amr_depay_class_init (GstRtpAMRDepayClass * klass)
   gstelement_class = (GstElementClass *) klass;
   gstrtpbasedepayload_class = (GstRTPBaseDepayloadClass *) klass;
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_amr_depay_src_template));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_amr_depay_sink_template));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_amr_depay_src_template);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_amr_depay_sink_template);
 
   gst_element_class_set_static_metadata (gstelement_class,
       "RTP AMR depayloader", "Codec/Depayloader/Network/RTP",
       "Extracts AMR or AMR-WB audio from RTP packets (RFC 3267)",
       "Wim Taymans <wim.taymans@gmail.com>");
 
-  gstrtpbasedepayload_class->process = gst_rtp_amr_depay_process;
+  gstrtpbasedepayload_class->process_rtp_packet = gst_rtp_amr_depay_process;
   gstrtpbasedepayload_class->set_caps = gst_rtp_amr_depay_setcaps;
 
   GST_DEBUG_CATEGORY_INIT (rtpamrdepay_debug, "rtpamrdepay", 0,
@@ -266,13 +283,12 @@ static const gint wb_frame_size[16] = {
 };
 
 static GstBuffer *
-gst_rtp_amr_depay_process (GstRTPBaseDepayload * depayload, GstBuffer * buf)
+gst_rtp_amr_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
 {
   GstRtpAMRDepay *rtpamrdepay;
   const gint *frame_size;
   GstBuffer *outbuf = NULL;
   gint payload_len;
-  GstRTPBuffer rtp = { NULL };
   GstMapInfo map;
 
   rtpamrdepay = GST_RTP_AMR_DEPAY (depayload);
@@ -283,8 +299,6 @@ gst_rtp_amr_depay_process (GstRTPBaseDepayload * depayload, GstBuffer * buf)
   else
     frame_size = wb_frame_size;
 
-  gst_rtp_buffer_map (buf, GST_MAP_READ, &rtp);
-
   /* when we get here, 1 channel, 8000/16000 Hz, octet aligned, no CRC,
    * no robust sorting, no interleaving data is to be depayloaded */
   {
@@ -293,13 +307,13 @@ gst_rtp_amr_depay_process (GstRTPBaseDepayload * depayload, GstBuffer * buf)
     gint amr_len;
     gint ILL, ILP;
 
-    payload_len = gst_rtp_buffer_get_payload_len (&rtp);
+    payload_len = gst_rtp_buffer_get_payload_len (rtp);
 
     /* need at least 2 bytes for the header */
     if (payload_len < 2)
       goto too_small;
 
-    payload = gst_rtp_buffer_get_payload (&rtp);
+    payload = gst_rtp_buffer_get_payload (rtp);
 
     /* depay CMR. The CMR is used by the sender to request
      * a new encoding mode.
@@ -404,17 +418,19 @@ gst_rtp_amr_depay_process (GstRTPBaseDepayload * depayload, GstBuffer * buf)
     /* we can set the duration because each packet is 20 milliseconds */
     GST_BUFFER_DURATION (outbuf) = num_packets * 20 * GST_MSECOND;
 
-    if (gst_rtp_buffer_get_marker (&rtp)) {
-      /* marker bit marks a discont buffer after a talkspurt. */
+    if (gst_rtp_buffer_get_marker (rtp)) {
+      /* marker bit marks a buffer after a talkspurt. */
       GST_DEBUG_OBJECT (depayload, "marker bit was set");
-      GST_BUFFER_FLAG_SET (outbuf, GST_BUFFER_FLAG_DISCONT);
+      GST_BUFFER_FLAG_SET (outbuf, GST_BUFFER_FLAG_RESYNC);
     }
 
     GST_DEBUG_OBJECT (depayload, "pushing buffer of size %" G_GSIZE_FORMAT,
         gst_buffer_get_size (outbuf));
+
+    gst_rtp_copy_meta (GST_ELEMENT_CAST (rtpamrdepay), outbuf, rtp->buffer,
+        g_quark_from_static_string (GST_META_TAG_AUDIO_STR));
   }
 
-  gst_rtp_buffer_unmap (&rtp);
   return outbuf;
 
   /* ERRORS */
@@ -451,7 +467,6 @@ wrong_length_2:
 bad_packet:
   {
     /* no fatal error */
-    gst_rtp_buffer_unmap (&rtp);
     return NULL;
   }
 }

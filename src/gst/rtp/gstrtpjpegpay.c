@@ -15,8 +15,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
@@ -38,8 +38,10 @@
 
 #include <string.h>
 #include <gst/rtp/gstrtpbuffer.h>
+#include <gst/video/video.h>
 
 #include "gstrtpjpegpay.h"
+#include "gstrtputils.h"
 
 static GstStaticPadTemplate gst_rtp_jpeg_pay_sink_template =
     GST_STATIC_PAD_TEMPLATE ("sink",
@@ -49,13 +51,21 @@ static GstStaticPadTemplate gst_rtp_jpeg_pay_sink_template =
     );
 
 static GstStaticPadTemplate gst_rtp_jpeg_pay_src_template =
-GST_STATIC_PAD_TEMPLATE ("src",
+    GST_STATIC_PAD_TEMPLATE ("src",
     GST_PAD_SRC,
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS ("application/x-rtp, "
         "  media = (string) \"video\", "
-        "  payload = (int) 26 ,        "
-        "  clock-rate = (int) 90000,   " "  encoding-name = (string) \"JPEG\"")
+        "  payload = (int) " GST_RTP_PAYLOAD_JPEG_STRING ", "
+        "  clock-rate = (int) 90000,   "
+        "  encoding-name = (string) \"JPEG\", "
+        "  width = (int) [ 1, 65536 ], " "  height = (int) [ 1, 65536 ]; "
+        " application/x-rtp, "
+        "  media = (string) \"video\", "
+        "  payload = (int) " GST_RTP_PAYLOAD_DYNAMIC_STRING ", "
+        "  clock-rate = (int) 90000,   "
+        "  encoding-name = (string) \"JPEG\", "
+        "  width = (int) [ 1, 65536 ], " "  height = (int) [ 1, 65536 ]")
     );
 
 GST_DEBUG_CATEGORY_STATIC (rtpjpegpay_debug);
@@ -97,10 +107,15 @@ enum _RtpJpegMarker
   JPEG_MARKER_DQT = 0xDB,
   JPEG_MARKER_SOF = 0xC0,
   JPEG_MARKER_DHT = 0xC4,
+  JPEG_MARKER_JPG = 0xC8,
   JPEG_MARKER_SOS = 0xDA,
   JPEG_MARKER_EOI = 0xD9,
   JPEG_MARKER_DRI = 0xDD,
-  JPEG_MARKER_H264 = 0xE4
+  JPEG_MARKER_APP0 = 0xE0,
+  JPEG_MARKER_H264 = 0xE4,      /* APP4 */
+  JPEG_MARKER_APP15 = 0xEF,
+  JPEG_MARKER_JPG0 = 0xF0,
+  JPEG_MARKER_JPG13 = 0xFD
 };
 
 #define DEFAULT_JPEG_QUANT    255
@@ -112,8 +127,7 @@ enum
 {
   PROP_0,
   PROP_JPEG_QUALITY,
-  PROP_JPEG_TYPE,
-  PROP_LAST
+  PROP_JPEG_TYPE
 };
 
 enum
@@ -247,10 +261,10 @@ gst_rtp_jpeg_pay_class_init (GstRtpJPEGPayClass * klass)
   gobject_class->set_property = gst_rtp_jpeg_pay_set_property;
   gobject_class->get_property = gst_rtp_jpeg_pay_get_property;
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_jpeg_pay_src_template));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_jpeg_pay_sink_template));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_jpeg_pay_src_template);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_jpeg_pay_sink_template);
 
   gst_element_class_set_static_metadata (gstelement_class, "RTP JPEG payloader",
       "Codec/Payloader/Network/RTP",
@@ -280,6 +294,10 @@ gst_rtp_jpeg_pay_init (GstRtpJPEGPay * pay)
   pay->quality = DEFAULT_JPEG_QUALITY;
   pay->quant = DEFAULT_JPEG_QUANT;
   pay->type = DEFAULT_JPEG_TYPE;
+  pay->width = -1;
+  pay->height = -1;
+
+  GST_RTP_BASE_PAYLOAD_PT (pay) = GST_RTP_PAYLOAD_JPEG;
 }
 
 static gboolean
@@ -288,26 +306,66 @@ gst_rtp_jpeg_pay_setcaps (GstRTPBasePayload * basepayload, GstCaps * caps)
   GstStructure *caps_structure = gst_caps_get_structure (caps, 0);
   GstRtpJPEGPay *pay;
   gboolean res;
-  gint width = 0, height = 0;
+  gint width = -1, height = -1;
+  gint num = 0, denom;
+  gchar *rate = NULL;
+  gchar *dim = NULL;
 
   pay = GST_RTP_JPEG_PAY (basepayload);
 
-  /* these properties are not mandatory, we can get them from the SOF, if there
+  /* these properties are mandatory, but they might be adjusted by the SOF, if there
    * is one. */
-  if (gst_structure_get_int (caps_structure, "height", &height)) {
-    if (height <= 0 || height > 2040)
-      goto invalid_dimension;
+  if (!gst_structure_get_int (caps_structure, "height", &height) || height <= 0) {
+    goto invalid_dimension;
   }
-  pay->height = GST_ROUND_UP_8 (height) / 8;
 
-  if (gst_structure_get_int (caps_structure, "width", &width)) {
-    if (width <= 0 || width > 2040)
-      goto invalid_dimension;
+  if (!gst_structure_get_int (caps_structure, "width", &width) || width <= 0) {
+    goto invalid_dimension;
   }
-  pay->width = GST_ROUND_UP_8 (width) / 8;
 
-  gst_rtp_base_payload_set_options (basepayload, "video", TRUE, "JPEG", 90000);
-  res = gst_rtp_base_payload_set_outcaps (basepayload, NULL);
+  if (gst_structure_get_fraction (caps_structure, "framerate", &num, &denom) &&
+      (num < 0 || denom <= 0)) {
+    goto invalid_framerate;
+  }
+
+  if (height > 2040 || width > 2040) {
+    pay->height = 0;
+    pay->width = 0;
+  } else {
+    pay->height = GST_ROUND_UP_8 (height) / 8;
+    pay->width = GST_ROUND_UP_8 (width) / 8;
+  }
+
+  gst_rtp_base_payload_set_options (basepayload, "video",
+      basepayload->pt != GST_RTP_PAYLOAD_JPEG, "JPEG", 90000);
+
+  if (num > 0) {
+    gdouble framerate;
+    gst_util_fraction_to_double (num, denom, &framerate);
+    rate = g_strdup_printf ("%f", framerate);
+  }
+
+  if (pay->width == 0) {
+    GST_DEBUG_OBJECT (pay,
+        "width or height are greater than 2040, adding x-dimensions to caps");
+    dim = g_strdup_printf ("%d,%d", width, height);
+  }
+
+  if (rate != NULL && dim != NULL) {
+    res = gst_rtp_base_payload_set_outcaps (basepayload, "a-framerate",
+        G_TYPE_STRING, rate, "x-dimensions", G_TYPE_STRING, dim, NULL);
+  } else if (rate != NULL && dim == NULL) {
+    res = gst_rtp_base_payload_set_outcaps (basepayload, "a-framerate",
+        G_TYPE_STRING, rate, NULL);
+  } else if (rate == NULL && dim != NULL) {
+    res = gst_rtp_base_payload_set_outcaps (basepayload, "x-dimensions",
+        G_TYPE_STRING, dim, NULL);
+  } else {
+    res = gst_rtp_base_payload_set_outcaps (basepayload, NULL);
+  }
+
+  g_free (dim);
+  g_free (rate);
 
   return res;
 
@@ -315,6 +373,11 @@ gst_rtp_jpeg_pay_setcaps (GstRTPBasePayload * basepayload, GstCaps * caps)
 invalid_dimension:
   {
     GST_ERROR_OBJECT (pay, "Invalid width/height from caps");
+    return FALSE;
+  }
+invalid_framerate:
+  {
+    GST_ERROR_OBJECT (pay, "Invalid framerate from caps");
     return FALSE;
   }
 }
@@ -439,13 +502,26 @@ gst_rtp_jpeg_pay_read_sof (GstRtpJPEGPay * pay, const guint8 * data,
 
   GST_LOG_OBJECT (pay, "got dimensions %ux%u", height, width);
 
-  if (height == 0 || height > 2040)
+  if (height == 0) {
     goto invalid_dimension;
-  if (width == 0 || width > 2040)
+  }
+  if (height > 2040) {
+    height = 0;
+  }
+  if (width == 0) {
     goto invalid_dimension;
+  }
+  if (width > 2040) {
+    width = 0;
+  }
 
-  pay->height = GST_ROUND_UP_8 (height) / 8;
-  pay->width = GST_ROUND_UP_8 (width) / 8;
+  if (height == 0 || width == 0) {
+    pay->height = 0;
+    pay->width = 0;
+  } else {
+    pay->height = GST_ROUND_UP_8 (height) / 8;
+    pay->width = GST_ROUND_UP_8 (width) / 8;
+  }
 
   /* we only support 3 components */
   if (data[off++] != 3)
@@ -482,57 +558,42 @@ gst_rtp_jpeg_pay_read_sof (GstRtpJPEGPay * pay, const guint8 * data,
   if (!(info[2].samp == 0x11))
     goto invalid_comp;
 
-  /* the other components are free to use any quant table but they have to
-   * have the same table id */
-  if (info[1].qt != info[2].qt) {
-    /* Some MJPG (like the one from the Logitech C-920 camera) uses different
-     * quant tables for component 1 and 2 but both tables contain the exact
-     * same data, so we could consider them as being the same tables */
-    if (!(info[1].qt < tables_elements &&
-            info[2].qt < tables_elements &&
-            tables[info[1].qt].size > 0 &&
-            tables[info[1].qt].size == tables[info[2].qt].size &&
-            memcmp (tables[info[1].qt].data, tables[info[2].qt].data,
-                tables[info[1].qt].size) == 0))
-      goto invalid_comp;
-  }
-
   return TRUE;
 
   /* ERRORS */
 wrong_size:
   {
-    GST_ELEMENT_ERROR (pay, STREAM, FORMAT,
+    GST_ELEMENT_WARNING (pay, STREAM, FORMAT,
         ("Wrong size %u (needed %u).", size, off + 17), (NULL));
     return FALSE;
   }
 wrong_length:
   {
-    GST_ELEMENT_ERROR (pay, STREAM, FORMAT,
+    GST_ELEMENT_WARNING (pay, STREAM, FORMAT,
         ("Wrong SOF length %u.", sof_size), (NULL));
     return FALSE;
   }
 bad_precision:
   {
-    GST_ELEMENT_ERROR (pay, STREAM, FORMAT,
+    GST_ELEMENT_WARNING (pay, STREAM, FORMAT,
         ("Wrong precision, expecting 8."), (NULL));
     return FALSE;
   }
 invalid_dimension:
   {
-    GST_ELEMENT_ERROR (pay, STREAM, FORMAT,
+    GST_ELEMENT_WARNING (pay, STREAM, FORMAT,
         ("Wrong dimension, size %ux%u", width, height), (NULL));
     return FALSE;
   }
 bad_components:
   {
-    GST_ELEMENT_ERROR (pay, STREAM, FORMAT,
+    GST_ELEMENT_WARNING (pay, STREAM, FORMAT,
         ("Wrong number of components"), (NULL));
     return FALSE;
   }
 invalid_comp:
   {
-    GST_ELEMENT_ERROR (pay, STREAM, FORMAT, ("Invalid component"), (NULL));
+    GST_ELEMENT_WARNING (pay, STREAM, FORMAT, ("Invalid component"), (NULL));
     return FALSE;
   }
 }
@@ -593,6 +654,8 @@ gst_rtp_jpeg_pay_scan_marker (const guint8 * data, guint size, guint * offset)
   }
 }
 
+#define RTP_HEADER_LEN 12
+
 static GstFlowReturn
 gst_rtp_jpeg_pay_handle_buffer (GstRTPBasePayload * basepayload,
     GstBuffer * buffer)
@@ -609,7 +672,7 @@ gst_rtp_jpeg_pay_handle_buffer (GstRTPBasePayload * basepayload,
   GstMapInfo map;
   guint8 *data;
   gsize size;
-  guint mtu;
+  guint mtu, max_payload_size;
   guint bytes_left;
   guint jpeg_header_size = 0;
   guint offset;
@@ -617,6 +680,7 @@ gst_rtp_jpeg_pay_handle_buffer (GstRTPBasePayload * basepayload,
   gboolean sos_found, sof_found, dqt_found, dri_found;
   gint i;
   GstBufferList *list = NULL;
+  gboolean discont;
 
   pay = GST_RTP_JPEG_PAY (basepayload);
   mtu = GST_RTP_BASE_PAYLOAD_MTU (pay);
@@ -624,8 +688,9 @@ gst_rtp_jpeg_pay_handle_buffer (GstRTPBasePayload * basepayload,
   gst_buffer_map (buffer, &map, GST_MAP_READ);
   data = map.data;
   size = map.size;
-  timestamp = GST_BUFFER_TIMESTAMP (buffer);
+  timestamp = GST_BUFFER_PTS (buffer);
   offset = 0;
+  discont = GST_BUFFER_IS_DISCONT (buffer);
 
   GST_LOG_OBJECT (pay, "got buffer size %" G_GSIZE_FORMAT
       " , timestamp %" GST_TIME_FORMAT, size, GST_TIME_ARGS (timestamp));
@@ -637,8 +702,10 @@ gst_rtp_jpeg_pay_handle_buffer (GstRTPBasePayload * basepayload,
   dri_found = FALSE;
 
   while (!sos_found && (offset < size)) {
+    gint marker;
+
     GST_LOG_OBJECT (pay, "checking from offset %u", offset);
-    switch (gst_rtp_jpeg_pay_scan_marker (data, size, &offset)) {
+    switch ((marker = gst_rtp_jpeg_pay_scan_marker (data, size, &offset))) {
       case JPEG_MARKER_JFIF:
       case JPEG_MARKER_CMT:
       case JPEG_MARKER_DHT:
@@ -675,6 +742,14 @@ gst_rtp_jpeg_pay_handle_buffer (GstRTPBasePayload * basepayload,
           dri_found = TRUE;
         break;
       default:
+        if (marker == JPEG_MARKER_JPG ||
+            (marker >= JPEG_MARKER_JPG0 && marker <= JPEG_MARKER_JPG13) ||
+            (marker >= JPEG_MARKER_APP0 && marker <= JPEG_MARKER_APP15)) {
+          GST_LOG_OBJECT (pay, "skipping marker");
+          offset += gst_rtp_jpeg_pay_header_size (data, offset);
+        } else {
+          GST_FIXME_OBJECT (pay, "unhandled marker 0x%02x", marker);
+        }
         break;
     }
   }
@@ -683,8 +758,9 @@ gst_rtp_jpeg_pay_handle_buffer (GstRTPBasePayload * basepayload,
 
   /* by now we should either have negotiated the width/height or the SOF header
    * should have filled us in */
-  if (pay->width == 0 || pay->height == 0)
+  if (pay->width < 0 || pay->height < 0) {
     goto no_dimension;
+  }
 
   GST_LOG_OBJECT (pay, "header size %u", jpeg_header_size);
 
@@ -732,21 +808,28 @@ gst_rtp_jpeg_pay_handle_buffer (GstRTPBasePayload * basepayload,
 
   GST_LOG_OBJECT (pay, "quant_data size %u", quant_data_size);
 
-  list = gst_buffer_list_new ();
-
   bytes_left = sizeof (jpeg_header) + quant_data_size + size;
 
   if (dri_found)
     bytes_left += sizeof (restart_marker_header);
 
+  max_payload_size = mtu - (RTP_HEADER_LEN + sizeof (jpeg_header));
+  list = gst_buffer_list_new_sized ((bytes_left / max_payload_size) + 1);
+
   frame_done = FALSE;
   do {
     GstBuffer *outbuf;
     guint8 *payload;
-    guint payload_size = (bytes_left < mtu ? bytes_left : mtu);
+    guint payload_size;
     guint header_size;
     GstBuffer *paybuf;
     GstRTPBuffer rtp = { NULL };
+    guint rtp_header_size = gst_rtp_buffer_calc_header_len (0);
+
+    /* The available room is the packet MTU, minus the RTP header length. */
+    payload_size =
+        (bytes_left < (mtu - rtp_header_size) ? bytes_left :
+        (mtu - rtp_header_size));
 
     header_size = sizeof (jpeg_header) + quant_data_size;
     if (dri_found)
@@ -808,13 +891,21 @@ gst_rtp_jpeg_pay_handle_buffer (GstRTPBasePayload * basepayload,
     gst_rtp_buffer_unmap (&rtp);
 
     /* create a new buf to hold the payload */
-    paybuf = gst_buffer_copy_region (buffer, GST_BUFFER_COPY_MEMORY,
+    paybuf = gst_buffer_copy_region (buffer, GST_BUFFER_COPY_ALL,
         jpeg_header_size + offset, payload_size);
 
     /* join memory parts */
+    gst_rtp_copy_meta (GST_ELEMENT_CAST (pay), outbuf, paybuf,
+        g_quark_from_static_string (GST_META_TAG_VIDEO_STR));
     outbuf = gst_buffer_append (outbuf, paybuf);
 
-    GST_BUFFER_TIMESTAMP (outbuf) = timestamp;
+    GST_BUFFER_PTS (outbuf) = timestamp;
+
+    if (discont) {
+      GST_BUFFER_FLAG_SET (outbuf, GST_BUFFER_FLAG_DISCONT);
+      /* Only the first outputted buffer has the DISCONT flag */
+      discont = FALSE;
+    }
 
     /* and add to list */
     gst_buffer_list_insert (list, -1, outbuf);
@@ -836,31 +927,31 @@ gst_rtp_jpeg_pay_handle_buffer (GstRTPBasePayload * basepayload,
   /* ERRORS */
 unsupported_jpeg:
   {
-    GST_ELEMENT_ERROR (pay, STREAM, FORMAT, ("Unsupported JPEG"), (NULL));
+    GST_ELEMENT_WARNING (pay, STREAM, FORMAT, ("Unsupported JPEG"), (NULL));
     gst_buffer_unmap (buffer, &map);
     gst_buffer_unref (buffer);
-    return GST_FLOW_NOT_SUPPORTED;
+    return GST_FLOW_OK;
   }
 no_dimension:
   {
-    GST_ELEMENT_ERROR (pay, STREAM, FORMAT, ("No size given"), (NULL));
+    GST_ELEMENT_WARNING (pay, STREAM, FORMAT, ("No size given"), (NULL));
     gst_buffer_unmap (buffer, &map);
     gst_buffer_unref (buffer);
-    return GST_FLOW_NOT_NEGOTIATED;
+    return GST_FLOW_OK;
   }
 invalid_format:
   {
     /* error was posted */
     gst_buffer_unmap (buffer, &map);
     gst_buffer_unref (buffer);
-    return GST_FLOW_ERROR;
+    return GST_FLOW_OK;
   }
 invalid_quant:
   {
-    GST_ELEMENT_ERROR (pay, STREAM, FORMAT, ("Invalid quant tables"), (NULL));
+    GST_ELEMENT_WARNING (pay, STREAM, FORMAT, ("Invalid quant tables"), (NULL));
     gst_buffer_unmap (buffer, &map);
     gst_buffer_unref (buffer);
-    return GST_FLOW_ERROR;
+    return GST_FLOW_OK;
   }
 }
 

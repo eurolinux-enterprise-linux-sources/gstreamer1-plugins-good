@@ -17,8 +17,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -36,13 +36,9 @@ GST_DEBUG_CATEGORY_EXTERN (wavpack_debug);
 gboolean
 gst_wavpack_read_header (WavpackHeader * header, guint8 * buf)
 {
-  g_memmove (header, buf, sizeof (WavpackHeader));
+  memmove (header, buf, sizeof (WavpackHeader));
 
-#ifndef WAVPACK_OLD_API
   WavpackLittleEndianToNative (header, (char *) WavpackHeaderFormat);
-#else
-  little_endian_to_native (header, WavpackHeaderFormat);
-#endif
 
   return (memcmp (header->ckID, "wvpk", 4) == 0);
 }

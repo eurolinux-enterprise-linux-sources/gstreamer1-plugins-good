@@ -20,8 +20,8 @@
  *
  * You should have received a cradioacy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
@@ -131,7 +131,7 @@ enum
 #define RATIO 0.95
 
 static guint32 palettes[COLORS * PATTERN];
-static gint swap_tab[] = { 2, 1, 0, 3 };
+static const gint swap_tab[] = { 2, 1, 0, 3 };
 
 #define gst_radioactv_parent_class parent_class
 G_DEFINE_TYPE (GstRadioacTV, gst_radioactv, GST_TYPE_VIDEO_FILTER);
@@ -439,28 +439,22 @@ gst_radioactv_set_info (GstVideoFilter * vfilter, GstCaps * incaps,
   filter->buf_margin_right =
       height - filter->buf_width - filter->buf_margin_left;
 
-  if (filter->blurzoombuf)
-    g_free (filter->blurzoombuf);
+  g_free (filter->blurzoombuf);
   filter->blurzoombuf = g_new0 (guint8, filter->buf_area * 2);
 
-  if (filter->blurzoomx)
-    g_free (filter->blurzoomx);
+  g_free (filter->blurzoomx);
   filter->blurzoomx = g_new0 (gint, filter->buf_width);
 
-  if (filter->blurzoomy)
-    g_free (filter->blurzoomy);
+  g_free (filter->blurzoomy);
   filter->blurzoomy = g_new0 (gint, filter->buf_height);
 
-  if (filter->snapframe)
-    g_free (filter->snapframe);
+  g_free (filter->snapframe);
   filter->snapframe = g_new (guint32, width * height);
 
-  if (filter->diff)
-    g_free (filter->diff);
+  g_free (filter->diff);
   filter->diff = g_new (guint8, width * height);
 
-  if (filter->background)
-    g_free (filter->background);
+  g_free (filter->background);
   filter->background = g_new0 (gint16, width * height);
 
   setTable (filter);
@@ -490,28 +484,22 @@ gst_radioactv_finalize (GObject * object)
 {
   GstRadioacTV *filter = GST_RADIOACTV (object);
 
-  if (filter->snapframe)
-    g_free (filter->snapframe);
+  g_free (filter->snapframe);
   filter->snapframe = NULL;
 
-  if (filter->blurzoombuf)
-    g_free (filter->blurzoombuf);
+  g_free (filter->blurzoombuf);
   filter->blurzoombuf = NULL;
 
-  if (filter->diff)
-    g_free (filter->diff);
+  g_free (filter->diff);
   filter->diff = NULL;
 
-  if (filter->background)
-    g_free (filter->background);
+  g_free (filter->background);
   filter->background = NULL;
 
-  if (filter->blurzoomx)
-    g_free (filter->blurzoomx);
+  g_free (filter->blurzoomx);
   filter->blurzoomx = NULL;
 
-  if (filter->blurzoomy)
-    g_free (filter->blurzoomy);
+  g_free (filter->blurzoomy);
   filter->blurzoomy = NULL;
 
   G_OBJECT_CLASS (parent_class)->finalize (object);
@@ -610,10 +598,10 @@ gst_radioactv_class_init (GstRadioacTVClass * klass)
       "FUKUCHI, Kentarou <fukuchi@users.sourceforge.net>, "
       "Sebastian Dröge <sebastian.droege@collabora.co.uk>");
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_radioactv_sink_template));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_radioactv_src_template));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_radioactv_sink_template);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_radioactv_src_template);
 
   trans_class->start = GST_DEBUG_FUNCPTR (gst_radioactv_start);
 

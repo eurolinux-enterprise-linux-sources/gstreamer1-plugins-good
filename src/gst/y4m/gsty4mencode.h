@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 
@@ -43,13 +43,10 @@ typedef struct _GstY4mEncode GstY4mEncode;
 typedef struct _GstY4mEncodeClass GstY4mEncodeClass;
 
 struct _GstY4mEncode {
-  GstElement element;
-
-  GstPad *sinkpad,*srcpad;
+  GstVideoEncoder parent;
 
   /* caps information */
   GstVideoInfo info;
-  gboolean negotiated;
 
   const gchar *colorspace;
   /* state information */
@@ -57,7 +54,7 @@ struct _GstY4mEncode {
 };
 
 struct _GstY4mEncodeClass {
-  GstElementClass parent_class;
+  GstVideoEncoderClass parent_class;
 };
 
 GType gst_y4m_encode_get_type(void);

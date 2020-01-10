@@ -16,8 +16,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
@@ -43,7 +43,7 @@
 #include <string.h>
 
 #include "gstamrparse.h"
-
+#include <gst/pbutils/pbutils.h>
 
 static GstStaticPadTemplate src_template = GST_STATIC_PAD_TEMPLATE ("src",
     GST_PAD_SRC,
@@ -81,6 +81,8 @@ static GstCaps *gst_amr_parse_sink_getcaps (GstBaseParse * parse,
 
 static GstFlowReturn gst_amr_parse_handle_frame (GstBaseParse * parse,
     GstBaseParseFrame * frame, gint * skipsize);
+static GstFlowReturn gst_amr_parse_pre_push_frame (GstBaseParse * parse,
+    GstBaseParseFrame * frame);
 
 G_DEFINE_TYPE (GstAmrParse, gst_amr_parse, GST_TYPE_BASE_PARSE);
 
@@ -98,10 +100,8 @@ gst_amr_parse_class_init (GstAmrParseClass * klass)
   GST_DEBUG_CATEGORY_INIT (amrparse_debug, "amrparse", 0,
       "AMR-NB audio stream parser");
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&sink_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&src_template));
+  gst_element_class_add_static_pad_template (element_class, &sink_template);
+  gst_element_class_add_static_pad_template (element_class, &src_template);
 
   gst_element_class_set_static_metadata (element_class,
       "AMR audio stream parser", "Codec/Parser/Audio",
@@ -113,6 +113,8 @@ gst_amr_parse_class_init (GstAmrParseClass * klass)
   parse_class->set_sink_caps = GST_DEBUG_FUNCPTR (gst_amr_parse_sink_setcaps);
   parse_class->get_sink_caps = GST_DEBUG_FUNCPTR (gst_amr_parse_sink_getcaps);
   parse_class->handle_frame = GST_DEBUG_FUNCPTR (gst_amr_parse_handle_frame);
+  parse_class->pre_push_frame =
+      GST_DEBUG_FUNCPTR (gst_amr_parse_pre_push_frame);
 }
 
 
@@ -128,7 +130,8 @@ gst_amr_parse_init (GstAmrParse * amrparse)
   /* init rest */
   gst_base_parse_set_min_frame_size (GST_BASE_PARSE (amrparse), 62);
   GST_DEBUG ("initialized");
-
+  GST_PAD_SET_ACCEPT_INTERSECT (GST_BASE_PARSE_SINK_PAD (amrparse));
+  GST_PAD_SET_ACCEPT_TEMPLATE (GST_BASE_PARSE_SINK_PAD (amrparse));
 }
 
 
@@ -338,6 +341,7 @@ gst_amr_parse_start (GstBaseParse * parse)
   GST_DEBUG ("start");
   amrparse->need_header = TRUE;
   amrparse->header = 0;
+  amrparse->sent_codec_tag = FALSE;
   return TRUE;
 }
 
@@ -409,4 +413,40 @@ gst_amr_parse_sink_getcaps (GstBaseParse * parse, GstCaps * filter)
   }
 
   return res;
+}
+
+static GstFlowReturn
+gst_amr_parse_pre_push_frame (GstBaseParse * parse, GstBaseParseFrame * frame)
+{
+  GstAmrParse *amrparse = GST_AMR_PARSE (parse);
+
+  if (!amrparse->sent_codec_tag) {
+    GstTagList *taglist;
+    GstCaps *caps;
+
+    /* codec tag */
+    caps = gst_pad_get_current_caps (GST_BASE_PARSE_SRC_PAD (parse));
+    if (G_UNLIKELY (caps == NULL)) {
+      if (GST_PAD_IS_FLUSHING (GST_BASE_PARSE_SRC_PAD (parse))) {
+        GST_INFO_OBJECT (parse, "Src pad is flushing");
+        return GST_FLOW_FLUSHING;
+      } else {
+        GST_INFO_OBJECT (parse, "Src pad is not negotiated!");
+        return GST_FLOW_NOT_NEGOTIATED;
+      }
+    }
+
+    taglist = gst_tag_list_new_empty ();
+    gst_pb_utils_add_codec_description_to_tag_list (taglist,
+        GST_TAG_AUDIO_CODEC, caps);
+    gst_caps_unref (caps);
+
+    gst_base_parse_merge_tags (parse, taglist, GST_TAG_MERGE_REPLACE);
+    gst_tag_list_unref (taglist);
+
+    /* also signals the end of first-frame processing */
+    amrparse->sent_codec_tag = TRUE;
+  }
+
+  return GST_FLOW_OK;
 }

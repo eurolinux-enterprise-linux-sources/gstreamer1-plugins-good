@@ -18,8 +18,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -44,21 +44,31 @@
 
 #include "ebml-read.h"
 #include "matroska-read-common.h"
+#include "matroska-ids.h"
 
 GST_DEBUG_CATEGORY (matroskareadcommon_debug);
 #define GST_CAT_DEFAULT matroskareadcommon_debug
 
 #define DEBUG_ELEMENT_START(common, ebml, element) \
-    GST_DEBUG_OBJECT (common, "Parsing " element " element at offset %" \
+    GST_DEBUG_OBJECT (common->sinkpad, "Parsing " element " element at offset %" \
         G_GUINT64_FORMAT, gst_ebml_read_get_pos (ebml))
 
 #define DEBUG_ELEMENT_STOP(common, ebml, element, ret) \
-    GST_DEBUG_OBJECT (common, "Parsing " element " element " \
+    GST_DEBUG_OBJECT (common->sinkpad, "Parsing " element " element " \
         " finished with '%s'", gst_flow_get_name (ret))
 
 #define GST_MATROSKA_TOC_UID_CHAPTER "chapter"
 #define GST_MATROSKA_TOC_UID_EDITION "edition"
 #define GST_MATROSKA_TOC_UID_EMPTY "empty"
+
+typedef struct
+{
+  GstTagList *result;
+  guint64 target_type_value;
+  gchar *target_type;
+  gboolean audio_only;
+} TargetTypeContext;
+
 
 static gboolean
 gst_matroska_decompress_data (GstMatroskaTrackEncoding * enc,
@@ -96,25 +106,27 @@ gst_matroska_decompress_data (GstMatroskaTrackEncoding * enc,
 
     do {
       result = inflate (&zstream, Z_NO_FLUSH);
-      if (result != Z_OK && result != Z_STREAM_END) {
-        GST_WARNING ("zlib decompression failed.");
-        g_free (new_data);
-        inflateEnd (&zstream);
+      if (result == Z_STREAM_END) {
+        break;
+      } else if (result != Z_OK) {
+        GST_WARNING ("inflate() returned %d", result);
         break;
       }
-      new_size += 4000;
+
+      new_size += 4096;
       new_data = g_realloc (new_data, new_size);
       zstream.next_out = (Bytef *) (new_data + zstream.total_out);
-      zstream.avail_out += 4000;
-    } while (zstream.avail_in != 0 && result != Z_STREAM_END);
+      zstream.avail_out += 4096;
+    } while (zstream.avail_in > 0);
 
     if (result != Z_STREAM_END) {
       ret = FALSE;
-      goto out;
+      g_free (new_data);
     } else {
       new_size = zstream.total_out;
-      inflateEnd (&zstream);
     }
+    inflateEnd (&zstream);
+
 #else
     GST_WARNING ("zlib encoded tracks not supported.");
     ret = FALSE;
@@ -147,25 +159,27 @@ gst_matroska_decompress_data (GstMatroskaTrackEncoding * enc,
 
     do {
       result = BZ2_bzDecompress (&bzstream);
-      if (result != BZ_OK && result != BZ_STREAM_END) {
-        GST_WARNING ("bzip2 decompression failed.");
-        g_free (new_data);
-        BZ2_bzDecompressEnd (&bzstream);
+      if (result == BZ_STREAM_END) {
+        break;
+      } else if (result != BZ_OK) {
+        GST_WARNING ("BZ2_bzDecompress() returned %d", result);
         break;
       }
-      new_size += 4000;
+
+      new_size += 4096;
       new_data = g_realloc (new_data, new_size);
       bzstream.next_out = (char *) (new_data + bzstream.total_out_lo32);
-      bzstream.avail_out += 4000;
-    } while (bzstream.avail_in != 0 && result != BZ_STREAM_END);
+      bzstream.avail_out += 4096;
+    } while (bzstream.avail_in > 0);
 
     if (result != BZ_STREAM_END) {
       ret = FALSE;
-      goto out;
+      g_free (new_data);
     } else {
       new_size = bzstream.total_out_lo32;
-      BZ2_bzDecompressEnd (&bzstream);
     }
+    BZ2_bzDecompressEnd (&bzstream);
+
 #else
     GST_WARNING ("bzip2 encoded tracks not supported.");
     ret = FALSE;
@@ -188,7 +202,7 @@ gst_matroska_decompress_data (GstMatroskaTrackEncoding * enc,
       result = lzo1x_decode (new_data, &out_size, data, &orig_size);
 
       if (orig_size > 0) {
-        new_size += 4000;
+        new_size += 4096;
         new_data = g_realloc (new_data, new_size);
       }
     } while (orig_size > 0 && result == LZO_OUTPUT_FULL);
@@ -365,13 +379,10 @@ gst_matroska_index_seek_find (GstMatroskaIndex * i1, GstClockTime * time,
 GstMatroskaIndex *
 gst_matroska_read_common_do_index_seek (GstMatroskaReadCommon * common,
     GstMatroskaTrackContext * track, gint64 seek_pos, GArray ** _index,
-    gint * _entry_index, gboolean next)
+    gint * _entry_index, GstSearchMode snap_dir)
 {
   GstMatroskaIndex *entry = NULL;
   GArray *index;
-
-  if (!common->index || !common->index->len)
-    return NULL;
 
   /* find entry just before or at the requested position */
   if (track && track->index_table)
@@ -379,16 +390,21 @@ gst_matroska_read_common_do_index_seek (GstMatroskaReadCommon * common,
   else
     index = common->index;
 
+  if (!index || !index->len)
+    return NULL;
+
   entry =
       gst_util_array_binary_search (index->data, index->len,
       sizeof (GstMatroskaIndex),
-      (GCompareDataFunc) gst_matroska_index_seek_find,
-      next ? GST_SEARCH_MODE_AFTER : GST_SEARCH_MODE_BEFORE, &seek_pos, NULL);
+      (GCompareDataFunc) gst_matroska_index_seek_find, snap_dir, &seek_pos,
+      NULL);
 
   if (entry == NULL) {
-    if (next) {
-      return NULL;
+    if (snap_dir == GST_SEARCH_MODE_AFTER) {
+      /* Can only happen with a reverse seek past the end */
+      entry = &g_array_index (index, GstMatroskaIndex, index->len - 1);
     } else {
+      /* Can only happen with a forward seek before the start */
       entry = &g_array_index (index, GstMatroskaIndex, 0);
     }
   }
@@ -435,26 +451,12 @@ gst_matroska_read_common_found_global_tag (GstMatroskaReadCommon * common,
     GstElement * el, GstTagList * taglist)
 {
   if (common->global_tags) {
-    /* nothing sent yet, add to cache */
     gst_tag_list_insert (common->global_tags, taglist, GST_TAG_MERGE_APPEND);
     gst_tag_list_unref (taglist);
   } else {
-    GstEvent *tag_event = gst_event_new_tag (taglist);
-    gint i;
-
-    /* hm, already sent, no need to cache and wait anymore */
-    GST_DEBUG_OBJECT (common, "Sending late global tags %" GST_PTR_FORMAT,
-        taglist);
-
-    for (i = 0; i < common->src->len; i++) {
-      GstMatroskaTrackContext *stream;
-
-      stream = g_ptr_array_index (common->src, i);
-      gst_pad_push_event (stream->pad, gst_event_ref (tag_event));
-    }
-
-    gst_event_unref (tag_event);
+    common->global_tags = taglist;
   }
+  common->global_tags_changed = TRUE;
 }
 
 gint64
@@ -464,7 +466,7 @@ gst_matroska_read_common_get_length (GstMatroskaReadCommon * common)
 
   if (!gst_pad_peer_query_duration (common->sinkpad, GST_FORMAT_BYTES,
           &end) || end < 0)
-    GST_DEBUG_OBJECT (common, "no upstream length");
+    GST_DEBUG_OBJECT (common->sinkpad, "no upstream length");
 
   return end;
 }
@@ -496,11 +498,11 @@ gst_matroska_read_common_parse_skip (GstMatroskaReadCommon * common,
     GstEbmlRead * ebml, const gchar * parent_name, guint id)
 {
   if (id == GST_EBML_ID_VOID) {
-    GST_DEBUG_OBJECT (common, "Skipping EBML Void element");
+    GST_DEBUG_OBJECT (common->sinkpad, "Skipping EBML Void element");
   } else if (id == GST_EBML_ID_CRC32) {
-    GST_DEBUG_OBJECT (common, "Skipping EBML CRC32 element");
+    GST_DEBUG_OBJECT (common->sinkpad, "Skipping EBML CRC32 element");
   } else {
-    GST_WARNING_OBJECT (common,
+    GST_WARNING_OBJECT (common->sinkpad,
         "Unknown %s subelement 0x%x - ignoring", parent_name, id);
   }
 
@@ -535,42 +537,46 @@ gst_matroska_read_common_parse_attached_file (GstMatroskaReadCommon * common,
     switch (id) {
       case GST_MATROSKA_ID_FILEDESCRIPTION:
         if (description) {
-          GST_WARNING_OBJECT (common, "FileDescription can only appear once");
+          GST_WARNING_OBJECT (common->sinkpad,
+              "FileDescription can only appear once");
           break;
         }
 
         ret = gst_ebml_read_utf8 (ebml, &id, &description);
-        GST_DEBUG_OBJECT (common, "FileDescription: %s",
+        GST_DEBUG_OBJECT (common->sinkpad, "FileDescription: %s",
             GST_STR_NULL (description));
         break;
       case GST_MATROSKA_ID_FILENAME:
         if (filename) {
-          GST_WARNING_OBJECT (common, "FileName can only appear once");
+          GST_WARNING_OBJECT (common->sinkpad, "FileName can only appear once");
           break;
         }
 
         ret = gst_ebml_read_utf8 (ebml, &id, &filename);
 
-        GST_DEBUG_OBJECT (common, "FileName: %s", GST_STR_NULL (filename));
+        GST_DEBUG_OBJECT (common->sinkpad, "FileName: %s",
+            GST_STR_NULL (filename));
         break;
       case GST_MATROSKA_ID_FILEMIMETYPE:
         if (mimetype) {
-          GST_WARNING_OBJECT (common, "FileMimeType can only appear once");
+          GST_WARNING_OBJECT (common->sinkpad,
+              "FileMimeType can only appear once");
           break;
         }
 
         ret = gst_ebml_read_ascii (ebml, &id, &mimetype);
-        GST_DEBUG_OBJECT (common, "FileMimeType: %s", GST_STR_NULL (mimetype));
+        GST_DEBUG_OBJECT (common->sinkpad, "FileMimeType: %s",
+            GST_STR_NULL (mimetype));
         break;
       case GST_MATROSKA_ID_FILEDATA:
         if (data) {
-          GST_WARNING_OBJECT (common, "FileData can only appear once");
+          GST_WARNING_OBJECT (common->sinkpad, "FileData can only appear once");
           break;
         }
 
         ret = gst_ebml_read_binary (ebml, &id, &data, &datalen);
-        GST_DEBUG_OBJECT (common, "FileData of size %" G_GUINT64_FORMAT,
-            datalen);
+        GST_DEBUG_OBJECT (common->sinkpad,
+            "FileData of size %" G_GUINT64_FORMAT, datalen);
         break;
 
       default:
@@ -593,7 +599,7 @@ gst_matroska_read_common_parse_attached_file (GstMatroskaReadCommon * common,
     GstCaps *caps = NULL;
     gchar *filename_lc = g_utf8_strdown (filename, -1);
 
-    GST_DEBUG_OBJECT (common, "Creating tag for attachment with "
+    GST_DEBUG_OBJECT (common->sinkpad, "Creating tag for attachment with "
         "filename '%s', mimetype '%s', description '%s', "
         "size %" G_GUINT64_FORMAT, filename, mimetype,
         GST_STR_NULL (description), datalen);
@@ -619,10 +625,9 @@ gst_matroska_read_common_parse_attached_file (GstMatroskaReadCommon * common,
       tagsample =
           gst_tag_image_data_to_image_sample (data, datalen, image_type);
 
-      if (!tagsample)
+      if (!tagsample) {
         image_type = GST_TAG_IMAGE_TYPE_NONE;
-      else {
-        data = NULL;
+      } else {
         tagbuffer = gst_buffer_ref (gst_sample_get_buffer (tagsample));
         caps = gst_caps_ref (gst_sample_get_caps (tagsample));
         info = gst_structure_copy (gst_sample_get_info (tagsample));
@@ -649,7 +654,10 @@ gst_matroska_read_common_parse_attached_file (GstMatroskaReadCommon * common,
 
     tagsample = gst_sample_new (tagbuffer, caps, NULL, info);
 
-    GST_DEBUG_OBJECT (common,
+    gst_buffer_unref (tagbuffer);
+    gst_caps_unref (caps);
+
+    GST_DEBUG_OBJECT (common->sinkpad,
         "Created attachment sample: %" GST_PTR_FORMAT, tagsample);
 
     /* and append to the tag list */
@@ -709,10 +717,10 @@ gst_matroska_read_common_parse_attachments (GstMatroskaReadCommon * common,
   DEBUG_ELEMENT_STOP (common, ebml, "Attachments", ret);
 
   if (gst_tag_list_n_tags (taglist) > 0) {
-    GST_DEBUG_OBJECT (common, "Storing attachment tags");
+    GST_DEBUG_OBJECT (common->sinkpad, "Storing attachment tags");
     gst_matroska_read_common_found_global_tag (common, el, taglist);
   } else {
-    GST_DEBUG_OBJECT (common, "No valid attachments found");
+    GST_DEBUG_OBJECT (common->sinkpad, "No valid attachments found");
     gst_tag_list_unref (taglist);
   }
 
@@ -752,6 +760,7 @@ gst_matroska_read_common_parse_toc_tag (GstTocEntry * entry,
   }
 
   gst_toc_entry_merge_tags (entry, etags, GST_TAG_MERGE_APPEND);
+  gst_tag_list_unref (etags);
 
   cur = gst_toc_entry_get_sub_entries (entry);
   while (cur != NULL) {
@@ -763,13 +772,19 @@ gst_matroska_read_common_parse_toc_tag (GstTocEntry * entry,
 
 static GstFlowReturn
 gst_matroska_read_common_parse_metadata_targets (GstMatroskaReadCommon * common,
-    GstEbmlRead * ebml, GArray * edition_targets, GArray * chapter_targets)
+    GstEbmlRead * ebml, GArray * edition_targets, GArray * chapter_targets,
+    GArray * track_targets, guint64 * target_type_value, gchar ** target_type)
 {
   GstFlowReturn ret = GST_FLOW_OK;
   guint32 id;
   guint64 uid;
+  guint64 tmp;
+  gchar *str;
 
   DEBUG_ELEMENT_START (common, ebml, "TagTargets");
+
+  *target_type_value = 50;
+  *target_type = NULL;
 
   if ((ret = gst_ebml_read_master (ebml, &id)) != GST_FLOW_OK) {
     DEBUG_ELEMENT_STOP (common, ebml, "TagTargets", ret);
@@ -789,6 +804,23 @@ gst_matroska_read_common_parse_metadata_targets (GstMatroskaReadCommon * common,
       case GST_MATROSKA_ID_TARGETEDITIONUID:
         if ((ret = gst_ebml_read_uint (ebml, &id, &uid)) == GST_FLOW_OK)
           g_array_append_val (edition_targets, uid);
+        break;
+
+      case GST_MATROSKA_ID_TARGETTRACKUID:
+        if ((ret = gst_ebml_read_uint (ebml, &id, &uid)) == GST_FLOW_OK)
+          g_array_append_val (track_targets, uid);
+        break;
+
+      case GST_MATROSKA_ID_TARGETTYPEVALUE:
+        if ((ret = gst_ebml_read_uint (ebml, &id, &tmp)) == GST_FLOW_OK)
+          *target_type_value = tmp;
+        break;
+
+      case GST_MATROSKA_ID_TARGETTYPE:
+        if ((ret = gst_ebml_read_ascii (ebml, &id, &str)) == GST_FLOW_OK) {
+          g_free (*target_type);
+          *target_type = str;
+        }
         break;
 
       default:
@@ -1068,11 +1100,12 @@ gst_matroska_read_common_parse_chapter_edition (GstMatroskaReadCommon * common,
 
   for (l = subentries; l; l = l->next)
     gst_toc_entry_append_sub_entry (edition_info, l->data);
+  g_list_free (subentries);
 
   if (is_hidden == 0 && subentries != NULL && ret == GST_FLOW_OK)
     gst_toc_append_entry (toc, edition_info);
   else {
-    GST_DEBUG_OBJECT (common,
+    GST_DEBUG_OBJECT (common->sinkpad,
         "Skipping empty or hidden edition in the chapters TOC");
     gst_toc_entry_unref (edition_info);
   }
@@ -1148,10 +1181,10 @@ gst_matroska_read_common_parse_header (GstMatroskaReadCommon * common,
   if (ret != GST_FLOW_OK)
     return ret;
 
-  GST_DEBUG_OBJECT (common, "id: %08x", id);
+  GST_DEBUG_OBJECT (common->sinkpad, "id: %08x", id);
 
   if (id != GST_EBML_ID_HEADER) {
-    GST_ERROR_OBJECT (common, "Failed to read header");
+    GST_ERROR_OBJECT (common->sinkpad, "Failed to read header");
     goto exit;
   }
 
@@ -1162,7 +1195,7 @@ gst_matroska_read_common_parse_header (GstMatroskaReadCommon * common,
   while (gst_ebml_read_has_remaining (ebml, 1, TRUE)) {
     ret = gst_ebml_peek_id (ebml, &id);
     if (ret != GST_FLOW_OK)
-      return ret;
+      goto exit_error;
 
     switch (id) {
         /* is our read version uptodate? */
@@ -1171,14 +1204,15 @@ gst_matroska_read_common_parse_header (GstMatroskaReadCommon * common,
 
         ret = gst_ebml_read_uint (ebml, &id, &num);
         if (ret != GST_FLOW_OK)
-          return ret;
+          goto exit_error;
         if (num != GST_EBML_VERSION) {
-          GST_ERROR_OBJECT (ebml, "Unsupported EBML version %" G_GUINT64_FORMAT,
-              num);
-          return GST_FLOW_ERROR;
+          GST_ERROR_OBJECT (common->sinkpad,
+              "Unsupported EBML version %" G_GUINT64_FORMAT, num);
+          goto exit_error;
         }
 
-        GST_DEBUG_OBJECT (ebml, "EbmlReadVersion: %" G_GUINT64_FORMAT, num);
+        GST_DEBUG_OBJECT (common->sinkpad,
+            "EbmlReadVersion: %" G_GUINT64_FORMAT, num);
         break;
       }
 
@@ -1188,13 +1222,14 @@ gst_matroska_read_common_parse_header (GstMatroskaReadCommon * common,
 
         ret = gst_ebml_read_uint (ebml, &id, &num);
         if (ret != GST_FLOW_OK)
-          return ret;
+          goto exit_error;
         if (num > sizeof (guint64)) {
-          GST_ERROR_OBJECT (ebml,
+          GST_ERROR_OBJECT (common->sinkpad,
               "Unsupported EBML maximum size %" G_GUINT64_FORMAT, num);
           return GST_FLOW_ERROR;
         }
-        GST_DEBUG_OBJECT (ebml, "EbmlMaxSizeLength: %" G_GUINT64_FORMAT, num);
+        GST_DEBUG_OBJECT (common->sinkpad,
+            "EbmlMaxSizeLength: %" G_GUINT64_FORMAT, num);
         break;
       }
 
@@ -1204,13 +1239,14 @@ gst_matroska_read_common_parse_header (GstMatroskaReadCommon * common,
 
         ret = gst_ebml_read_uint (ebml, &id, &num);
         if (ret != GST_FLOW_OK)
-          return ret;
+          goto exit_error;
         if (num > sizeof (guint32)) {
-          GST_ERROR_OBJECT (ebml,
+          GST_ERROR_OBJECT (common->sinkpad,
               "Unsupported EBML maximum ID %" G_GUINT64_FORMAT, num);
           return GST_FLOW_ERROR;
         }
-        GST_DEBUG_OBJECT (ebml, "EbmlMaxIdLength: %" G_GUINT64_FORMAT, num);
+        GST_DEBUG_OBJECT (common->sinkpad,
+            "EbmlMaxIdLength: %" G_GUINT64_FORMAT, num);
         break;
       }
 
@@ -1219,12 +1255,12 @@ gst_matroska_read_common_parse_header (GstMatroskaReadCommon * common,
 
         ret = gst_ebml_read_ascii (ebml, &id, &text);
         if (ret != GST_FLOW_OK)
-          return ret;
+          goto exit_error;
 
-        GST_DEBUG_OBJECT (ebml, "EbmlDocType: %s", GST_STR_NULL (text));
+        GST_DEBUG_OBJECT (common->sinkpad, "EbmlDocType: %s",
+            GST_STR_NULL (text));
 
-        if (doctype)
-          g_free (doctype);
+        g_free (doctype);
         doctype = text;
         break;
       }
@@ -1234,9 +1270,10 @@ gst_matroska_read_common_parse_header (GstMatroskaReadCommon * common,
 
         ret = gst_ebml_read_uint (ebml, &id, &num);
         if (ret != GST_FLOW_OK)
-          return ret;
+          goto exit_error;
         version = num;
-        GST_DEBUG_OBJECT (ebml, "EbmlReadVersion: %" G_GUINT64_FORMAT, num);
+        GST_DEBUG_OBJECT (common->sinkpad,
+            "EbmlReadVersion: %" G_GUINT64_FORMAT, num);
         break;
       }
 
@@ -1244,7 +1281,7 @@ gst_matroska_read_common_parse_header (GstMatroskaReadCommon * common,
         ret = gst_matroska_read_common_parse_skip (common, ebml,
             "EBML header", id);
         if (ret != GST_FLOW_OK)
-          return ret;
+          goto exit_error;
         break;
 
         /* we ignore these two, as they don't tell us anything we care about */
@@ -1252,7 +1289,7 @@ gst_matroska_read_common_parse_header (GstMatroskaReadCommon * common,
       case GST_EBML_ID_DOCTYPEVERSION:
         ret = gst_ebml_read_skip (ebml);
         if (ret != GST_FLOW_OK)
-          return ret;
+          goto exit_error;
         break;
     }
   }
@@ -1264,10 +1301,14 @@ exit:
       (doctype == NULL)) {
     if (version <= 2) {
       if (doctype) {
-        GST_INFO_OBJECT (common, "Input is %s version %d", doctype, version);
+        GST_INFO_OBJECT (common->sinkpad, "Input is %s version %d", doctype,
+            version);
+        if (!strcmp (doctype, GST_MATROSKA_DOCTYPE_WEBM))
+          common->is_webm = TRUE;
       } else {
-        GST_WARNING_OBJECT (common, "Input is EBML without doctype, assuming "
-            "matroska (version %d)", version);
+        GST_WARNING_OBJECT (common->sinkpad,
+            "Input is EBML without doctype, assuming " "matroska (version %d)",
+            version);
       }
       ret = GST_FLOW_OK;
     } else {
@@ -1276,13 +1317,15 @@ exit:
               GST_STR_NULL (doctype), version));
       ret = GST_FLOW_ERROR;
     }
-    g_free (doctype);
   } else {
     GST_ELEMENT_ERROR (common, STREAM, WRONG_TYPE, (NULL),
         ("Input is not a matroska stream (doctype=%s)", doctype));
     ret = GST_FLOW_ERROR;
-    g_free (doctype);
   }
+
+exit_error:
+
+  g_free (doctype);
 
   return ret;
 }
@@ -1322,11 +1365,11 @@ gst_matroska_read_common_parse_index_cuetrack (GstMatroskaReadCommon * common,
 
         if (num == 0) {
           idx.track = 0;
-          GST_WARNING_OBJECT (common, "Invalid CueTrack 0");
+          GST_WARNING_OBJECT (common->sinkpad, "Invalid CueTrack 0");
           break;
         }
 
-        GST_DEBUG_OBJECT (common, "CueTrack: %" G_GUINT64_FORMAT, num);
+        GST_DEBUG_OBJECT (common->sinkpad, "CueTrack: %" G_GUINT64_FORMAT, num);
         idx.track = num;
         break;
       }
@@ -1340,8 +1383,8 @@ gst_matroska_read_common_parse_index_cuetrack (GstMatroskaReadCommon * common,
           break;
 
         if (num > G_MAXINT64) {
-          GST_WARNING_OBJECT (common, "CueClusterPosition %" G_GUINT64_FORMAT
-              " too large", num);
+          GST_WARNING_OBJECT (common->sinkpad,
+              "CueClusterPosition %" G_GUINT64_FORMAT " too large", num);
           break;
         }
 
@@ -1358,16 +1401,17 @@ gst_matroska_read_common_parse_index_cuetrack (GstMatroskaReadCommon * common,
           break;
 
         if (num == 0) {
-          GST_WARNING_OBJECT (common, "Invalid CueBlockNumber 0");
+          GST_WARNING_OBJECT (common->sinkpad, "Invalid CueBlockNumber 0");
           break;
         }
 
-        GST_DEBUG_OBJECT (common, "CueBlockNumber: %" G_GUINT64_FORMAT, num);
+        GST_DEBUG_OBJECT (common->sinkpad, "CueBlockNumber: %" G_GUINT64_FORMAT,
+            num);
         idx.block = num;
 
         /* mild sanity check, disregard strange cases ... */
         if (idx.block > G_MAXUINT16) {
-          GST_DEBUG_OBJECT (common, "... looks suspicious, ignoring");
+          GST_DEBUG_OBJECT (common->sinkpad, "... looks suspicious, ignoring");
           idx.block = 1;
         }
         break;
@@ -1396,7 +1440,7 @@ gst_matroska_read_common_parse_index_cuetrack (GstMatroskaReadCommon * common,
         common->index->len - 1);
     if (last_idx->block == idx.block && last_idx->pos == idx.pos &&
         last_idx->track == idx.track && idx.time > last_idx->time) {
-      GST_DEBUG_OBJECT (common, "Cue entry refers to same location, "
+      GST_DEBUG_OBJECT (common->sinkpad, "Cue entry refers to same location, "
           "but has different time than previous entry; discarding");
       idx.track = 0;
     }
@@ -1407,7 +1451,8 @@ gst_matroska_read_common_parse_index_cuetrack (GstMatroskaReadCommon * common,
     g_array_append_val (common->index, idx);
     (*nentries)++;
   } else if (ret == GST_FLOW_OK || ret == GST_FLOW_EOS) {
-    GST_DEBUG_OBJECT (common, "CueTrackPositions without valid content");
+    GST_DEBUG_OBJECT (common->sinkpad,
+        "CueTrackPositions without valid content");
   }
 
   return ret;
@@ -1440,7 +1485,7 @@ gst_matroska_read_common_parse_index_pointentry (GstMatroskaReadCommon *
         if ((ret = gst_ebml_read_uint (ebml, &id, &time)) != GST_FLOW_OK)
           break;
 
-        GST_DEBUG_OBJECT (common, "CueTime: %" G_GUINT64_FORMAT, time);
+        GST_DEBUG_OBJECT (common->sinkpad, "CueTime: %" G_GUINT64_FORMAT, time);
         time = time * common->time_scale;
         break;
       }
@@ -1448,10 +1493,8 @@ gst_matroska_read_common_parse_index_pointentry (GstMatroskaReadCommon *
         /* position in the file + track to which it belongs */
       case GST_MATROSKA_ID_CUETRACKPOSITIONS:
       {
-        if ((ret =
-                gst_matroska_read_common_parse_index_cuetrack (common, ebml,
-                    &nentries)) != GST_FLOW_OK)
-          break;
+        ret = gst_matroska_read_common_parse_index_cuetrack (common, ebml,
+            &nentries);
         break;
       }
 
@@ -1466,7 +1509,7 @@ gst_matroska_read_common_parse_index_pointentry (GstMatroskaReadCommon *
 
   if (nentries > 0) {
     if (time == GST_CLOCK_TIME_NONE) {
-      GST_WARNING_OBJECT (common, "CuePoint without valid time");
+      GST_WARNING_OBJECT (common->sinkpad, "CuePoint without valid time");
       g_array_remove_range (common->index, common->index->len - nentries,
           nentries);
     } else {
@@ -1477,13 +1520,13 @@ gst_matroska_read_common_parse_index_pointentry (GstMatroskaReadCommon *
             &g_array_index (common->index, GstMatroskaIndex, i);
 
         idx->time = time;
-        GST_DEBUG_OBJECT (common, "Index entry: pos=%" G_GUINT64_FORMAT
+        GST_DEBUG_OBJECT (common->sinkpad, "Index entry: pos=%" G_GUINT64_FORMAT
             ", time=%" GST_TIME_FORMAT ", track=%u, block=%u", idx->pos,
             GST_TIME_ARGS (idx->time), (guint) idx->track, (guint) idx->block);
       }
     }
   } else {
-    GST_DEBUG_OBJECT (common, "Empty CuePoint");
+    GST_DEBUG_OBJECT (common->sinkpad, "Empty CuePoint");
   }
 
   return ret;
@@ -1505,7 +1548,7 @@ gst_matroska_read_common_stream_from_num (GstMatroskaReadCommon * common,
   }
 
   if (n == common->num_streams)
-    GST_WARNING_OBJECT (common,
+    GST_WARNING_OBJECT (common->sinkpad,
         "Failed to find corresponding pad for tracknum %d", track_num);
 
   return -1;
@@ -1579,9 +1622,9 @@ gst_matroska_read_common_parse_index (GstMatroskaReadCommon * common,
         writer_id = common->element_index_writer_id;
       }
 
-      GST_LOG_OBJECT (common, "adding association %" GST_TIME_FORMAT "-> %"
-          G_GUINT64_FORMAT " for writer id %d", GST_TIME_ARGS (idx->time),
-          idx->pos, writer_id);
+      GST_LOG_OBJECT (common->sinkpad,
+          "adding association %" GST_TIME_FORMAT "-> %" G_GUINT64_FORMAT
+          " for writer id %d", GST_TIME_ARGS (idx->time), idx->pos, writer_id);
       gst_index_add_association (common->element_index, writer_id,
           GST_ASSOCIATION_FLAG_KEY_UNIT, GST_FORMAT_TIME, idx->time,
           GST_FORMAT_BYTES, idx->pos + common->ebml_segment_start, NULL);
@@ -1643,7 +1686,8 @@ gst_matroska_read_common_parse_info (GstMatroskaReadCommon * common,
           break;
 
 
-        GST_DEBUG_OBJECT (common, "TimeCodeScale: %" G_GUINT64_FORMAT, num);
+        GST_DEBUG_OBJECT (common->sinkpad, "TimeCodeScale: %" G_GUINT64_FORMAT,
+            num);
         common->time_scale = num;
         break;
       }
@@ -1653,11 +1697,11 @@ gst_matroska_read_common_parse_info (GstMatroskaReadCommon * common,
           break;
 
         if (dur_f <= 0.0) {
-          GST_WARNING_OBJECT (common, "Invalid duration %lf", dur_f);
+          GST_WARNING_OBJECT (common->sinkpad, "Invalid duration %lf", dur_f);
           break;
         }
 
-        GST_DEBUG_OBJECT (common, "Duration: %lf", dur_f);
+        GST_DEBUG_OBJECT (common->sinkpad, "Duration: %lf", dur_f);
         break;
       }
 
@@ -1667,7 +1711,8 @@ gst_matroska_read_common_parse_info (GstMatroskaReadCommon * common,
         if ((ret = gst_ebml_read_utf8 (ebml, &id, &text)) != GST_FLOW_OK)
           break;
 
-        GST_DEBUG_OBJECT (common, "WritingApp: %s", GST_STR_NULL (text));
+        GST_DEBUG_OBJECT (common->sinkpad, "WritingApp: %s",
+            GST_STR_NULL (text));
         common->writing_app = text;
         break;
       }
@@ -1678,7 +1723,8 @@ gst_matroska_read_common_parse_info (GstMatroskaReadCommon * common,
         if ((ret = gst_ebml_read_utf8 (ebml, &id, &text)) != GST_FLOW_OK)
           break;
 
-        GST_DEBUG_OBJECT (common, "MuxingApp: %s", GST_STR_NULL (text));
+        GST_DEBUG_OBJECT (common->sinkpad, "MuxingApp: %s",
+            GST_STR_NULL (text));
         common->muxing_app = text;
         break;
       }
@@ -1689,7 +1735,7 @@ gst_matroska_read_common_parse_info (GstMatroskaReadCommon * common,
         if ((ret = gst_ebml_read_date (ebml, &id, &time)) != GST_FLOW_OK)
           break;
 
-        GST_DEBUG_OBJECT (common, "DateUTC: %" G_GINT64_FORMAT, time);
+        GST_DEBUG_OBJECT (common->sinkpad, "DateUTC: %" G_GINT64_FORMAT, time);
         common->created = time;
         break;
       }
@@ -1701,7 +1747,7 @@ gst_matroska_read_common_parse_info (GstMatroskaReadCommon * common,
         if ((ret = gst_ebml_read_utf8 (ebml, &id, &text)) != GST_FLOW_OK)
           break;
 
-        GST_DEBUG_OBJECT (common, "Title: %s", GST_STR_NULL (text));
+        GST_DEBUG_OBJECT (common->sinkpad, "Title: %s", GST_STR_NULL (text));
         taglist = gst_tag_list_new (GST_TAG_TITLE, text, NULL);
         gst_tag_list_set_scope (taglist, GST_TAG_SCOPE_GLOBAL);
         gst_matroska_read_common_found_global_tag (common, el, taglist);
@@ -1746,7 +1792,7 @@ gst_matroska_read_common_parse_info (GstMatroskaReadCommon * common,
 
 static GstFlowReturn
 gst_matroska_read_common_parse_metadata_id_simple_tag (GstMatroskaReadCommon *
-    common, GstEbmlRead * ebml, GstTagList ** p_taglist)
+    common, GstEbmlRead * ebml, GstTagList ** p_taglist, gchar * parent)
 {
   /* FIXME: check if there are more useful mappings */
   static const struct
@@ -1756,27 +1802,165 @@ gst_matroska_read_common_parse_metadata_id_simple_tag (GstMatroskaReadCommon *
   }
   tag_conv[] = {
     {
+      /* The following list has the _same_ order as the one in Matroska spec. Please, don't mess it up. */
+      /* TODO: Nesting information:
+         ORIGINAL A special tag that is meant to have other tags inside (using nested tags) to describe the original work of art that this item is based on. All tags in this list can be used "under" the ORIGINAL tag like LYRICIST, PERFORMER, etc.
+         SAMPLE A tag that contains other tags to describe a sample used in the targeted item taken from another work of art. All tags in this list can be used "under" the SAMPLE tag like TITLE, ARTIST, DATE_RELEASED, etc.
+         COUNTRY The name of the country (biblio ISO-639-2) that is meant to have other tags inside (using nested tags) to country specific information about the item. All tags in this list can be used "under" the COUNTRY_SPECIFIC tag like LABEL, PUBLISH_RATING, etc.
+       */
+
+      /* Organizational Information */
+    GST_MATROSKA_TAG_ID_TOTAL_PARTS, GST_TAG_TRACK_COUNT}, {
+    GST_MATROSKA_TAG_ID_PART_NUMBER, GST_TAG_TRACK_NUMBER}, {
+      /* TODO: PART_OFFSET A number to add to PART_NUMBER when the parts at that level don't start at 1. (e.g. if TargetType is TRACK, the track number of the second audio CD) */
+
+      /* Titles */
+    GST_MATROSKA_TAG_ID_SUBTITLE, GST_TAG_TITLE}, {     /* Sub Title of the entity. Since we're concat'ing all title-like entities anyway, might as well add the sub-title. */
     GST_MATROSKA_TAG_ID_TITLE, GST_TAG_TITLE}, {
+    GST_MATROSKA_TAG_ID_ALBUM, GST_TAG_ALBUM}, {        /* Matroska spec does NOT have this tag! Dunno what it was doing here, probably for compatibility. */
+
+      /* TODO: Nested Information:
+         URL URL corresponding to the tag it's included in.
+         SORT_WITH A child element to indicate what alternative value the parent tag can have to be sorted, for example "Pet Shop Boys" instead of "The Pet Shop Boys". Or "Marley Bob" and "Marley Ziggy" (no comma needed).
+         INSTRUMENTS The instruments that are being used/played, separated by a comma. It should be a child of the following tags: ARTIST, LEAD_PERFORMER or ACCOMPANIMENT.
+         EMAIL Email corresponding to the tag it's included in.
+         ADDRESS The physical address of the entity. The address should include a country code. It can be useful for a recording label.
+         FAX The fax number corresponding to the tag it's included in. It can be useful for a recording label.
+         PHONE The phone number corresponding to the tag it's included in. It can be useful for a recording label.
+       */
+
+      /* Entities */
     GST_MATROSKA_TAG_ID_ARTIST, GST_TAG_ARTIST}, {
-    GST_MATROSKA_TAG_ID_AUTHOR, GST_TAG_ARTIST}, {
-    GST_MATROSKA_TAG_ID_ALBUM, GST_TAG_ALBUM}, {
-    GST_MATROSKA_TAG_ID_COMMENTS, GST_TAG_COMMENT}, {
-    GST_MATROSKA_TAG_ID_BITSPS, GST_TAG_BITRATE}, {
-    GST_MATROSKA_TAG_ID_BPS, GST_TAG_BITRATE}, {
-    GST_MATROSKA_TAG_ID_ENCODER, GST_TAG_ENCODER}, {
-    GST_MATROSKA_TAG_ID_DATE, GST_TAG_DATE}, {
-    GST_MATROSKA_TAG_ID_ISRC, GST_TAG_ISRC}, {
-    GST_MATROSKA_TAG_ID_COPYRIGHT, GST_TAG_COPYRIGHT}, {
-    GST_MATROSKA_TAG_ID_BPM, GST_TAG_BEATS_PER_MINUTE}, {
-    GST_MATROSKA_TAG_ID_TERMS_OF_USE, GST_TAG_LICENSE}, {
-    GST_MATROSKA_TAG_ID_COMPOSER, GST_TAG_COMPOSER}, {
     GST_MATROSKA_TAG_ID_LEAD_PERFORMER, GST_TAG_PERFORMER}, {
-    GST_MATROSKA_TAG_ID_GENRE, GST_TAG_GENRE}
+    GST_MATROSKA_TAG_ID_ACCOMPANIMENT, GST_TAG_PERFORMER}, {    /* Band/orchestra/accompaniment/musician. This is akin to the TPE2 tag in ID3. */
+    GST_MATROSKA_TAG_ID_COMPOSER, GST_TAG_COMPOSER}, {
+      /* ARRANGER The person who arranged the piece, e.g., Ravel. */
+    GST_MATROSKA_TAG_ID_LYRICS, GST_TAG_LYRICS}, {      /* The lyrics corresponding to a song (in case audio synchronization is not known or as a doublon to a subtitle track). Editing this value when subtitles are found should also result in editing the subtitle track for more consistency. */
+      /* LYRICIST The person who wrote the lyrics for a musical item. This is akin to the TEXT tag in ID3. */
+    GST_MATROSKA_TAG_ID_CONDUCTOR, GST_TAG_PERFORMER}, {        /* Conductor/performer refinement. This is akin to the TPE3 tag in ID3. */
+      /* DIRECTOR This is akin to the IART tag in RIFF. */
+    GST_MATROSKA_TAG_ID_AUTHOR, GST_TAG_ARTIST}, {
+      /* ASSISTANT_DIRECTOR The name of the assistant director. */
+      /* DIRECTOR_OF_PHOTOGRAPHY The name of the director of photography, also known as cinematographer. This is akin to the ICNM tag in Extended RIFF. */
+      /* SOUND_ENGINEER The name of the sound engineer or sound recordist. */
+      /* ART_DIRECTOR The person who oversees the artists and craftspeople who build the sets. */
+      /* PRODUCTION_DESIGNER Artist responsible for designing the overall visual appearance of a movie. */
+      /* CHOREGRAPHER The name of the choregrapher */
+      /* COSTUME_DESIGNER The name of the costume designer */
+      /* ACTOR An actor or actress playing a role in this movie. This is the person's real name, not the character's name the person is playing. */
+      /* CHARACTER The name of the character an actor or actress plays in this movie. This should be a sub-tag of an ACTOR tag in order not to cause ambiguities. */
+      /* WRITTEN_BY The author of the story or script (used for movies and TV shows). */
+      /* SCREENPLAY_BY The author of the screenplay or scenario (used for movies and TV shows). */
+      /* EDITED_BY This is akin to the IEDT tag in Extended RIFF. */
+      /* PRODUCER Produced by. This is akin to the IPRO tag in Extended RIFF. */
+      /* COPRODUCER The name of a co-producer. */
+      /* EXECUTIVE_PRODUCER The name of an executive producer. */
+      /* DISTRIBUTED_BY This is akin to the IDST tag in Extended RIFF. */
+      /* MASTERED_BY The engineer who mastered the content for a physical medium or for digital distribution. */
+    GST_MATROSKA_TAG_ID_ENCODED_BY, GST_TAG_ENCODED_BY}, {      /* This is akin to the TENC tag in ID3. */
+      /* MIXED_BY DJ mix by the artist specified */
+      /* REMIXED_BY Interpreted, remixed, or otherwise modified by. This is akin to the TPE4 tag in ID3. */
+      /* PRODUCTION_STUDIO This is akin to the ISTD tag in Extended RIFF. */
+      /* THANKS_TO A very general tag for everyone else that wants to be listed. */
+      /* PUBLISHER This is akin to the TPUB tag in ID3. */
+      /* LABEL The record label or imprint on the disc. */
+      /* Search / Classification */
+    GST_MATROSKA_TAG_ID_GENRE, GST_TAG_GENRE}, {
+      /* MOOD Intended to reflect the mood of the item with a few keywords, e.g. "Romantic", "Sad" or "Uplifting". The format follows that of the TMOO tag in ID3. */
+      /* ORIGINAL_MEDIA_TYPE Describes the original type of the media, such as, "DVD", "CD", "computer image," "drawing," "lithograph," and so forth. This is akin to the TMED tag in ID3. */
+      /* CONTENT_TYPE The type of the item. e.g. Documentary, Feature Film, Cartoon, Music Video, Music, Sound FX, ... */
+      /* SUBJECT Describes the topic of the file, such as "Aerial view of Seattle." */
+    GST_MATROSKA_TAG_ID_DESCRIPTION, GST_TAG_DESCRIPTION}, {    /* A short description of the content, such as "Two birds flying." */
+    GST_MATROSKA_TAG_ID_KEYWORDS, GST_TAG_KEYWORDS}, {  /* Keywords to the item separated by a comma, used for searching. */
+      /* SUMMARY A plot outline or a summary of the story. */
+      /* SYNOPSIS A description of the story line of the item. */
+      /* INITIAL_KEY The initial key that a musical track starts in. The format is identical to ID3. */
+      /* PERIOD Describes the period that the piece is from or about. For example, "Renaissance". */
+      /* LAW_RATING Depending on the country it's the format of the rating of a movie (P, R, X in the USA, an age in other countries or a URI defining a logo). */
+      /* ICRA The ICRA content rating for parental control. (Previously RSACi) */
+
+      /* Temporal Information */
+    GST_MATROSKA_TAG_ID_DATE_RELEASED, GST_TAG_DATE}, { /* The time that the item was originaly released. This is akin to the TDRL tag in ID3. */
+    GST_MATROSKA_TAG_ID_DATE_RECORDED, GST_TAG_DATE}, { /* The time that the recording began. This is akin to the TDRC tag in ID3. */
+    GST_MATROSKA_TAG_ID_DATE_ENCODED, GST_TAG_DATE}, {  /* The time that the encoding of this item was completed began. This is akin to the TDEN tag in ID3. */
+    GST_MATROSKA_TAG_ID_DATE_TAGGED, GST_TAG_DATE}, {   /* The time that the tags were done for this item. This is akin to the TDTG tag in ID3. */
+    GST_MATROSKA_TAG_ID_DATE_DIGITIZED, GST_TAG_DATE}, {        /* The time that the item was tranfered to a digital medium. This is akin to the IDIT tag in RIFF. */
+    GST_MATROSKA_TAG_ID_DATE_WRITTEN, GST_TAG_DATE}, {  /* The time that the writing of the music/script began. */
+    GST_MATROSKA_TAG_ID_DATE_PURCHASED, GST_TAG_DATE}, {        /* Information on when the file was purchased (see also purchase tags). */
+    GST_MATROSKA_TAG_ID_DATE, GST_TAG_DATE}, {  /* Matroska spec does NOT have this tag! Dunno what it was doing here, probably for compatibility. */
+
+      /* Spacial Information */
+    GST_MATROSKA_TAG_ID_RECORDING_LOCATION, GST_TAG_GEO_LOCATION_NAME}, {       /* The location where the item was recorded. The countries corresponding to the string, same 2 octets as in Internet domains, or possibly ISO-3166. This code is followed by a comma, then more detailed information such as state/province, another comma, and then city. For example, "US, Texas, Austin". This will allow for easy sorting. It is okay to only store the country, or the country and the state/province. More detailed information can be added after the city through the use of additional commas. In cases where the province/state is unknown, but you want to store the city, simply leave a space between the two commas. For example, "US, , Austin". */
+      /* COMPOSITION_LOCATION Location that the item was originaly designed/written. The countries corresponding to the string, same 2 octets as in Internet domains, or possibly ISO-3166. This code is followed by a comma, then more detailed information such as state/province, another comma, and then city. For example, "US, Texas, Austin". This will allow for easy sorting. It is okay to only store the country, or the country and the state/province. More detailed information can be added after the city through the use of additional commas. In cases where the province/state is unknown, but you want to store the city, simply leave a space between the two commas. For example, "US, , Austin". */
+      /* COMPOSER_NATIONALITY Nationality of the main composer of the item, mostly for classical music. The countries corresponding to the string, same 2 octets as in Internet domains, or possibly ISO-3166. */
+
+      /* Personal */
+    GST_MATROSKA_TAG_ID_COMMENT, GST_TAG_COMMENT}, {    /* Any comment related to the content. */
+    GST_MATROSKA_TAG_ID_COMMENTS, GST_TAG_COMMENT}, {   /* Matroska spec does NOT have this tag! Dunno what it was doing here, probably for compatibility. */
+      /* PLAY_COUNTER The number of time the item has been played. */
+      /* TODO: RATING A numeric value defining how much a person likes the song/movie. The number is between 0 and 5 with decimal values possible (e.g. 2.7), 5(.0) being the highest possible rating. Other rating systems with different ranges will have to be scaled. */
+
+      /* Technical Information */
+    GST_MATROSKA_TAG_ID_ENCODER, GST_TAG_ENCODER}, {
+      /* ENCODER_SETTINGS A list of the settings used for encoding this item. No specific format. */
+    GST_MATROSKA_TAG_ID_BPS, GST_TAG_BITRATE}, {
+    GST_MATROSKA_TAG_ID_BITSPS, GST_TAG_BITRATE}, {     /* Matroska spec does NOT have this tag! Dunno what it was doing here, probably for compatibility. */
+      /* WONTFIX (already handled in another way): FPS The average frames per second of the specified item. This is typically the average number of Blocks per second. In the event that lacing is used, each laced chunk is to be counted as a seperate frame. */
+    GST_MATROSKA_TAG_ID_BPM, GST_TAG_BEATS_PER_MINUTE}, {
+      /* MEASURE In music, a measure is a unit of time in Western music like "4/4". It represents a regular grouping of beats, a meter, as indicated in musical notation by the time signature.. The majority of the contemporary rock and pop music you hear on the radio these days is written in the 4/4 time signature. */
+      /* TUNING It is saved as a frequency in hertz to allow near-perfect tuning of instruments to the same tone as the musical piece (e.g. "441.34" in Hertz). The default value is 440.0 Hz. */
+      /* TODO: REPLAYGAIN_GAIN The gain to apply to reach 89dB SPL on playback. This is based on the Replay Gain standard. Note that ReplayGain information can be found at all TargetType levels (track, album, etc). */
+      /* TODO: REPLAYGAIN_PEAK The maximum absolute peak value of the item. This is based on the Replay Gain standard. */
+
+      /* Identifiers */
+    GST_MATROSKA_TAG_ID_ISRC, GST_TAG_ISRC}, {
+      /* MCDI This is a binary dump of the TOC of the CDROM that this item was taken from. This holds the same information as the MCDI in ID3. */
+      /* ISBN International Standard Book Number */
+      /* BARCODE EAN-13 (European Article Numbering) or UPC-A (Universal Product Code) bar code identifier */
+      /* CATALOG_NUMBER A label-specific string used to identify the release (TIC 01 for example). */
+      /* LABEL_CODE A 4-digit or 5-digit number to identify the record label, typically printed as (LC) xxxx or (LC) 0xxxx on CDs medias or covers (only the number is stored). */
+      /* LCCN Library of Congress Control Number */
+
+      /* Commercial */
+      /* PURCHASE_ITEM URL to purchase this file. This is akin to the WPAY tag in ID3. */
+      /* PURCHASE_INFO Information on where to purchase this album. This is akin to the WCOM tag in ID3. */
+      /* PURCHASE_OWNER Information on the person who purchased the file. This is akin to the TOWN tag in ID3. */
+      /* PURCHASE_PRICE The amount paid for entity. There should only be a numeric value in here. Only numbers, no letters or symbols other than ".". For instance, you would store "15.59" instead of "$15.59USD". */
+      /* PURCHASE_CURRENCY The currency type used to pay for the entity. Use ISO-4217 for the 3 letter currency code. */
+
+      /* Legal */
+    GST_MATROSKA_TAG_ID_COPYRIGHT, GST_TAG_COPYRIGHT}, {
+    GST_MATROSKA_TAG_ID_PRODUCTION_COPYRIGHT, GST_TAG_COPYRIGHT}, {     /* The copyright information as per the production copyright holder. This is akin to the TPRO tag in ID3. */
+    GST_MATROSKA_TAG_ID_LICENSE, GST_TAG_LICENSE}, {    /* The license applied to the content (like Creative Commons variants). */
+    GST_MATROSKA_TAG_ID_TERMS_OF_USE, GST_TAG_LICENSE}
+  };
+  static const struct
+  {
+    const gchar *matroska_tagname;
+    const gchar *gstreamer_tagname;
+  }
+  child_tag_conv[] = {
+    {
+    "TITLE/SORT_WITH=", GST_TAG_TITLE_SORTNAME}, {
+    "ARTIST/SORT_WITH=", GST_TAG_ARTIST_SORTNAME}, {
+      /* ALBUM-stuff is handled elsewhere */
+    "COMPOSER/SORT_WITH=", GST_TAG_TITLE_SORTNAME}, {
+    "ORIGINAL/URL=", GST_TAG_LOCATION}, {
+      /* EMAIL, PHONE, FAX all can be mapped to GST_TAG_CONTACT, there is special
+       * code for that later.
+       */
+    "TITLE/URL=", GST_TAG_HOMEPAGE}, {
+    "ARTIST/URL=", GST_TAG_HOMEPAGE}, {
+    "COPYRIGHT/URL=", GST_TAG_COPYRIGHT_URI}, {
+    "LICENSE/URL=", GST_TAG_LICENSE_URI}, {
+    "LICENSE/URL=", GST_TAG_LICENSE_URI}
   };
   GstFlowReturn ret;
   guint32 id;
   gchar *value = NULL;
   gchar *tag = NULL;
+  gchar *name_with_parent = NULL;
+  GstTagList *child_taglist = NULL;
 
   DEBUG_ELEMENT_START (common, ebml, "SimpleTag");
 
@@ -1784,6 +1968,11 @@ gst_matroska_read_common_parse_metadata_id_simple_tag (GstMatroskaReadCommon *
     DEBUG_ELEMENT_STOP (common, ebml, "SimpleTag", ret);
     return ret;
   }
+
+  if (parent)
+    child_taglist = *p_taglist;
+  else
+    child_taglist = gst_tag_list_new_empty ();
 
   while (ret == GST_FLOW_OK && gst_ebml_read_has_remaining (ebml, 1, TRUE)) {
     /* read all sub-entries */
@@ -1796,21 +1985,39 @@ gst_matroska_read_common_parse_metadata_id_simple_tag (GstMatroskaReadCommon *
         g_free (tag);
         tag = NULL;
         ret = gst_ebml_read_ascii (ebml, &id, &tag);
-        GST_DEBUG_OBJECT (common, "TagName: %s", GST_STR_NULL (tag));
+        GST_DEBUG_OBJECT (common->sinkpad, "TagName: %s", GST_STR_NULL (tag));
+        g_free (name_with_parent);
+        if (parent != NULL)
+          name_with_parent = g_strdup_printf ("%s/%s", parent, tag);
+        else
+          name_with_parent = g_strdup (tag);
         break;
 
       case GST_MATROSKA_ID_TAGSTRING:
         g_free (value);
         value = NULL;
         ret = gst_ebml_read_utf8 (ebml, &id, &value);
-        GST_DEBUG_OBJECT (common, "TagString: %s", GST_STR_NULL (value));
+        GST_DEBUG_OBJECT (common->sinkpad, "TagString: %s",
+            GST_STR_NULL (value));
         break;
+
+      case GST_MATROSKA_ID_SIMPLETAG:
+        /* Recursive SimpleTag */
+        /* This implementation requires tag name of _this_ tag to be known
+         * in order to read its children. It's not in the spec, just the way
+         * the code is written.
+         */
+        if (name_with_parent != NULL) {
+          ret = gst_matroska_read_common_parse_metadata_id_simple_tag (common,
+              ebml, &child_taglist, name_with_parent);
+          break;
+        }
+        /* fall-through */
 
       default:
         ret = gst_matroska_read_common_parse_skip (common, ebml, "SimpleTag",
             id);
         break;
-        /* fall-through */
 
       case GST_MATROSKA_ID_TAGLANGUAGE:
       case GST_MATROSKA_ID_TAGDEFAULT:
@@ -1822,10 +2029,19 @@ gst_matroska_read_common_parse_metadata_id_simple_tag (GstMatroskaReadCommon *
 
   DEBUG_ELEMENT_STOP (common, ebml, "SimpleTag", ret);
 
-  if (tag && value) {
+  if (parent && tag && value && *value != '\0') {
+    /* Don't bother mapping children tags - parent will do that */
+    gchar *key_val;
+    /* TODO: read LANGUAGE sub-tag, and use "key[lc]=val" form */
+    key_val = g_strdup_printf ("%s=%s", name_with_parent, value);
+    gst_tag_list_add (*p_taglist, GST_TAG_MERGE_APPEND,
+        GST_TAG_EXTENDED_COMMENT, key_val, NULL);
+    g_free (key_val);
+  } else if (tag && value && *value != '\0') {
+    gboolean matched = FALSE;
     guint i;
 
-    for (i = 0; i < G_N_ELEMENTS (tag_conv); i++) {
+    for (i = 0; !matched && i < G_N_ELEMENTS (tag_conv); i++) {
       const gchar *tagname_gst = tag_conv[i].gstreamer_tagname;
 
       const gchar *tagname_mkv = tag_conv[i].matroska_tagname;
@@ -1851,21 +2067,241 @@ gst_matroska_read_common_parse_metadata_id_simple_tag (GstMatroskaReadCommon *
           gst_tag_list_add_values (*p_taglist, GST_TAG_MERGE_APPEND,
               tagname_gst, &dest, NULL);
         } else {
-          GST_WARNING_OBJECT (common, "Can't transform tag '%s' with "
+          GST_WARNING_OBJECT (common->sinkpad, "Can't transform tag '%s' with "
               "value '%s' to target type '%s'", tag, value,
               g_type_name (dest_type));
         }
         g_value_unset (&dest);
-        break;
+        matched = TRUE;
       }
     }
+    if (!matched) {
+      gchar *key_val;
+      /* TODO: read LANGUAGE sub-tag, and use "key[lc]=val" form */
+      key_val = g_strdup_printf ("%s=%s", tag, value);
+      gst_tag_list_add (*p_taglist, GST_TAG_MERGE_APPEND,
+          GST_TAG_EXTENDED_COMMENT, key_val, NULL);
+      g_free (key_val);
+    }
+  }
+
+  if (!parent) {
+    /* Map children tags. This only supports top-anchored mapping. That is,
+     * we start at toplevel tag (this tag), and see how its combinations
+     * with its children can be mapped. Which means that grandchildren
+     * are also combined here, with _this_ tag taken into consideration.
+     * If grandchildren can be combined only with children, that combination
+     * will not happen.
+     */
+    gint child_tags_n = gst_tag_list_n_tags (child_taglist);
+    if (child_tags_n > 0) {
+      gint i;
+      for (i = 0; i < child_tags_n; i++) {
+        gint j;
+        const gchar *child_name = gst_tag_list_nth_tag_name (child_taglist, i);
+        guint taglen = gst_tag_list_get_tag_size (child_taglist, child_name);
+        for (j = 0; j < taglen; j++) {
+          gchar *val;
+          gboolean matched = FALSE;
+          gchar *val_pre, *val_post;
+          gint k;
+
+          if (!gst_tag_list_get_string_index (child_taglist, child_name,
+                  j, &val))
+            continue;
+          if (!strchr (val, '=')) {
+            g_free (val);
+            continue;
+          }
+          val_post = g_strdup (strchr (val, '=') + 1);
+          val_pre = g_strdup (val);
+          *(strchr (val_pre, '=') + 1) = '\0';
+
+          for (k = 0; !matched && k < G_N_ELEMENTS (child_tag_conv); k++) {
+            const gchar *tagname_gst = child_tag_conv[k].gstreamer_tagname;
+
+            const gchar *tagname_mkv = child_tag_conv[k].matroska_tagname;
+
+            /* TODO: Once "key[lc]=value" form support is implemented,
+             * strip [lc] here. It can't be used in combined tags.
+             * If a tag is not combined, leave [lc] as it is.
+             */
+            if (strcmp (tagname_mkv, val_pre) == 0) {
+              GValue dest = { 0, };
+              GType dest_type = gst_tag_get_type (tagname_gst);
+
+              g_value_init (&dest, dest_type);
+              if (gst_value_deserialize (&dest, val_post)) {
+                gst_tag_list_add_values (*p_taglist, GST_TAG_MERGE_APPEND,
+                    tagname_gst, &dest, NULL);
+              } else {
+                GST_WARNING_OBJECT (common->sinkpad,
+                    "Can't transform complex tag '%s' " "to target type '%s'",
+                    val, g_type_name (dest_type));
+              }
+              g_value_unset (&dest);
+              matched = TRUE;
+            }
+          }
+          if (!matched) {
+            gchar *last_slash = strrchr (val_pre, '/');
+            if (last_slash) {
+              last_slash++;
+              if (strcmp (last_slash, "EMAIL=") == 0 ||
+                  strcmp (last_slash, "PHONE=") == 0 ||
+                  strcmp (last_slash, "ADDRESS=") == 0 ||
+                  strcmp (last_slash, "FAX=") == 0) {
+                gst_tag_list_add (*p_taglist, GST_TAG_MERGE_APPEND,
+                    GST_TAG_CONTACT, val_post, NULL);
+                matched = TRUE;
+              }
+            }
+          }
+          if (!matched)
+            gst_tag_list_add (*p_taglist, GST_TAG_MERGE_APPEND,
+                GST_TAG_EXTENDED_COMMENT, val, NULL);
+          g_free (val_post);
+          g_free (val_pre);
+          g_free (val);
+        }
+      }
+    }
+    gst_tag_list_unref (child_taglist);
   }
 
   g_free (tag);
   g_free (value);
+  g_free (name_with_parent);
 
   return ret;
 }
+
+
+static void
+gst_matroska_read_common_count_streams (GstMatroskaReadCommon * common,
+    gint * a, gint * v, gint * s)
+{
+  gint i;
+  gint video_streams = 0, audio_streams = 0, subtitle_streams = 0;
+
+  for (i = 0; i < common->src->len; i++) {
+    GstMatroskaTrackContext *stream;
+
+    stream = g_ptr_array_index (common->src, i);
+    if (stream->type == GST_MATROSKA_TRACK_TYPE_VIDEO)
+      video_streams += 1;
+    else if (stream->type == GST_MATROSKA_TRACK_TYPE_AUDIO)
+      audio_streams += 1;
+    else if (stream->type == GST_MATROSKA_TRACK_TYPE_SUBTITLE)
+      subtitle_streams += 1;
+  }
+  *v = video_streams;
+  *a = audio_streams;
+  *s = subtitle_streams;
+}
+
+
+static void
+gst_matroska_read_common_apply_target_type_foreach (const GstTagList * list,
+    const gchar * tag, gpointer user_data)
+{
+  guint vallen;
+  guint i;
+  TargetTypeContext *ctx = (TargetTypeContext *) user_data;
+
+  vallen = gst_tag_list_get_tag_size (list, tag);
+  if (vallen == 0)
+    return;
+
+  for (i = 0; i < vallen; i++) {
+    const GValue *val_ref;
+
+    val_ref = gst_tag_list_get_value_index (list, tag, i);
+    if (val_ref == NULL)
+      continue;
+
+    /* TODO: use the optional ctx->target_type somehow */
+    if (strcmp (tag, GST_TAG_TITLE) == 0) {
+      if (ctx->target_type_value >= 70 && !ctx->audio_only) {
+        gst_tag_list_add_value (ctx->result, GST_TAG_MERGE_APPEND,
+            GST_TAG_SHOW_NAME, val_ref);
+        continue;
+      } else if (ctx->target_type_value >= 50) {
+        gst_tag_list_add_value (ctx->result, GST_TAG_MERGE_APPEND,
+            GST_TAG_ALBUM, val_ref);
+        continue;
+      }
+    } else if (strcmp (tag, GST_TAG_TITLE_SORTNAME) == 0) {
+      if (ctx->target_type_value >= 70 && !ctx->audio_only) {
+        gst_tag_list_add_value (ctx->result, GST_TAG_MERGE_APPEND,
+            GST_TAG_SHOW_SORTNAME, val_ref);
+        continue;
+      } else if (ctx->target_type_value >= 50) {
+        gst_tag_list_add_value (ctx->result, GST_TAG_MERGE_APPEND,
+            GST_TAG_ALBUM_SORTNAME, val_ref);
+        continue;
+      }
+    } else if (strcmp (tag, GST_TAG_ARTIST) == 0) {
+      if (ctx->target_type_value >= 50) {
+        gst_tag_list_add_value (ctx->result, GST_TAG_MERGE_APPEND,
+            GST_TAG_ALBUM_ARTIST, val_ref);
+        continue;
+      }
+    } else if (strcmp (tag, GST_TAG_ARTIST_SORTNAME) == 0) {
+      if (ctx->target_type_value >= 50) {
+        gst_tag_list_add_value (ctx->result, GST_TAG_MERGE_APPEND,
+            GST_TAG_ALBUM_ARTIST_SORTNAME, val_ref);
+        continue;
+      }
+    } else if (strcmp (tag, GST_TAG_TRACK_COUNT) == 0) {
+      if (ctx->target_type_value >= 60) {
+        gst_tag_list_add_value (ctx->result, GST_TAG_MERGE_APPEND,
+            GST_TAG_ALBUM_VOLUME_COUNT, val_ref);
+        continue;
+      }
+    } else if (strcmp (tag, GST_TAG_TRACK_NUMBER) == 0) {
+      if (ctx->target_type_value >= 60 && !ctx->audio_only) {
+        gst_tag_list_add_value (ctx->result, GST_TAG_MERGE_APPEND,
+            GST_TAG_SHOW_SEASON_NUMBER, val_ref);
+        continue;
+      } else if (ctx->target_type_value >= 50 && !ctx->audio_only) {
+        gst_tag_list_add_value (ctx->result, GST_TAG_MERGE_APPEND,
+            GST_TAG_SHOW_EPISODE_NUMBER, val_ref);
+        continue;
+      } else if (ctx->target_type_value >= 50) {
+        gst_tag_list_add_value (ctx->result, GST_TAG_MERGE_APPEND,
+            GST_TAG_ALBUM_VOLUME_NUMBER, val_ref);
+        continue;
+      }
+    }
+    gst_tag_list_add_value (ctx->result, GST_TAG_MERGE_APPEND, tag, val_ref);
+  }
+}
+
+
+static GstTagList *
+gst_matroska_read_common_apply_target_type (GstMatroskaReadCommon * common,
+    GstTagList * taglist, guint64 target_type_value, gchar * target_type)
+{
+  TargetTypeContext ctx;
+  gint a = 0;
+  gint v = 0;
+  gint s = 0;
+
+  gst_matroska_read_common_count_streams (common, &a, &v, &s);
+
+  ctx.audio_only = (a > 0 && v == 0 && s == 0);
+  ctx.result = gst_tag_list_new_empty ();
+  ctx.target_type_value = target_type_value;
+  ctx.target_type = target_type;
+
+  gst_tag_list_foreach (taglist,
+      gst_matroska_read_common_apply_target_type_foreach, &ctx);
+
+  gst_tag_list_unref (taglist);
+  return ctx.result;
+}
+
 
 static GstFlowReturn
 gst_matroska_read_common_parse_metadata_id_tag (GstMatroskaReadCommon * common,
@@ -1873,9 +2309,11 @@ gst_matroska_read_common_parse_metadata_id_tag (GstMatroskaReadCommon * common,
 {
   guint32 id;
   GstFlowReturn ret;
-  GArray *chapter_targets, *edition_targets;
+  GArray *chapter_targets, *edition_targets, *track_targets;
   GstTagList *taglist;
   GList *cur;
+  guint64 target_type_value = 50;
+  gchar *target_type = NULL;
 
   DEBUG_ELEMENT_START (common, ebml, "Tag");
 
@@ -1886,7 +2324,9 @@ gst_matroska_read_common_parse_metadata_id_tag (GstMatroskaReadCommon * common,
 
   edition_targets = g_array_new (FALSE, FALSE, sizeof (guint64));
   chapter_targets = g_array_new (FALSE, FALSE, sizeof (guint64));
+  track_targets = g_array_new (FALSE, FALSE, sizeof (guint64));
   taglist = gst_tag_list_new_empty ();
+  target_type = NULL;
 
   while (ret == GST_FLOW_OK && gst_ebml_read_has_remaining (ebml, 1, TRUE)) {
     /* read all sub-entries */
@@ -1897,13 +2337,16 @@ gst_matroska_read_common_parse_metadata_id_tag (GstMatroskaReadCommon * common,
     switch (id) {
       case GST_MATROSKA_ID_SIMPLETAG:
         ret = gst_matroska_read_common_parse_metadata_id_simple_tag (common,
-            ebml, &taglist);
+            ebml, &taglist, NULL);
         break;
 
       case GST_MATROSKA_ID_TARGETS:
-        ret =
-            gst_matroska_read_common_parse_metadata_targets (common, ebml,
-            edition_targets, chapter_targets);
+        g_free (target_type);
+        target_type = NULL;
+        target_type_value = 50;
+        ret = gst_matroska_read_common_parse_metadata_targets (common, ebml,
+            edition_targets, chapter_targets, track_targets,
+            &target_type_value, &target_type);
         break;
 
       default:
@@ -1914,19 +2357,59 @@ gst_matroska_read_common_parse_metadata_id_tag (GstMatroskaReadCommon * common,
 
   DEBUG_ELEMENT_STOP (common, ebml, "Tag", ret);
 
+  taglist = gst_matroska_read_common_apply_target_type (common, taglist,
+      target_type_value, target_type);
+  g_free (target_type);
+
   /* if tag is chapter/edition specific - try to find that entry */
-  if (G_UNLIKELY (chapter_targets->len > 0 || edition_targets->len > 0)) {
-    if (common->toc == NULL)
-      GST_WARNING_OBJECT (common,
-          "Found chapter/edition specific tag, but TOC doesn't present");
-    else {
-      cur = gst_toc_get_entries (common->toc);
-      while (cur != NULL) {
-        gst_matroska_read_common_parse_toc_tag (cur->data, edition_targets,
-            chapter_targets, taglist);
-        cur = cur->next;
+  if (G_UNLIKELY (chapter_targets->len > 0 || edition_targets->len > 0 ||
+          track_targets->len > 0)) {
+    gint i;
+    if (chapter_targets->len > 0 || edition_targets->len > 0) {
+      if (common->toc == NULL)
+        GST_WARNING_OBJECT (common->sinkpad,
+            "Found chapter/edition specific tag, but TOC is not present");
+      else {
+        cur = gst_toc_get_entries (common->toc);
+        while (cur != NULL) {
+          gst_matroska_read_common_parse_toc_tag (cur->data, edition_targets,
+              chapter_targets, taglist);
+          cur = cur->next;
+        }
+        common->toc_updated = TRUE;
       }
-      common->toc_updated = TRUE;
+    }
+    for (i = 0; i < track_targets->len; i++) {
+      gint j;
+      gboolean found = FALSE;
+      guint64 tgt = g_array_index (track_targets, guint64, i);
+
+      for (j = 0; j < common->src->len; j++) {
+        GstMatroskaTrackContext *stream = g_ptr_array_index (common->src, j);
+
+        if (stream->uid == tgt) {
+          gst_tag_list_insert (stream->tags, taglist, GST_TAG_MERGE_REPLACE);
+          stream->tags_changed = TRUE;
+          found = TRUE;
+        }
+      }
+      if (!found) {
+        /* Cache the track taglist: possibly belongs to a track that will be parsed
+           later in gst_matroska_demux.c:gst_matroska_demux_add_stream (...) */
+        gpointer track_uid = GUINT_TO_POINTER (tgt);
+        GstTagList *cached_taglist =
+            g_hash_table_lookup (common->cached_track_taglists, track_uid);
+        if (cached_taglist)
+          gst_tag_list_insert (cached_taglist, taglist, GST_TAG_MERGE_REPLACE);
+        else {
+          gst_tag_list_ref (taglist);
+          g_hash_table_insert (common->cached_track_taglists, track_uid,
+              taglist);
+        }
+        GST_DEBUG_OBJECT (common->sinkpad,
+            "Found track-specific tag(s), but track %" G_GUINT64_FORMAT
+            " is not known yet, caching", tgt);
+      }
     }
   } else
     gst_tag_list_insert (*p_taglist, taglist, GST_TAG_MERGE_APPEND);
@@ -1934,6 +2417,7 @@ gst_matroska_read_common_parse_metadata_id_tag (GstMatroskaReadCommon * common,
   gst_tag_list_unref (taglist);
   g_array_unref (chapter_targets);
   g_array_unref (edition_targets);
+  g_array_unref (track_targets);
 
   return ret;
 }
@@ -1948,8 +2432,6 @@ gst_matroska_read_common_parse_metadata (GstMatroskaReadCommon * common,
   GList *l;
   guint64 curpos;
 
-  curpos = gst_ebml_read_get_pos (ebml);
-
   /* Make sure we don't parse a tags element twice and
    * post it's tags twice */
   curpos = gst_ebml_read_get_pos (ebml);
@@ -1957,8 +2439,8 @@ gst_matroska_read_common_parse_metadata (GstMatroskaReadCommon * common,
     guint64 *pos = l->data;
 
     if (*pos == curpos) {
-      GST_DEBUG_OBJECT (common, "Skipping already parsed Tags at offset %"
-          G_GUINT64_FORMAT, curpos);
+      GST_DEBUG_OBJECT (common->sinkpad,
+          "Skipping already parsed Tags at offset %" G_GUINT64_FORMAT, curpos);
       return GST_FLOW_OK;
     }
   }
@@ -2084,7 +2566,7 @@ gst_matroska_read_common_peek_bytes (GstMatroskaReadCommon * common, guint64
       gst_pad_pull_range (common->sinkpad, common->offset, size,
       &common->cached_buffer);
   if (ret != GST_FLOW_OK) {
-    GST_DEBUG_OBJECT (common, "pull_range returned %d", ret);
+    GST_DEBUG_OBJECT (common->sinkpad, "pull_range returned %d", ret);
     if (p_buf)
       *p_buf = NULL;
     if (bytes)
@@ -2093,7 +2575,7 @@ gst_matroska_read_common_peek_bytes (GstMatroskaReadCommon * common, guint64
   }
 
   if (gst_buffer_get_size (common->cached_buffer) < size) {
-    GST_WARNING_OBJECT (common, "Dropping short buffer at offset %"
+    GST_WARNING_OBJECT (common->sinkpad, "Dropping short buffer at offset %"
         G_GUINT64_FORMAT ": wanted %u bytes, got %" G_GSIZE_FORMAT " bytes",
         common->offset, size, gst_buffer_get_size (common->cached_buffer));
 
@@ -2181,14 +2663,15 @@ gst_matroska_read_common_read_track_encoding (GstMatroskaReadCommon * common,
 
         if (!gst_matroska_read_common_encoding_order_unique (context->encodings,
                 num)) {
-          GST_ERROR_OBJECT (common, "ContentEncodingOrder %" G_GUINT64_FORMAT
-              "is not unique for track %d", num, context->num);
+          GST_ERROR_OBJECT (common->sinkpad,
+              "ContentEncodingOrder %" G_GUINT64_FORMAT
+              "is not unique for track %" G_GUINT64_FORMAT, num, context->num);
           ret = GST_FLOW_ERROR;
           break;
         }
 
-        GST_DEBUG_OBJECT (common, "ContentEncodingOrder: %" G_GUINT64_FORMAT,
-            num);
+        GST_DEBUG_OBJECT (common->sinkpad,
+            "ContentEncodingOrder: %" G_GUINT64_FORMAT, num);
         enc.order = num;
         break;
       }
@@ -2198,15 +2681,15 @@ gst_matroska_read_common_read_track_encoding (GstMatroskaReadCommon * common,
         if ((ret = gst_ebml_read_uint (ebml, &id, &num)) != GST_FLOW_OK)
           break;
 
-        if (num > 7 && num == 0) {
-          GST_ERROR_OBJECT (common, "Invalid ContentEncodingScope %"
+        if (num > 7 || num == 0) {
+          GST_ERROR_OBJECT (common->sinkpad, "Invalid ContentEncodingScope %"
               G_GUINT64_FORMAT, num);
           ret = GST_FLOW_ERROR;
           break;
         }
 
-        GST_DEBUG_OBJECT (common, "ContentEncodingScope: %" G_GUINT64_FORMAT,
-            num);
+        GST_DEBUG_OBJECT (common->sinkpad,
+            "ContentEncodingScope: %" G_GUINT64_FORMAT, num);
         enc.scope = num;
 
         break;
@@ -2218,17 +2701,18 @@ gst_matroska_read_common_read_track_encoding (GstMatroskaReadCommon * common,
           break;
 
         if (num > 1) {
-          GST_ERROR_OBJECT (common, "Invalid ContentEncodingType %"
+          GST_ERROR_OBJECT (common->sinkpad, "Invalid ContentEncodingType %"
               G_GUINT64_FORMAT, num);
           ret = GST_FLOW_ERROR;
           break;
         } else if (num != 0) {
-          GST_ERROR_OBJECT (common, "Encrypted tracks are not supported yet");
+          GST_ERROR_OBJECT (common->sinkpad,
+              "Encrypted tracks are not supported yet");
           ret = GST_FLOW_ERROR;
           break;
         }
-        GST_DEBUG_OBJECT (common, "ContentEncodingType: %" G_GUINT64_FORMAT,
-            num);
+        GST_DEBUG_OBJECT (common->sinkpad,
+            "ContentEncodingType: %" G_GUINT64_FORMAT, num);
         enc.type = num;
         break;
       }
@@ -2252,13 +2736,13 @@ gst_matroska_read_common_read_track_encoding (GstMatroskaReadCommon * common,
                 break;
               }
               if (num > 3) {
-                GST_ERROR_OBJECT (common, "Invalid ContentCompAlgo %"
+                GST_ERROR_OBJECT (common->sinkpad, "Invalid ContentCompAlgo %"
                     G_GUINT64_FORMAT, num);
                 ret = GST_FLOW_ERROR;
                 break;
               }
-              GST_DEBUG_OBJECT (common, "ContentCompAlgo: %" G_GUINT64_FORMAT,
-                  num);
+              GST_DEBUG_OBJECT (common->sinkpad,
+                  "ContentCompAlgo: %" G_GUINT64_FORMAT, num);
               enc.comp_algo = num;
 
               break;
@@ -2274,12 +2758,12 @@ gst_matroska_read_common_read_track_encoding (GstMatroskaReadCommon * common,
               }
               enc.comp_settings = data;
               enc.comp_settings_length = size;
-              GST_DEBUG_OBJECT (common,
+              GST_DEBUG_OBJECT (common->sinkpad,
                   "ContentCompSettings of size %" G_GUINT64_FORMAT, size);
               break;
             }
             default:
-              GST_WARNING_OBJECT (common,
+              GST_WARNING_OBJECT (common->sinkpad,
                   "Unknown ContentCompression subelement 0x%x - ignoring", id);
               ret = gst_ebml_read_skip (ebml);
               break;
@@ -2290,12 +2774,13 @@ gst_matroska_read_common_read_track_encoding (GstMatroskaReadCommon * common,
       }
 
       case GST_MATROSKA_ID_CONTENTENCRYPTION:
-        GST_ERROR_OBJECT (common, "Encrypted tracks not yet supported");
+        GST_ERROR_OBJECT (common->sinkpad,
+            "Encrypted tracks not yet supported");
         gst_ebml_read_skip (ebml);
         ret = GST_FLOW_ERROR;
         break;
       default:
-        GST_WARNING_OBJECT (common,
+        GST_WARNING_OBJECT (common->sinkpad,
             "Unknown ContentEncoding subelement 0x%x - ignoring", id);
         ret = gst_ebml_read_skip (ebml);
         break;
@@ -2340,7 +2825,7 @@ gst_matroska_read_common_read_track_encodings (GstMatroskaReadCommon * common,
             context);
         break;
       default:
-        GST_WARNING_OBJECT (common,
+        GST_WARNING_OBJECT (common->sinkpad,
             "Unknown ContentEncodings subelement 0x%x - ignoring", id);
         ret = gst_ebml_read_skip (ebml);
         break;
@@ -2358,6 +2843,130 @@ gst_matroska_read_common_read_track_encodings (GstMatroskaReadCommon * common,
   return gst_matroska_decode_content_encodings (context->encodings);
 }
 
+void
+gst_matroska_read_common_free_parsed_el (gpointer mem, gpointer user_data)
+{
+  g_slice_free (guint64, mem);
+}
+
+void
+gst_matroska_read_common_init (GstMatroskaReadCommon * ctx)
+{
+  ctx->src = NULL;
+  ctx->writing_app = NULL;
+  ctx->muxing_app = NULL;
+  ctx->index = NULL;
+  ctx->global_tags = NULL;
+  ctx->adapter = gst_adapter_new ();
+  ctx->cached_track_taglists =
+      g_hash_table_new_full (NULL, NULL, NULL,
+      (GDestroyNotify) gst_tag_list_unref);
+}
+
+void
+gst_matroska_read_common_finalize (GstMatroskaReadCommon * ctx)
+{
+  if (ctx->src) {
+    g_ptr_array_free (ctx->src, TRUE);
+    ctx->src = NULL;
+  }
+
+  if (ctx->global_tags) {
+    gst_tag_list_unref (ctx->global_tags);
+    ctx->global_tags = NULL;
+  }
+
+  g_object_unref (ctx->adapter);
+  g_hash_table_remove_all (ctx->cached_track_taglists);
+  g_hash_table_unref (ctx->cached_track_taglists);
+
+}
+
+void
+gst_matroska_read_common_reset (GstElement * element,
+    GstMatroskaReadCommon * ctx)
+{
+  guint i;
+
+  GST_LOG_OBJECT (ctx->sinkpad, "resetting read context");
+
+  /* reset input */
+  ctx->state = GST_MATROSKA_READ_STATE_START;
+
+  /* clean up existing streams if any */
+  if (ctx->src) {
+    g_assert (ctx->src->len == ctx->num_streams);
+    for (i = 0; i < ctx->src->len; i++) {
+      GstMatroskaTrackContext *context = g_ptr_array_index (ctx->src, i);
+
+      if (context->pad != NULL)
+        gst_element_remove_pad (element, context->pad);
+
+      gst_caps_replace (&context->caps, NULL);
+      gst_matroska_track_free (context);
+    }
+    g_ptr_array_free (ctx->src, TRUE);
+  }
+  ctx->src = g_ptr_array_new ();
+  ctx->num_streams = 0;
+
+  /* reset media info */
+  g_free (ctx->writing_app);
+  ctx->writing_app = NULL;
+  g_free (ctx->muxing_app);
+  ctx->muxing_app = NULL;
+
+  /* reset stream type */
+  ctx->is_webm = FALSE;
+  ctx->has_video = FALSE;
+
+  /* reset indexes */
+  if (ctx->index) {
+    g_array_free (ctx->index, TRUE);
+    ctx->index = NULL;
+  }
+
+  /* reset timers */
+  ctx->time_scale = 1000000;
+  ctx->created = G_MININT64;
+
+  /* cues/tracks/segmentinfo */
+  ctx->index_parsed = FALSE;
+  ctx->segmentinfo_parsed = FALSE;
+  ctx->attachments_parsed = FALSE;
+  ctx->chapters_parsed = FALSE;
+
+  /* tags */
+  ctx->global_tags_changed = FALSE;
+  g_list_foreach (ctx->tags_parsed,
+      (GFunc) gst_matroska_read_common_free_parsed_el, NULL);
+  g_list_free (ctx->tags_parsed);
+  ctx->tags_parsed = NULL;
+  if (ctx->global_tags) {
+    gst_tag_list_unref (ctx->global_tags);
+  }
+  ctx->global_tags = gst_tag_list_new_empty ();
+  gst_tag_list_set_scope (ctx->global_tags, GST_TAG_SCOPE_GLOBAL);
+
+  gst_segment_init (&ctx->segment, GST_FORMAT_TIME);
+  ctx->offset = 0;
+
+  if (ctx->cached_buffer) {
+    if (ctx->cached_data) {
+      gst_buffer_unmap (ctx->cached_buffer, &ctx->cached_map);
+      ctx->cached_data = NULL;
+    }
+    gst_buffer_unref (ctx->cached_buffer);
+    ctx->cached_buffer = NULL;
+  }
+
+  /* free chapters TOC if any */
+  if (ctx->toc) {
+    gst_toc_unref (ctx->toc);
+    ctx->toc = NULL;
+  }
+}
+
 /* call with object lock held */
 void
 gst_matroska_read_common_reset_streams (GstMatroskaReadCommon * common,
@@ -2365,7 +2974,7 @@ gst_matroska_read_common_reset_streams (GstMatroskaReadCommon * common,
 {
   gint i;
 
-  GST_DEBUG_OBJECT (common, "resetting stream state");
+  GST_DEBUG_OBJECT (common->sinkpad, "resetting stream state");
 
   g_assert (common->src->len == common->num_streams);
   for (i = 0; i < common->src->len; i++) {
@@ -2374,8 +2983,6 @@ gst_matroska_read_common_reset_streams (GstMatroskaReadCommon * common,
     context->set_discont = TRUE;
     context->eos = FALSE;
     context->from_time = GST_CLOCK_TIME_NONE;
-    if (full)
-      context->last_flow = GST_FLOW_OK;
     if (context->type == GST_MATROSKA_TRACK_TYPE_VIDEO) {
       GstMatroskaTrackVideoContext *videocontext =
           (GstMatroskaTrackVideoContext *) context;

@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 #include <stdlib.h>
 
@@ -265,12 +265,13 @@ pretty_move (PluginInfo * goomInfo, float cycle, float *dist, float *dist2,
     tmp = cycle - (G_PI * 2.0) * floor (cycle / (G_PI * 2.0));
   }
 
-  if (abs (tmp - fx_data->rot) > abs (tmp - (fx_data->rot + 2.0 * G_PI))) {
+  if (fabs (tmp - fx_data->rot) > fabs (tmp - (fx_data->rot + 2.0 * G_PI))) {
     fx_data->rot = (tmp + 15.0f * (fx_data->rot + 2 * G_PI)) / 16.0f;
     if (fx_data->rot > 2.0 * G_PI)
       fx_data->rot -= 2.0 * G_PI;
     *rotangle = fx_data->rot;
-  } else if (abs (tmp - fx_data->rot) > abs (tmp - (fx_data->rot - 2.0 * G_PI))) {
+  } else if (fabs (tmp - fx_data->rot) >
+      fabs (tmp - (fx_data->rot - 2.0 * G_PI))) {
     fx_data->rot = (tmp + 15.0f * (fx_data->rot - 2.0 * G_PI)) / 16.0f;
     if (fx_data->rot < 0.0f)
       fx_data->rot += 2.0 * G_PI;

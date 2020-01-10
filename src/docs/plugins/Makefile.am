@@ -69,6 +69,7 @@ EXTRA_HFILES = \
 	$(top_srcdir)/ext/libpng/gstpngenc.h \
 	$(top_srcdir)/ext/raw1394/gstdv1394src.h \
 	$(top_srcdir)/ext/raw1394/gsthdv1394src.h \
+	$(top_srcdir)/ext/shout2/gstshout2.h \
 	$(top_srcdir)/ext/soup/gstsouphttpsrc.h \
 	$(top_srcdir)/ext/taglib/gstapev2mux.h \
 	$(top_srcdir)/ext/taglib/gstid3v2mux.h \
@@ -95,6 +96,7 @@ EXTRA_HFILES = \
 	$(top_srcdir)/gst/audiofx/audiowsincband.h \
 	$(top_srcdir)/gst/audiofx/audiowsinclimit.h \
 	$(top_srcdir)/gst/audiofx/audiofirfilter.h \
+	$(top_srcdir)/gst/audiofx/gstscaletempo.h \
 	$(top_srcdir)/gst/audioparsers/gstaacparse.h \
 	$(top_srcdir)/gst/audioparsers/gstac3parse.h \
 	$(top_srcdir)/gst/audioparsers/gstamrparse.h \
@@ -114,6 +116,9 @@ EXTRA_HFILES = \
 	$(top_srcdir)/gst/debugutils/gsttaginject.h \
 	$(top_srcdir)/gst/debugutils/progressreport.h \
 	$(top_srcdir)/gst/deinterlace/gstdeinterlace.h \
+	$(top_srcdir)/gst/dtmf/gstdtmfsrc.h \
+	$(top_srcdir)/gst/dtmf/gstrtpdtmfsrc.h \
+	$(top_srcdir)/gst/dtmf/gstrtpdtmfdepay.h \
 	$(top_srcdir)/gst/effectv/gstaging.h \
 	$(top_srcdir)/gst/effectv/gstdice.h \
 	$(top_srcdir)/gst/effectv/gstedge.h \
@@ -152,6 +157,8 @@ EXTRA_HFILES = \
 	$(top_srcdir)/gst/multifile/gstmultifilesink.h \
 	$(top_srcdir)/gst/multifile/gstmultifilesrc.h \
 	$(top_srcdir)/gst/multifile/gstsplitfilesrc.h \
+	$(top_srcdir)/gst/multifile/gstsplitmuxsrc.h \
+	$(top_srcdir)/gst/multifile/gstsplitmuxsink.h \
 	$(top_srcdir)/gst/multipart/multipartdemux.h \
 	$(top_srcdir)/gst/multipart/multipartmux.h \
 	$(top_srcdir)/gst/isomp4/qtdemux.h \
@@ -167,6 +174,10 @@ EXTRA_HFILES = \
 	$(top_srcdir)/gst/rtpmanager/gstrtpptdemux.h \
 	$(top_srcdir)/gst/rtpmanager/gstrtpsession.h \
 	$(top_srcdir)/gst/rtpmanager/gstrtpssrcdemux.h \
+	$(top_srcdir)/gst/rtpmanager/gstrtpmux.h \
+	$(top_srcdir)/gst/rtpmanager/gstrtpdtmfmux.h \
+	$(top_srcdir)/gst/rtpmanager/gstrtprtxsend.h \
+	$(top_srcdir)/gst/rtpmanager/gstrtprtxreceive.h \
 	$(top_srcdir)/gst/rtsp/gstrtpdec.h \
 	$(top_srcdir)/gst/rtsp/gstrtspsrc.h \
 	$(top_srcdir)/gst/shapewipe/gstshapewipe.h \
@@ -197,6 +208,8 @@ EXTRA_HFILES = \
 	$(top_srcdir)/sys/osxvideo/osxvideosink.h \
 	$(top_srcdir)/sys/v4l2/gstv4l2src.h \
 	$(top_srcdir)/sys/v4l2/gstv4l2sink.h \
+	$(top_srcdir)/sys/v4l2/gstv4l2transform.h \
+	$(top_srcdir)/sys/v4l2/gstv4l2videodec.h \
 	$(top_srcdir)/sys/v4l2/gstv4l2radio.h \
 	$(top_srcdir)/sys/waveform/gstwaveformsink.h \
 	$(top_srcdir)/sys/ximage/gstximagesrc.h
@@ -221,9 +234,6 @@ extra_files =
 # contains GtkObjects/GObjects and you want to document signals and properties.
 GTKDOC_CFLAGS = $(GST_BASE_CFLAGS) -I$(top_builddir)
 GTKDOC_LIBS = $(GST_BASE_LIBS)
-
-GTKDOC_CC=$(LIBTOOL) --tag=CC --mode=compile $(CC)
-GTKDOC_LD=$(LIBTOOL) --tag=CC --mode=link $(CC)
 
 # If you need to override some of the declarations, place them in this file
 # and uncomment this line.

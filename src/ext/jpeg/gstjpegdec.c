@@ -16,8 +16,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
@@ -75,15 +75,13 @@ GST_STATIC_PAD_TEMPLATE ("src",
 /* *INDENT-ON* */
 
 /* FIXME: sof-marker is for IJG libjpeg 8, should be different for 6.2 */
+/* FIXME: add back "sof-marker = (int) { 0, 1, 2, 5, 6, 7, 9, 10, 13, 14 }"
+ * once we have a parser and/or demuxer set caps properly */
 static GstStaticPadTemplate gst_jpeg_dec_sink_pad_template =
 GST_STATIC_PAD_TEMPLATE ("sink",
     GST_PAD_SINK,
     GST_PAD_ALWAYS,
-    GST_STATIC_CAPS ("image/jpeg, "
-        "width = (int) [ " G_STRINGIFY (MIN_WIDTH) ", " G_STRINGIFY (MAX_WIDTH)
-        " ], " "height = (int) [ " G_STRINGIFY (MIN_HEIGHT) ", "
-        G_STRINGIFY (MAX_HEIGHT) " ], "
-        "sof-marker = (int) { 0, 1, 2, 5, 6, 7, 9, 10, 13, 14 }")
+    GST_STATIC_CAPS ("image/jpeg")
     );
 
 GST_DEBUG_CATEGORY_STATIC (jpeg_dec_debug);
@@ -99,13 +97,15 @@ static gboolean gst_jpeg_dec_set_format (GstVideoDecoder * dec,
     GstVideoCodecState * state);
 static gboolean gst_jpeg_dec_start (GstVideoDecoder * bdec);
 static gboolean gst_jpeg_dec_stop (GstVideoDecoder * bdec);
-static gboolean gst_jpeg_dec_reset (GstVideoDecoder * bdec, gboolean hard);
+static gboolean gst_jpeg_dec_flush (GstVideoDecoder * bdec);
 static GstFlowReturn gst_jpeg_dec_parse (GstVideoDecoder * bdec,
     GstVideoCodecFrame * frame, GstAdapter * adapter, gboolean at_eos);
 static GstFlowReturn gst_jpeg_dec_handle_frame (GstVideoDecoder * bdec,
     GstVideoCodecFrame * frame);
 static gboolean gst_jpeg_dec_decide_allocation (GstVideoDecoder * bdec,
     GstQuery * query);
+static gboolean gst_jpeg_dec_sink_event (GstVideoDecoder * bdec,
+    GstEvent * event);
 
 #define gst_jpeg_dec_parent_class parent_class
 G_DEFINE_TYPE (GstJpegDec, gst_jpeg_dec, GST_TYPE_VIDEO_DECODER);
@@ -146,129 +146,49 @@ gst_jpeg_dec_class_init (GstJpegDecClass * klass)
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
   /**
-   * GstJpegDec:max-errors
+   * GstJpegDec:max-errors:
    *
    * Error out after receiving N consecutive decoding errors
    * (-1 = never error out, 0 = automatic, 1 = fail on first error, etc.)
    *
-   * Since: 0.10.27
-   **/
+   * Deprecated: 1.3.1: Property wasn't used internally
+   */
+#ifndef GST_REMOVE_DEPRECATED
   g_object_class_install_property (gobject_class, PROP_MAX_ERRORS,
       g_param_spec_int ("max-errors", "Maximum Consecutive Decoding Errors",
-          "Error out after receiving N consecutive decoding errors "
-          "(-1 = never fail, 0 = automatic, 1 = fail on first error)",
+          "(Deprecated) Error out after receiving N consecutive decoding errors"
+          " (-1 = never fail, 0 = automatic, 1 = fail on first error)",
           -1, G_MAXINT, JPEG_DEFAULT_MAX_ERRORS,
-          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_DEPRECATED));
+#endif
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_jpeg_dec_src_pad_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_jpeg_dec_sink_pad_template));
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_jpeg_dec_src_pad_template);
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_jpeg_dec_sink_pad_template);
   gst_element_class_set_static_metadata (element_class, "JPEG image decoder",
-      "Codec/Decoder/Image",
-      "Decode images from JPEG format", "Wim Taymans <wim@fluendo.com>");
+      "Codec/Decoder/Image", "Decode images from JPEG format",
+      "Wim Taymans <wim@fluendo.com>");
 
   vdec_class->start = gst_jpeg_dec_start;
   vdec_class->stop = gst_jpeg_dec_stop;
-  vdec_class->reset = gst_jpeg_dec_reset;
+  vdec_class->flush = gst_jpeg_dec_flush;
   vdec_class->parse = gst_jpeg_dec_parse;
   vdec_class->set_format = gst_jpeg_dec_set_format;
   vdec_class->handle_frame = gst_jpeg_dec_handle_frame;
   vdec_class->decide_allocation = gst_jpeg_dec_decide_allocation;
+  vdec_class->sink_event = gst_jpeg_dec_sink_event;
 
   GST_DEBUG_CATEGORY_INIT (jpeg_dec_debug, "jpegdec", 0, "JPEG decoder");
   GST_DEBUG_CATEGORY_GET (GST_CAT_PERFORMANCE, "GST_PERFORMANCE");
 }
 
-static void
-gst_jpeg_dec_clear_error (GstJpegDec * dec)
-{
-  g_free (dec->error_msg);
-  dec->error_msg = NULL;
-  dec->error_line = 0;
-  dec->error_func = NULL;
-}
-
-static void
-gst_jpeg_dec_set_error_va (GstJpegDec * dec, const gchar * func, gint line,
-    const gchar * debug_msg_format, va_list args)
-{
-#ifndef GST_DISABLE_GST_DEBUG
-  gst_debug_log_valist (GST_CAT_DEFAULT, GST_LEVEL_WARNING, __FILE__, func,
-      line, (GObject *) dec, debug_msg_format, args);
-#endif
-
-  g_free (dec->error_msg);
-  if (debug_msg_format)
-    dec->error_msg = g_strdup_vprintf (debug_msg_format, args);
-  else
-    dec->error_msg = NULL;
-
-  dec->error_line = line;
-  dec->error_func = func;
-}
-
-static void
-gst_jpeg_dec_set_error (GstJpegDec * dec, const gchar * func, gint line,
-    const gchar * debug_msg_format, ...)
-{
-  va_list va;
-
-  va_start (va, debug_msg_format);
-  gst_jpeg_dec_set_error_va (dec, func, line, debug_msg_format, va);
-  va_end (va);
-}
-
-static GstFlowReturn
-gst_jpeg_dec_post_error_or_warning (GstJpegDec * dec)
-{
-  GstFlowReturn ret;
-  int max_errors;
-
-  ++dec->error_count;
-  max_errors = g_atomic_int_get (&dec->max_errors);
-
-  if (max_errors < 0) {
-    ret = GST_FLOW_OK;
-  } else if (max_errors == 0) {
-    /* FIXME: do something more clever in "automatic mode" */
-    if (gst_video_decoder_get_packetized (GST_VIDEO_DECODER (dec))) {
-      ret = (dec->error_count < 3) ? GST_FLOW_OK : GST_FLOW_ERROR;
-    } else {
-      ret = GST_FLOW_ERROR;
-    }
-  } else {
-    ret = (dec->error_count < max_errors) ? GST_FLOW_OK : GST_FLOW_ERROR;
-  }
-
-  GST_INFO_OBJECT (dec, "decoding error %d/%d (%s)", dec->error_count,
-      max_errors, (ret == GST_FLOW_OK) ? "ignoring error" : "erroring out");
-
-  gst_element_message_full (GST_ELEMENT (dec),
-      (ret == GST_FLOW_OK) ? GST_MESSAGE_WARNING : GST_MESSAGE_ERROR,
-      GST_STREAM_ERROR, GST_STREAM_ERROR_DECODE,
-      g_strdup (_("Failed to decode JPEG image")), dec->error_msg,
-      __FILE__, dec->error_func, dec->error_line);
-
-  dec->error_msg = NULL;
-  gst_jpeg_dec_clear_error (dec);
-  return ret;
-}
-
 static boolean
 gst_jpeg_dec_fill_input_buffer (j_decompress_ptr cinfo)
 {
-  GstJpegDec *dec;
-
-  dec = CINFO_GET_JPEGDEC (cinfo);
-  g_return_val_if_fail (dec != NULL, FALSE);
-  g_return_val_if_fail (dec->current_frame != NULL, FALSE);
-  g_return_val_if_fail (dec->current_frame_map.data != NULL, FALSE);
-
-  cinfo->src->next_input_byte = dec->current_frame_map.data;
-  cinfo->src->bytes_in_buffer = dec->current_frame_map.size;
-
-  return TRUE;
+  /* We pass in full frame initially, if this get called, the frame is most likely
+   * corrupted */
+  return FALSE;
 }
 
 static void
@@ -353,6 +273,10 @@ gst_jpeg_dec_init (GstJpegDec * dec)
   /* init properties */
   dec->idct_method = JPEG_DEFAULT_IDCT_METHOD;
   dec->max_errors = JPEG_DEFAULT_MAX_ERRORS;
+
+  gst_video_decoder_set_use_default_pad_acceptcaps (GST_VIDEO_DECODER_CAST
+      (dec), TRUE);
+  GST_PAD_SET_ACCEPT_TEMPLATE (GST_VIDEO_DECODER_SINK_PAD (dec));
 }
 
 static inline gboolean
@@ -372,6 +296,8 @@ gst_jpeg_dec_parse (GstVideoDecoder * bdec, GstVideoCodecFrame * frame,
   gboolean resync;
   gint offset = 0, noffset;
   GstJpegDec *dec = (GstJpegDec *) bdec;
+
+  GST_VIDEO_CODEC_FRAME_SET_SYNC_POINT (frame);
 
   /* FIXME : The overhead of using scan_uint32 is massive */
 
@@ -453,9 +379,8 @@ gst_jpeg_dec_parse (GstVideoDecoder * bdec, GstVideoCodecFrame * frame,
       /* Skip this frame if we found another SOI marker */
       GST_DEBUG ("0x%08x: SOI marker before EOI, skipping", offset + 2);
       dec->parse_resync = FALSE;
-      /* FIXME : Need to skip data */
-      toadd -= offset + 2;
-      goto have_full_frame;
+      size = offset + 2;
+      goto drop_frame;
     }
 
 
@@ -534,6 +459,7 @@ need_more_data:
 have_full_frame:
   if (toadd)
     gst_video_decoder_add_to_frame (bdec, toadd);
+  GST_VIDEO_CODEC_FRAME_SET_SYNC_POINT (frame);
   return gst_video_decoder_have_frame (bdec);
 
 drop_frame:
@@ -668,15 +594,6 @@ static gboolean
 gst_jpeg_dec_set_format (GstVideoDecoder * dec, GstVideoCodecState * state)
 {
   GstJpegDec *jpeg = GST_JPEG_DEC (dec);
-  GstVideoInfo *info = &state->info;
-
-  /* FIXME : previously jpegdec would handled input as packetized
-   * if the framerate was present. Here we consider it packetized if
-   * the fps is != 1/1 */
-  if (GST_VIDEO_INFO_FPS_N (info) != 1 && GST_VIDEO_INFO_FPS_D (info) != 1)
-    gst_video_decoder_set_packetized (dec, TRUE);
-  else
-    gst_video_decoder_set_packetized (dec, FALSE);
 
   if (jpeg->input_state)
     gst_video_codec_state_unref (jpeg->input_state);
@@ -992,10 +909,14 @@ gst_jpeg_dec_decode_direct (GstJpegDec * dec, GstVideoFrame * frame)
 
 format_not_supported:
   {
-    gst_jpeg_dec_set_error (dec, GST_FUNCTION, __LINE__,
-        "Unsupported subsampling schema: v_samp factors: %u %u %u",
-        v_samp[0], v_samp[1], v_samp[2]);
-    return GST_FLOW_ERROR;
+    gboolean ret = GST_FLOW_OK;
+
+    GST_VIDEO_DECODER_ERROR (dec, 1, STREAM, DECODE,
+        (_("Failed to decode JPEG image")),
+        ("Unsupported subsampling schema: v_samp factors: %u %u %u", v_samp[0],
+            v_samp[1], v_samp[2]), ret);
+
+    return ret;
   }
 }
 
@@ -1067,10 +988,13 @@ gst_jpeg_dec_handle_frame (GstVideoDecoder * bdec, GstVideoCodecFrame * frame)
   guint code, hdr_ok;
   gboolean need_unmap = TRUE;
   GstVideoCodecState *state = NULL;
+  gboolean release_frame = TRUE;
 
   dec->current_frame = frame;
   gst_buffer_map (frame->input_buffer, &dec->current_frame_map, GST_MAP_READ);
-  gst_jpeg_dec_fill_input_buffer (&dec->cinfo);
+
+  dec->cinfo.src->next_input_byte = dec->current_frame_map.data;
+  dec->cinfo.src->bytes_in_buffer = dec->current_frame_map.size;
 
   if (setjmp (dec->jerr.setjmp_buffer)) {
     code = dec->jerr.pub.msg_code;
@@ -1176,6 +1100,12 @@ gst_jpeg_dec_handle_frame (GstVideoDecoder * bdec, GstVideoCodecFrame * frame)
           GST_MAP_READWRITE))
     goto alloc_failed;
 
+  if (setjmp (dec->jerr.setjmp_buffer)) {
+    code = dec->jerr.pub.msg_code;
+    gst_video_frame_unmap (&vframe);
+    goto decode_error;
+  }
+
   GST_LOG_OBJECT (dec, "width %d, height %d", width, height);
 
   if (dec->cinfo.jpeg_color_space == JCS_RGB) {
@@ -1209,27 +1139,28 @@ gst_jpeg_dec_handle_frame (GstVideoDecoder * bdec, GstVideoCodecFrame * frame)
 
   gst_video_frame_unmap (&vframe);
 
+  if (setjmp (dec->jerr.setjmp_buffer)) {
+    code = dec->jerr.pub.msg_code;
+    goto decode_error;
+  }
+
   GST_LOG_OBJECT (dec, "decompressing finished");
   jpeg_finish_decompress (&dec->cinfo);
 
-  /* reset error count on successful decode */
-  dec->error_count = 0;
-
   gst_buffer_unmap (frame->input_buffer, &dec->current_frame_map);
   ret = gst_video_decoder_finish_frame (bdec, frame);
+  release_frame = FALSE;
   need_unmap = FALSE;
 
 done:
 
 exit:
 
-  if (G_UNLIKELY (ret == GST_FLOW_ERROR)) {
-    jpeg_abort_decompress (&dec->cinfo);
-    ret = gst_jpeg_dec_post_error_or_warning (dec);
-  }
-
   if (need_unmap)
     gst_buffer_unmap (frame->input_buffer, &dec->current_frame_map);
+
+  if (release_frame)
+    gst_video_decoder_release_frame (bdec, frame);
 
   if (state)
     gst_video_codec_state_unref (state);
@@ -1246,8 +1177,9 @@ need_more_data:
   /* ERRORS */
 wrong_size:
   {
-    gst_jpeg_dec_set_error (dec, GST_FUNCTION, __LINE__,
-        "Picture is too small or too big (%ux%u)", width, height);
+    GST_VIDEO_DECODER_ERROR (dec, 1, STREAM, DECODE,
+        (_("Failed to decode JPEG image")),
+        ("Picture is too small or too big (%ux%u)", width, height), ret);
     ret = GST_FLOW_ERROR;
     goto done;
   }
@@ -1257,14 +1189,16 @@ decode_error:
 
     dec->jerr.pub.format_message ((j_common_ptr) (&dec->cinfo), err_msg);
 
-    gst_jpeg_dec_set_error (dec, GST_FUNCTION, __LINE__,
-        "Decode error #%u: %s", code, err_msg);
+    GST_VIDEO_DECODER_ERROR (dec, 1, STREAM, DECODE,
+        (_("Failed to decode JPEG image")), ("Decode error #%u: %s", code,
+            err_msg), ret);
 
     gst_buffer_unmap (frame->input_buffer, &dec->current_frame_map);
     gst_video_decoder_drop_frame (bdec, frame);
+    release_frame = FALSE;
     need_unmap = FALSE;
+    jpeg_abort_decompress (&dec->cinfo);
 
-    ret = GST_FLOW_ERROR;
     goto done;
   }
 decode_direct_failed:
@@ -1284,31 +1218,36 @@ alloc_failed:
     jpeg_abort_decompress (&dec->cinfo);
     if (ret != GST_FLOW_EOS && ret != GST_FLOW_FLUSHING &&
         ret != GST_FLOW_NOT_LINKED) {
-      gst_jpeg_dec_set_error (dec, GST_FUNCTION, __LINE__,
-          "Buffer allocation failed, reason: %s", reason);
+      GST_VIDEO_DECODER_ERROR (dec, 1, STREAM, DECODE,
+          (_("Failed to decode JPEG image")),
+          ("Buffer allocation failed, reason: %s", reason), ret);
+      jpeg_abort_decompress (&dec->cinfo);
     }
     goto exit;
   }
 components_not_supported:
   {
-    gst_jpeg_dec_set_error (dec, GST_FUNCTION, __LINE__,
-        "number of components not supported: %d (max 3)",
-        dec->cinfo.num_components);
-    ret = GST_FLOW_ERROR;
+    GST_VIDEO_DECODER_ERROR (dec, 1, STREAM, DECODE,
+        (_("Failed to decode JPEG image")),
+        ("number of components not supported: %d (max 3)",
+            dec->cinfo.num_components), ret);
+    jpeg_abort_decompress (&dec->cinfo);
     goto done;
   }
 unsupported_colorspace:
   {
-    gst_jpeg_dec_set_error (dec, GST_FUNCTION, __LINE__,
-        "Picture has unknown or unsupported colourspace");
-    ret = GST_FLOW_ERROR;
+    GST_VIDEO_DECODER_ERROR (dec, 1, STREAM, DECODE,
+        (_("Failed to decode JPEG image")),
+        ("Picture has unknown or unsupported colourspace"), ret);
+    jpeg_abort_decompress (&dec->cinfo);
     goto done;
   }
 invalid_yuvrgbgrayscale:
   {
-    gst_jpeg_dec_set_error (dec, GST_FUNCTION, __LINE__,
-        "Picture is corrupt or unhandled YUV/RGB/grayscale layout");
-    ret = GST_FLOW_ERROR;
+    GST_VIDEO_DECODER_ERROR (dec, 1, STREAM, DECODE,
+        (_("Failed to decode JPEG image")),
+        ("Picture is corrupt or unhandled YUV/RGB/grayscale layout"), ret);
+    jpeg_abort_decompress (&dec->cinfo);
     goto done;
   }
 }
@@ -1340,7 +1279,40 @@ gst_jpeg_dec_decide_allocation (GstVideoDecoder * bdec, GstQuery * query)
 }
 
 static gboolean
-gst_jpeg_dec_reset (GstVideoDecoder * bdec, gboolean hard)
+gst_jpeg_dec_sink_event (GstVideoDecoder * bdec, GstEvent * event)
+{
+  const GstSegment *segment;
+
+  if (GST_EVENT_TYPE (event) != GST_EVENT_SEGMENT)
+    goto done;
+
+  gst_event_parse_segment (event, &segment);
+
+  if (segment->format == GST_FORMAT_TIME)
+    gst_video_decoder_set_packetized (bdec, TRUE);
+  else
+    gst_video_decoder_set_packetized (bdec, FALSE);
+
+done:
+  return GST_VIDEO_DECODER_CLASS (parent_class)->sink_event (bdec, event);
+}
+
+static gboolean
+gst_jpeg_dec_start (GstVideoDecoder * bdec)
+{
+  GstJpegDec *dec = (GstJpegDec *) bdec;
+
+  dec->saw_header = FALSE;
+  dec->parse_entropy_len = 0;
+  dec->parse_resync = FALSE;
+
+  gst_video_decoder_set_packetized (bdec, FALSE);
+
+  return TRUE;
+}
+
+static gboolean
+gst_jpeg_dec_flush (GstVideoDecoder * bdec)
 {
   GstJpegDec *dec = (GstJpegDec *) bdec;
 
@@ -1364,10 +1336,11 @@ gst_jpeg_dec_set_property (GObject * object, guint prop_id,
     case PROP_IDCT_METHOD:
       dec->idct_method = g_value_get_enum (value);
       break;
+#ifndef GST_REMOVE_DEPRECATED
     case PROP_MAX_ERRORS:
       g_atomic_int_set (&dec->max_errors, g_value_get_int (value));
       break;
-
+#endif
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -1386,26 +1359,15 @@ gst_jpeg_dec_get_property (GObject * object, guint prop_id, GValue * value,
     case PROP_IDCT_METHOD:
       g_value_set_enum (value, dec->idct_method);
       break;
+#ifndef GST_REMOVE_DEPRECATED
     case PROP_MAX_ERRORS:
       g_value_set_int (value, g_atomic_int_get (&dec->max_errors));
       break;
-
+#endif
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
   }
-}
-
-static gboolean
-gst_jpeg_dec_start (GstVideoDecoder * bdec)
-{
-  GstJpegDec *dec = (GstJpegDec *) bdec;
-
-  dec->error_count = 0;
-  dec->parse_entropy_len = 0;
-  dec->parse_resync = FALSE;
-
-  return TRUE;
 }
 
 static gboolean

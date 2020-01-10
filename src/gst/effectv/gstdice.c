@@ -22,8 +22,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
@@ -294,10 +294,10 @@ gst_dicetv_class_init (GstDiceTVClass * klass)
       "'Dices' the screen up into many small squares",
       "Wim Taymans <wim.taymans@gmail.be>");
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_dicetv_sink_template));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_dicetv_src_template));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_dicetv_sink_template);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_dicetv_src_template);
 
   vfilter_class->set_info = GST_DEBUG_FUNCPTR (gst_dicetv_set_info);
   vfilter_class->transform_frame =

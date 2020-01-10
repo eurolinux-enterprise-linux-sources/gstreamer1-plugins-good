@@ -16,8 +16,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #include <unistd.h>
@@ -58,7 +58,7 @@ static GstStaticPadTemplate sinktemplate = GST_STATIC_PAD_TEMPLATE ("sink",
     GST_PAD_SINK,
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS ("audio/x-wavpack, "
-        "width = (int) 16, "
+        "depth = (int) 16, "
         "channels = (int) 1, "
         "rate = (int) 44100, " "framed = (boolean) TRUE"));
 
@@ -79,6 +79,7 @@ setup_wavpackparse (void)
   mysinkpad = gst_check_setup_sink_pad (wavpackparse, &sinktemplate);
   gst_pad_set_active (mysrcpad, TRUE);
   gst_pad_set_active (mysinkpad, TRUE);
+  gst_check_setup_events (mysrcpad, wavpackparse, NULL, GST_FORMAT_BYTES);
 
   return wavpackparse;
 }
@@ -114,6 +115,9 @@ GST_START_TEST (test_parsing_valid_frames)
 
   /* should decode the buffer without problems */
   fail_unless_equals_int (gst_pad_push (mysrcpad, inbuffer), GST_FLOW_OK);
+
+  /* inform of no further data */
+  fail_unless (gst_pad_push_event (mysrcpad, gst_event_new_eos ()));
 
   num_buffers = g_list_length (buffers);
   /* should get 2 buffers, each one complete wavpack frame */
@@ -176,6 +180,9 @@ GST_START_TEST (test_parsing_invalid_first_header)
   /* should decode the buffer without problems */
   fail_unless_equals_int (gst_pad_push (mysrcpad, inbuffer), GST_FLOW_OK);
 
+  /* inform of no further data */
+  fail_unless (gst_pad_push_event (mysrcpad, gst_event_new_eos ()));
+
   num_buffers = g_list_length (buffers);
 
   /* should get 1 buffers, the second non-broken one */
@@ -224,19 +231,4 @@ wavpackparse_suite (void)
   return s;
 }
 
-int
-main (int argc, char **argv)
-{
-  int nf;
-
-  Suite *s = wavpackparse_suite ();
-  SRunner *sr = srunner_create (s);
-
-  gst_check_init (&argc, &argv);
-
-  srunner_run_all (sr, CK_NORMAL);
-  nf = srunner_ntests_failed (sr);
-  srunner_free (sr);
-
-  return nf;
-}
+GST_CHECK_MAIN (wavpackparse);

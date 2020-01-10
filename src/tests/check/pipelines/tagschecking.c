@@ -14,8 +14,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #include <gst/check/gstcheck.h>
@@ -91,7 +91,8 @@ test_mux_tags (const gchar * tag_str, const gchar * caps,
 
   GST_DEBUG ("testing xmp muxing on : %s", muxer);
 
-  launch_str = g_strdup_printf ("fakesrc num-buffers=1 format=time ! "
+  launch_str =
+      g_strdup_printf ("fakesrc num-buffers=1 format=time datarate=100 ! "
       "%s ! %s name=mux ! filesink location=%s name=sink", caps, muxer, file);
   pipeline = gst_parse_launch (launch_str, NULL);
   g_free (launch_str);
@@ -271,7 +272,8 @@ test_tags (const gchar * tag_str, const gchar * caps, const gchar * muxer,
 #define H264_CAPS "video/x-h264, width=(int)320, height=(int)240," \
                   " framerate=(fraction)30/1, codec_data=(buffer)" \
                   "01401592ffe10017674d401592540a0fd8088000000300" \
-                  "8000001e478b175001000468ee3c80, stream-format=(string)avc"
+                  "8000001e478b175001000468ee3c80, "\
+                  "stream-format=(string)avc, alignment=(string)au"
 
 #define COMMON_TAGS \
     "taglist,title=test_title,"    \
@@ -352,20 +354,4 @@ metadata_suite (void)
   return s;
 }
 
-int
-main (int argc, char **argv)
-{
-  int nf;
-
-  Suite *s = metadata_suite ();
-
-  SRunner *sr = srunner_create (s);
-
-  gst_check_init (&argc, &argv);
-
-  srunner_run_all (sr, CK_NORMAL);
-  nf = srunner_ntests_failed (sr);
-  srunner_free (sr);
-
-  return nf;
-}
+GST_CHECK_MAIN (metadata);

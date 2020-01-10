@@ -17,8 +17,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /*
@@ -42,8 +42,6 @@
  * gst-launch-1.0 videotestsrc ! gamma gamma=0.5 ! videoconvert ! ximagesink
  * ]| This pipeline will make the image "darker".
  * </refsect2>
- *
- * Last reviewed on 2010-04-18 (0.10.22)
  */
 
 #ifdef HAVE_CONFIG_H
@@ -127,10 +125,10 @@ gst_gamma_class_init (GstGammaClass * g_class)
       "Video gamma correction", "Filter/Effect/Video",
       "Adjusts gamma on a video stream", "Arwed v. Merkatz <v.merkatz@gmx.net");
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_gamma_sink_template));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_gamma_src_template));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_gamma_sink_template);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_gamma_src_template);
 
   trans_class->before_transform =
       GST_DEBUG_FUNCPTR (gst_gamma_before_transform);

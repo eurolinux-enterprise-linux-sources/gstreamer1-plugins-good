@@ -15,8 +15,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
@@ -90,7 +90,12 @@ gst_v4l2radio_fill_channel_list (GstV4l2Radio * radio)
   if (res < 0)
     goto caps_failed;
 
-  if (!(vc.capabilities & V4L2_CAP_TUNER))
+  if (vc.capabilities & V4L2_CAP_DEVICE_CAPS)
+    v4l2object->device_caps = vc.device_caps;
+  else
+    v4l2object->device_caps = vc.capabilities;
+
+  if (!(v4l2object->device_caps & V4L2_CAP_TUNER))
     goto not_a_tuner;
 
   /* getting audio input */

@@ -14,8 +14,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 
@@ -69,6 +69,7 @@ struct _GstWavParse {
   GstToc      *toc;
   GList       *cues;
   GList       *labls;
+  GList       *notes;
   GstEvent    *start_segment;
 
   /* WAVE decoding state */
@@ -85,7 +86,7 @@ struct _GstWavParse {
   guint16 blockalign;
   guint16 width;
   guint32 av_bps;
-  guint32 fact;
+  guint64 fact;
 
   /* real bps used or 0 when no bitrate is known */
   guint32 bps;

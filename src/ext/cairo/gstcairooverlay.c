@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
@@ -96,11 +96,11 @@
 
 #include <cairo.h>
 
+/* RGB16 is native-endianness in GStreamer */
 #if G_BYTE_ORDER == G_LITTLE_ENDIAN
-#define TEMPLATE_CAPS GST_VIDEO_CAPS_MAKE("{ BGRx, BGRA }")
+#define TEMPLATE_CAPS GST_VIDEO_CAPS_MAKE("{ BGRx, BGRA, RGB16 }")
 #else
-#define TEMPLATE_CAPS GST_VIDEO_CAPS_MAKE("{ xRGB, ARGB }")
-
+#define TEMPLATE_CAPS GST_VIDEO_CAPS_MAKE("{ xRGB, ARGB, RGB16 }")
 #endif
 
 static GstStaticPadTemplate gst_cairo_overlay_src_template =
@@ -149,10 +149,25 @@ gst_cairo_overlay_transform_frame_ip (GstVideoFilter * vfilter,
   cairo_t *cr;
   cairo_format_t format;
 
-  if (GST_VIDEO_FRAME_N_COMPONENTS (frame) == 4)
-    format = CAIRO_FORMAT_ARGB32;
-  else
-    format = CAIRO_FORMAT_RGB24;
+  switch (GST_VIDEO_FRAME_FORMAT (frame)) {
+    case GST_VIDEO_FORMAT_ARGB:
+    case GST_VIDEO_FORMAT_BGRA:
+      format = CAIRO_FORMAT_ARGB32;
+      break;
+    case GST_VIDEO_FORMAT_xRGB:
+    case GST_VIDEO_FORMAT_BGRx:
+      format = CAIRO_FORMAT_RGB24;
+      break;
+    case GST_VIDEO_FORMAT_RGB16:
+      format = CAIRO_FORMAT_RGB16_565;
+      break;
+    default:
+    {
+      GST_WARNING ("No matching cairo format for %s",
+          gst_video_format_to_string (GST_VIDEO_FRAME_FORMAT (frame)));
+      return GST_FLOW_ERROR;
+    }
+  }
 
   surface =
       cairo_image_surface_create_for_data (GST_VIDEO_FRAME_PLANE_DATA (frame,
@@ -227,10 +242,10 @@ gst_cairo_overlay_class_init (GstCairoOverlayClass * klass)
       "Render overlay on a video stream using Cairo",
       "Jon Nordby <jononor@gmail.com>");
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_cairo_overlay_sink_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_cairo_overlay_src_template));
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_cairo_overlay_sink_template);
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_cairo_overlay_src_template);
 }
 
 static void

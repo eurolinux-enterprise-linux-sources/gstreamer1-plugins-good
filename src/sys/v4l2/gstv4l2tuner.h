@@ -17,8 +17,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifndef __GST_V4L2_TUNER_H__
@@ -194,5 +194,7 @@ interface_as_function ## _tuner_interface_init (GstTunerInterface * iface)      
   iface->get_frequency = interface_as_function ## _tuner_get_frequency;               \
   iface->signal_strength = interface_as_function ## _tuner_signal_strength;           \
 }                                                                                     \
+
+G_END_DECLS
 
 #endif /* __GST_V4L2_TUNER_H__ */

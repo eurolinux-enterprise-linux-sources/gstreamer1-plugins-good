@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifndef __GST_RTP_SESSION_H__
@@ -72,8 +72,19 @@ struct _GstRtpSessionClass {
   void     (*on_bye_timeout)    (GstRtpSession *sess, guint32 ssrc);
   void     (*on_timeout)        (GstRtpSession *sess, guint32 ssrc);
   void     (*on_sender_timeout) (GstRtpSession *sess, guint32 ssrc);
+  void     (*on_new_sender_ssrc)      (GstRtpSession *sess, guint32 ssrc);
+  void     (*on_sender_ssrc_active)   (GstRtpSession *sess, guint32 ssrc);
 };
 
 GType gst_rtp_session_get_type (void);
+
+typedef enum {
+  GST_RTP_NTP_TIME_SOURCE_NTP,
+  GST_RTP_NTP_TIME_SOURCE_UNIX,
+  GST_RTP_NTP_TIME_SOURCE_RUNNING_TIME,
+  GST_RTP_NTP_TIME_SOURCE_CLOCK_TIME
+} GstRtpNtpTimeSource;
+
+GType gst_rtp_ntp_time_source_get_type (void);
 
 #endif /* __GST_RTP_SESSION_H__ */

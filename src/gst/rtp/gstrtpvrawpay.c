@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -24,8 +24,17 @@
 #include <string.h>
 
 #include <gst/rtp/gstrtpbuffer.h>
+#include <gst/video/video.h>
 
 #include "gstrtpvrawpay.h"
+#include "gstrtputils.h"
+
+enum
+{
+  PROP_CHUNKS_PER_FRAME = 1
+};
+
+#define DEFAULT_CHUNKS_PER_FRAME 10
 
 GST_DEBUG_CATEGORY_STATIC (rtpvrawpay_debug);
 #define GST_CAT_DEFAULT (rtpvrawpay_debug)
@@ -35,7 +44,7 @@ static GstStaticPadTemplate gst_rtp_vraw_pay_sink_template =
     GST_PAD_SINK,
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS ("video/x-raw, "
-        "format = (string) { RGB, RGBA, BGR, BGRA, AYUYV, UYVY, I420, Y41B, UYVP, I420, Y42B, Y444 }, "
+        "format = (string) { RGB, RGBA, BGR, BGRA, AYUV, UYVY, I420, Y41B, UYVP }, "
         "width = (int) [ 1, 32767 ], " "height = (int) [ 1, 32767 ]; ")
     );
 
@@ -70,6 +79,10 @@ static gboolean gst_rtp_vraw_pay_setcaps (GstRTPBasePayload * payload,
     GstCaps * caps);
 static GstFlowReturn gst_rtp_vraw_pay_handle_buffer (GstRTPBasePayload *
     payload, GstBuffer * buffer);
+static void gst_rtp_vraw_pay_get_property (GObject * object, guint prop_id,
+    GValue * value, GParamSpec * pspec);
+static void gst_rtp_vraw_pay_set_property (GObject * object, guint prop_id,
+    const GValue * value, GParamSpec * pspec);
 
 G_DEFINE_TYPE (GstRtpVRawPay, gst_rtp_vraw_pay, GST_TYPE_RTP_BASE_PAYLOAD)
 
@@ -77,17 +90,30 @@ G_DEFINE_TYPE (GstRtpVRawPay, gst_rtp_vraw_pay, GST_TYPE_RTP_BASE_PAYLOAD)
 {
   GstRTPBasePayloadClass *gstrtpbasepayload_class;
   GstElementClass *gstelement_class;
+  GObjectClass *gobject_class;
 
+  gobject_class = (GObjectClass *) klass;
   gstelement_class = (GstElementClass *) klass;
   gstrtpbasepayload_class = (GstRTPBasePayloadClass *) klass;
+
+  gobject_class->set_property = gst_rtp_vraw_pay_set_property;
+  gobject_class->get_property = gst_rtp_vraw_pay_get_property;
+
+  g_object_class_install_property (gobject_class,
+      PROP_CHUNKS_PER_FRAME,
+      g_param_spec_int ("chunks-per-frame", "Chunks per Frame",
+          "Split and send out each frame in multiple chunks to reduce overhead",
+          1, G_MAXINT, DEFAULT_CHUNKS_PER_FRAME,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS)
+      );
 
   gstrtpbasepayload_class->set_caps = gst_rtp_vraw_pay_setcaps;
   gstrtpbasepayload_class->handle_buffer = gst_rtp_vraw_pay_handle_buffer;
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_vraw_pay_src_template));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_vraw_pay_sink_template));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_vraw_pay_src_template);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_vraw_pay_sink_template);
 
   gst_element_class_set_static_metadata (gstelement_class,
       "RTP Raw Video payloader", "Codec/Payloader/Network/RTP",
@@ -101,6 +127,7 @@ G_DEFINE_TYPE (GstRtpVRawPay, gst_rtp_vraw_pay, GST_TYPE_RTP_BASE_PAYLOAD)
 static void
 gst_rtp_vraw_pay_init (GstRtpVRawPay * rtpvrawpay)
 {
+  rtpvrawpay->chunks_per_frame = DEFAULT_CHUNKS_PER_FRAME;
 }
 
 static gboolean
@@ -111,7 +138,6 @@ gst_rtp_vraw_pay_setcaps (GstRTPBasePayload * payload, GstCaps * caps)
   gint pgroup, xinc, yinc;
   const gchar *depthstr, *samplingstr, *colorimetrystr;
   gchar *wstr, *hstr;
-  gint depth;
   GstVideoInfo info;
 
   rtpvrawpay = GST_RTP_VRAW_PAY (payload);
@@ -138,7 +164,6 @@ gst_rtp_vraw_pay_setcaps (GstRTPBasePayload * payload, GstCaps * caps)
 
   /* these values are the only thing we can do */
   depthstr = "8";
-  depth = 8;
 
   switch (GST_VIDEO_INFO_FORMAT (&info)) {
     case GST_VIDEO_FORMAT_RGBA:
@@ -152,6 +177,7 @@ gst_rtp_vraw_pay_setcaps (GstRTPBasePayload * payload, GstCaps * caps)
     case GST_VIDEO_FORMAT_RGB:
       samplingstr = "RGB";
       pgroup = 3;
+      break;
     case GST_VIDEO_FORMAT_BGR:
       samplingstr = "BGR";
       pgroup = 3;
@@ -177,9 +203,8 @@ gst_rtp_vraw_pay_setcaps (GstRTPBasePayload * payload, GstCaps * caps)
       break;
     case GST_VIDEO_FORMAT_UYVP:
       samplingstr = "YCbCr-4:2:2";
-      pgroup = 4;
+      pgroup = 5;
       xinc = 2;
-      depth = 10;
       depthstr = "10";
       break;
     default:
@@ -194,7 +219,6 @@ gst_rtp_vraw_pay_setcaps (GstRTPBasePayload * payload, GstCaps * caps)
   rtpvrawpay->pgroup = pgroup;
   rtpvrawpay->xinc = xinc;
   rtpvrawpay->yinc = yinc;
-  rtpvrawpay->depth = depth;
 
   GST_DEBUG_OBJECT (payload, "width %d, height %d, sampling %s",
       GST_VIDEO_INFO_WIDTH (&info), GST_VIDEO_INFO_HEIGHT (&info), samplingstr);
@@ -238,25 +262,38 @@ gst_rtp_vraw_pay_handle_buffer (GstRTPBasePayload * payload, GstBuffer * buffer)
 {
   GstRtpVRawPay *rtpvrawpay;
   GstFlowReturn ret = GST_FLOW_OK;
+  gfloat packets_per_packline;
+  guint pgroups_per_packet;
+  guint packlines_per_list, buffers_per_list;
+  guint lines_delay;            /* after how many packed lines we push out a buffer list */
+  guint last_line;              /* last pack line number we pushed out a buffer list     */
   guint line, offset;
-  guint8 *yp, *up, *vp;
+  guint8 *p0, *yp, *up, *vp;
   guint ystride, uvstride;
+  guint xinc, yinc;
   guint pgroup;
   guint mtu;
   guint width, height;
-  gint field;
+  gint field, fields;
+  GstVideoFormat format;
   GstVideoFrame frame;
   gint interlaced;
+  gboolean use_buffer_lists;
+  GstBufferList *list = NULL;
   GstRTPBuffer rtp = { NULL, };
 
   rtpvrawpay = GST_RTP_VRAW_PAY (payload);
 
-  gst_video_frame_map (&frame, &rtpvrawpay->vinfo, buffer, GST_MAP_READ);
+  if (!gst_video_frame_map (&frame, &rtpvrawpay->vinfo, buffer, GST_MAP_READ)) {
+    gst_buffer_unref (buffer);
+    return GST_FLOW_ERROR;
+  }
 
   GST_LOG_OBJECT (rtpvrawpay, "new frame of %" G_GSIZE_FORMAT " bytes",
       gst_buffer_get_size (buffer));
 
   /* get pointer and strides of the planes */
+  p0 = GST_VIDEO_FRAME_PLANE_DATA (&frame, 0);
   yp = GST_VIDEO_FRAME_COMP_DATA (&frame, 0);
   up = GST_VIDEO_FRAME_COMP_DATA (&frame, 1);
   vp = GST_VIDEO_FRAME_COMP_DATA (&frame, 2);
@@ -273,17 +310,40 @@ gst_rtp_vraw_pay_handle_buffer (GstRTPBasePayload * payload, GstBuffer * buffer)
 
   interlaced = GST_VIDEO_INFO_IS_INTERLACED (&rtpvrawpay->vinfo);
 
+  format = GST_VIDEO_INFO_FORMAT (&rtpvrawpay->vinfo);
+
+  yinc = rtpvrawpay->yinc;
+  xinc = rtpvrawpay->xinc;
+
+  /* after how many packed lines we push out a buffer list */
+  lines_delay = GST_ROUND_UP_4 (height / rtpvrawpay->chunks_per_frame);
+
+  /* calculate how many buffers we expect to store in a single buffer list */
+  pgroups_per_packet = (mtu - (12 + 14)) / pgroup;
+  packets_per_packline = width / (xinc * pgroups_per_packet * 1.0);
+  packlines_per_list = height / (yinc * rtpvrawpay->chunks_per_frame);
+  buffers_per_list = packlines_per_list * packets_per_packline;
+  buffers_per_list = GST_ROUND_UP_8 (buffers_per_list);
+
+  use_buffer_lists = (rtpvrawpay->chunks_per_frame < (height / yinc));
+
+  fields = 1 + interlaced;
+
   /* start with line 0, offset 0 */
-  for (field = 0; field < 1 + interlaced; field++) {
+  for (field = 0; field < fields; field++) {
     line = field;
     offset = 0;
+    last_line = 0;
+
+    if (use_buffer_lists)
+      list = gst_buffer_list_new_sized (buffers_per_list);
 
     /* write all lines */
     while (line < height) {
-      guint left;
+      guint left, pack_line;
       GstBuffer *out;
       guint8 *outdata, *headers;
-      gboolean next_line;
+      gboolean next_line, complete = FALSE;
       guint length, cont, pixels;
 
       /* get the max allowed payload length size, we try to fill the complete MTU */
@@ -291,9 +351,9 @@ gst_rtp_vraw_pay_handle_buffer (GstRTPBasePayload * payload, GstBuffer * buffer)
       out = gst_rtp_buffer_new_allocate (left, 0, 0);
 
       if (field == 0) {
-        GST_BUFFER_TIMESTAMP (out) = GST_BUFFER_TIMESTAMP (buffer);
+        GST_BUFFER_PTS (out) = GST_BUFFER_PTS (buffer);
       } else {
-        GST_BUFFER_TIMESTAMP (out) = GST_BUFFER_TIMESTAMP (buffer) +
+        GST_BUFFER_PTS (out) = GST_BUFFER_PTS (buffer) +
             GST_BUFFER_DURATION (buffer) / 2;
       }
 
@@ -329,6 +389,13 @@ gst_rtp_vraw_pay_handle_buffer (GstRTPBasePayload * payload, GstBuffer * buffer)
       /* the headers start here */
       headers = outdata;
 
+      /* make sure we can fit at least *one* header and pixel */
+      if (!(left > (6 + pgroup))) {
+        gst_rtp_buffer_unmap (&rtp);
+        gst_buffer_unref (out);
+        goto too_small;
+      }
+
       /* while we can fit at least one header and one pixel */
       while (left > (6 + pgroup)) {
         /* we need a 6 bytes header */
@@ -336,7 +403,7 @@ gst_rtp_vraw_pay_handle_buffer (GstRTPBasePayload * payload, GstBuffer * buffer)
 
         /* get how may bytes we need for the remaining pixels */
         pixels = width - offset;
-        length = (pixels * pgroup) / rtpvrawpay->xinc;
+        length = (pixels * pgroup) / xinc;
 
         if (left >= length) {
           /* pixels and header fit completely, we will write them and skip to the
@@ -344,8 +411,8 @@ gst_rtp_vraw_pay_handle_buffer (GstRTPBasePayload * payload, GstBuffer * buffer)
           next_line = TRUE;
         } else {
           /* line does not fit completely, see how many pixels fit */
-          pixels = (left / pgroup) * rtpvrawpay->xinc;
-          length = (pixels * pgroup) / rtpvrawpay->xinc;
+          pixels = (left / pgroup) * xinc;
+          length = (pixels * pgroup) / xinc;
           next_line = FALSE;
         }
         GST_LOG_OBJECT (rtpvrawpay, "filling %u bytes in %u pixels", length,
@@ -362,7 +429,7 @@ gst_rtp_vraw_pay_handle_buffer (GstRTPBasePayload * payload, GstBuffer * buffer)
 
         if (next_line) {
           /* go to next line we do this here to make the check below easier */
-          line += rtpvrawpay->yinc;
+          line += yinc;
         }
 
         /* calculate continuation marker */
@@ -403,14 +470,15 @@ gst_rtp_vraw_pay_handle_buffer (GstRTPBasePayload * payload, GstBuffer * buffer)
             "writing length %u, line %u, offset %u, cont %d", length, lin, offs,
             cont);
 
-        switch (GST_VIDEO_INFO_FORMAT (&rtpvrawpay->vinfo)) {
+        switch (format) {
           case GST_VIDEO_FORMAT_RGB:
           case GST_VIDEO_FORMAT_RGBA:
           case GST_VIDEO_FORMAT_BGR:
           case GST_VIDEO_FORMAT_BGRA:
           case GST_VIDEO_FORMAT_UYVY:
-            offs /= rtpvrawpay->xinc;
-            memcpy (outdata, yp + (lin * ystride) + (offs * pgroup), length);
+          case GST_VIDEO_FORMAT_UYVP:
+            offs /= xinc;
+            memcpy (outdata, p0 + (lin * ystride) + (offs * pgroup), length);
             outdata += length;
             break;
           case GST_VIDEO_FORMAT_AYUV:
@@ -418,7 +486,7 @@ gst_rtp_vraw_pay_handle_buffer (GstRTPBasePayload * payload, GstBuffer * buffer)
             gint i;
             guint8 *datap;
 
-            datap = yp + (lin * ystride) + (offs * 4);
+            datap = p0 + (lin * ystride) + (offs * 4);
 
             for (i = 0; i < pixels; i++) {
               *outdata++ = datap[2];
@@ -436,8 +504,7 @@ gst_rtp_vraw_pay_handle_buffer (GstRTPBasePayload * payload, GstBuffer * buffer)
 
             yd1p = yp + (lin * ystride) + (offs);
             yd2p = yd1p + ystride;
-            uvoff =
-                (lin / rtpvrawpay->yinc * uvstride) + (offs / rtpvrawpay->xinc);
+            uvoff = (lin / yinc * uvstride) + (offs / xinc);
             udp = up + uvoff;
             vdp = vp + uvoff;
 
@@ -458,8 +525,7 @@ gst_rtp_vraw_pay_handle_buffer (GstRTPBasePayload * payload, GstBuffer * buffer)
             guint8 *ydp, *udp, *vdp;
 
             ydp = yp + (lin * ystride) + offs;
-            uvoff =
-                (lin / rtpvrawpay->yinc * uvstride) + (offs / rtpvrawpay->xinc);
+            uvoff = (lin / yinc * uvstride) + (offs / xinc);
             udp = up + uvoff;
             vdp = vp + uvoff;
 
@@ -486,6 +552,7 @@ gst_rtp_vraw_pay_handle_buffer (GstRTPBasePayload * payload, GstBuffer * buffer)
       if (line >= height) {
         GST_LOG_OBJECT (rtpvrawpay, "field/frame complete, set marker");
         gst_rtp_buffer_set_marker (&rtp, TRUE);
+        complete = TRUE;
       }
       gst_rtp_buffer_unmap (&rtp);
       if (left > 0) {
@@ -493,8 +560,30 @@ gst_rtp_vraw_pay_handle_buffer (GstRTPBasePayload * payload, GstBuffer * buffer)
         gst_buffer_resize (out, 0, gst_buffer_get_size (out) - left);
       }
 
-      /* push buffer */
-      ret = gst_rtp_base_payload_push (payload, out);
+      gst_rtp_copy_meta (GST_ELEMENT_CAST (rtpvrawpay), out, buffer,
+          g_quark_from_static_string (GST_META_TAG_VIDEO_STR));
+
+
+      /* Now either push out the buffer directly */
+      if (!use_buffer_lists) {
+        ret = gst_rtp_base_payload_push (payload, out);
+        continue;
+      }
+
+      /* or add the buffer to buffer list ... */
+      gst_buffer_list_add (list, out);
+
+      /* .. and check if we need to push out the list */
+      pack_line = (line - field) / fields;
+      if (complete || (pack_line > last_line && pack_line % lines_delay == 0)) {
+        GST_LOG_OBJECT (rtpvrawpay, "pushing list of %u buffers up to pack "
+            "line %u", gst_buffer_list_length (list), pack_line);
+        ret = gst_rtp_base_payload_push_list (payload, list);
+        list = NULL;
+        if (!complete)
+          list = gst_buffer_list_new_sized (buffers_per_list);
+        last_line = pack_line;
+      }
     }
 
   }
@@ -512,6 +601,50 @@ unknown_sampling:
     gst_video_frame_unmap (&frame);
     gst_buffer_unref (buffer);
     return GST_FLOW_NOT_SUPPORTED;
+  }
+too_small:
+  {
+    GST_ELEMENT_ERROR (payload, RESOURCE, NO_SPACE_LEFT,
+        (NULL), ("not enough space to send at least one pixel"));
+    gst_video_frame_unmap (&frame);
+    gst_buffer_unref (buffer);
+    return GST_FLOW_NOT_SUPPORTED;
+  }
+}
+
+static void
+gst_rtp_vraw_pay_set_property (GObject * object, guint prop_id,
+    const GValue * value, GParamSpec * pspec)
+{
+  GstRtpVRawPay *rtpvrawpay;
+
+  rtpvrawpay = GST_RTP_VRAW_PAY (object);
+
+  switch (prop_id) {
+    case PROP_CHUNKS_PER_FRAME:
+      rtpvrawpay->chunks_per_frame = g_value_get_int (value);
+      break;
+    default:
+      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+      break;
+  }
+}
+
+static void
+gst_rtp_vraw_pay_get_property (GObject * object, guint prop_id,
+    GValue * value, GParamSpec * pspec)
+{
+  GstRtpVRawPay *rtpvrawpay;
+
+  rtpvrawpay = GST_RTP_VRAW_PAY (object);
+
+  switch (prop_id) {
+    case PROP_CHUNKS_PER_FRAME:
+      g_value_set_int (value, rtpvrawpay->chunks_per_frame);
+      break;
+    default:
+      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+      break;
   }
 }
 

@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /*
@@ -229,8 +229,8 @@ gst_smpte_time_code_get_timestamp (GstSMPTETimeCodeSystem system,
   g_return_val_if_fail (time_code != NULL, GST_CLOCK_TIME_NONE);
 
   if (gst_smpte_time_code_get_frame_number (system, &frame_number, time_code)) {
-    static int framerate_n[3] = { 3000, 25, 24 };
-    static int framerate_d[3] = { 1001, 1, 1 };
+    static const int framerate_n[3] = { 3000, 25, 24 };
+    static const int framerate_d[3] = { 1001, 1, 1 };
 
     return gst_util_uint64_scale (frame_number,
         GST_SECOND * framerate_d[system], framerate_n[system]);

@@ -17,8 +17,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
@@ -105,10 +105,8 @@ gst_wavpack_dec_class_init (GstWavpackDecClass * klass)
   GstElementClass *element_class = (GstElementClass *) (klass);
   GstAudioDecoderClass *base_class = (GstAudioDecoderClass *) (klass);
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&src_factory));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&sink_factory));
+  gst_element_class_add_static_pad_template (element_class, &src_factory);
+  gst_element_class_add_static_pad_template (element_class, &sink_factory);
   gst_element_class_set_static_metadata (element_class, "Wavpack audio decoder",
       "Codec/Decoder/Audio",
       "Decodes Wavpack audio data",
@@ -140,6 +138,11 @@ gst_wavpack_dec_init (GstWavpackDec * dec)
 {
   dec->context = NULL;
   dec->stream_reader = gst_wavpack_stream_reader_new ();
+
+  gst_audio_decoder_set_needs_format (GST_AUDIO_DECODER (dec), TRUE);
+  gst_audio_decoder_set_use_default_pad_acceptcaps (GST_AUDIO_DECODER_CAST
+      (dec), TRUE);
+  GST_PAD_SET_ACCEPT_TEMPLATE (GST_AUDIO_DECODER_SINK_PAD (dec));
 
   gst_wavpack_dec_reset (dec);
 }
@@ -261,6 +264,7 @@ gst_wavpack_dec_post_tags (GstWavpackDec * dec)
         (guint) bitrate, NULL);
     gst_audio_decoder_merge_tags (GST_AUDIO_DECODER (dec), list,
         GST_TAG_MERGE_REPLACE);
+    gst_tag_list_unref (list);
   }
 }
 
@@ -323,11 +327,7 @@ gst_wavpack_dec_handle_frame (GstAudioDecoder * bdec, GstBuffer * buf)
       (dec->sample_rate != WavpackGetSampleRate (dec->context)) ||
       (dec->channels != WavpackGetNumChannels (dec->context)) ||
       (dec->depth != WavpackGetBytesPerSample (dec->context) * 8) ||
-#ifdef WAVPACK_OLD_API
-      (dec->channel_mask != dec->context->config.channel_mask);
-#else
       (dec->channel_mask != WavpackGetChannelMask (dec->context));
-#endif
 
   if (!gst_pad_has_current_caps (GST_AUDIO_DECODER_SRC_PAD (dec)) ||
       format_changed) {
@@ -337,11 +337,7 @@ gst_wavpack_dec_handle_frame (GstAudioDecoder * bdec, GstBuffer * buf)
     dec->channels = WavpackGetNumChannels (dec->context);
     dec->depth = WavpackGetBytesPerSample (dec->context) * 8;
 
-#ifdef WAVPACK_OLD_API
-    channel_mask = dec->context->config.channel_mask;
-#else
     channel_mask = WavpackGetChannelMask (dec->context);
-#endif
     if (channel_mask == 0)
       channel_mask = gst_wavpack_get_default_channel_mask (dec->channels);
 
@@ -452,11 +448,7 @@ decode_error:
     const gchar *reason = "unknown";
 
     if (dec->context) {
-#ifdef WAVPACK_OLD_API
-      reason = dec->context->error_message;
-#else
       reason = WavpackGetErrorMessage (dec->context);
-#endif
     } else {
       reason = "couldn't create decoder context";
     }

@@ -16,8 +16,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifndef __GST_MATROSKA_READ_COMMON_H__
@@ -61,6 +61,9 @@ typedef struct _GstMatroskaReadCommon {
   /* state */
   GstMatroskaReadState     state;
 
+  /* stream type */
+  gboolean                 is_webm;
+  gboolean                 has_video;
 
   /* did we parse cues/tracks/segmentinfo already? */
   gboolean                 index_parsed;
@@ -73,8 +76,9 @@ typedef struct _GstMatroskaReadCommon {
   GstToc                  *toc;
   gboolean                toc_updated;
 
-  /* start-of-segment */
+  /* start-of-segment and length */
   guint64                  ebml_segment_start;
+  guint64                  ebml_segment_length;
 
   /* a cue (index) table */
   GArray                  *index;
@@ -86,6 +90,7 @@ typedef struct _GstMatroskaReadCommon {
   GstSegment               segment;
 
   GstTagList              *global_tags;
+  gboolean                 global_tags_changed;
 
   /* pull mode caching */
   GstBuffer *cached_buffer;
@@ -97,6 +102,10 @@ typedef struct _GstMatroskaReadCommon {
 
   /* push based mode usual suspects */
   GstAdapter              *adapter;
+
+  /* cache for track tags that forward-reference their tracks */
+  GHashTable *cached_track_taglists ;
+ 
 } GstMatroskaReadCommon;
 
 GstFlowReturn gst_matroska_decode_content_encodings (GArray * encodings);
@@ -106,7 +115,7 @@ gint gst_matroska_index_seek_find (GstMatroskaIndex * i1, GstClockTime * time,
     gpointer user_data);
 GstMatroskaIndex * gst_matroska_read_common_do_index_seek (
     GstMatroskaReadCommon * common, GstMatroskaTrackContext * track, gint64
-    seek_pos, GArray ** _index, gint * _entry_index, gboolean next);
+    seek_pos, GArray ** _index, gint * _entry_index, GstSearchMode snap_dir);
 void gst_matroska_read_common_found_global_tag (GstMatroskaReadCommon * common,
     GstElement * el, GstTagList * taglist);
 gint64 gst_matroska_read_common_get_length (GstMatroskaReadCommon * common);
@@ -141,6 +150,11 @@ GstFlowReturn gst_matroska_read_common_read_track_encodings (
     GstMatroskaTrackContext * context);
 void gst_matroska_read_common_reset_streams (GstMatroskaReadCommon * common,
     GstClockTime time, gboolean full);
+void gst_matroska_read_common_free_parsed_el (gpointer mem, gpointer user_data);
+void gst_matroska_read_common_init (GstMatroskaReadCommon * ctx);
+void gst_matroska_read_common_finalize (GstMatroskaReadCommon * ctx);
+void gst_matroska_read_common_reset (GstElement * element,
+    GstMatroskaReadCommon * ctx);
 gboolean gst_matroska_read_common_tracknumber_unique (GstMatroskaReadCommon *
     common, guint64 num);
 

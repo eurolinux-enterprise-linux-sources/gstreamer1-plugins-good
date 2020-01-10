@@ -19,8 +19,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #include <gst/check/gstcheck.h>
@@ -129,6 +129,12 @@ mpegaudioparse_suite (void)
   Suite *s = suite_create ("mpegaudioparse");
   TCase *tc_chain = tcase_create ("general");
 
+
+  /* init test context */
+  ctx_factory = "mpegaudioparse";
+  ctx_sink_template = &sinktemplate;
+  ctx_src_template = &srctemplate;
+
   suite_add_tcase (s, tc_chain);
   tcase_add_test (tc_chain, test_parse_normal);
   tcase_add_test (tc_chain, test_parse_drain_single);
@@ -146,25 +152,4 @@ mpegaudioparse_suite (void)
  *   - Both push- and pull-modes need to be tested
  *      * Pull-mode & EOS
  */
-
-int
-main (int argc, char **argv)
-{
-  int nf;
-
-  Suite *s = mpegaudioparse_suite ();
-  SRunner *sr = srunner_create (s);
-
-  gst_check_init (&argc, &argv);
-
-  /* init test context */
-  ctx_factory = "mpegaudioparse";
-  ctx_sink_template = &sinktemplate;
-  ctx_src_template = &srctemplate;
-
-  srunner_run_all (sr, CK_NORMAL);
-  nf = srunner_ntests_failed (sr);
-  srunner_free (sr);
-
-  return nf;
-}
+GST_CHECK_MAIN (mpegaudioparse);

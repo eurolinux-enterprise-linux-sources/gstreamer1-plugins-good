@@ -15,8 +15,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -673,7 +673,7 @@ goom_update (PluginInfo * goomInfo, gint16 data[2][512], int forceMode,
    */
   if ((goomInfo->update.stop_lines & 0xf000)
       || (!goomInfo->curGState->drawScope)) {
-    float param1, param2, amplitude;
+    float param1 = 0, param2 = 0, amplitude;
     int couleur;
     int mode;
 
@@ -846,6 +846,9 @@ choose_a_goom_line (PluginInfo * goomInfo, float *param1, float *param2,
         *param1 = *param2 = goomInfo->screen.width / 2.0f;
         *amplitude = 1.5f;
       }
+      break;
+    default:
+      *param1 = *param2 = 0;
       break;
   }
 

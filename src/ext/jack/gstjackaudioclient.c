@@ -15,8 +15,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #include <string.h>
@@ -29,11 +29,26 @@
 GST_DEBUG_CATEGORY_STATIC (gst_jack_audio_client_debug);
 #define GST_CAT_DEFAULT gst_jack_audio_client_debug
 
+static void
+jack_log_error (const gchar * msg)
+{
+  GST_ERROR ("%s", msg);
+}
+
+static void
+jack_info_error (const gchar * msg)
+{
+  GST_INFO ("%s", msg);
+}
+
 void
 gst_jack_audio_client_init (void)
 {
   GST_DEBUG_CATEGORY_INIT (gst_jack_audio_client_debug, "jackclient", 0,
       "jackclient helpers");
+
+  jack_set_error_function (jack_log_error);
+  jack_set_info_function (jack_info_error);
 }
 
 /* a list of global connections indexed by id and server. */
@@ -70,6 +85,7 @@ struct _GstJackAudioClient
   GstJackClientType type;
   gboolean active;
   gboolean deactivate;
+  gboolean server_down;
 
   JackShutdownCallback shutdown;
   JackProcessCallback process;
@@ -185,20 +201,6 @@ jack_process_cb (jack_nframes_t nframes, void *arg)
   return res;
 }
 
-/* we error out */
-static int
-jack_sample_rate_cb (jack_nframes_t nframes, void *arg)
-{
-  return 0;
-}
-
-/* we error out */
-static int
-jack_buffer_size_cb (jack_nframes_t nframes, void *arg)
-{
-  return 0;
-}
-
 static void
 jack_shutdown_cb (void *arg)
 {
@@ -212,16 +214,36 @@ jack_shutdown_cb (void *arg)
   for (walk = conn->src_clients; walk; walk = g_list_next (walk)) {
     GstJackAudioClient *client = (GstJackAudioClient *) walk->data;
 
+    client->server_down = TRUE;
+    g_cond_signal (&conn->flush_cond);
     if (client->shutdown)
       client->shutdown (client->user_data);
   }
   for (walk = conn->sink_clients; walk; walk = g_list_next (walk)) {
     GstJackAudioClient *client = (GstJackAudioClient *) walk->data;
 
+    client->server_down = TRUE;
+    g_cond_signal (&conn->flush_cond);
     if (client->shutdown)
       client->shutdown (client->user_data);
   }
   g_mutex_unlock (&conn->lock);
+}
+
+/* we error out */
+static int
+jack_sample_rate_cb (jack_nframes_t nframes, void *arg)
+{
+  jack_shutdown_cb (arg);
+  return 0;
+}
+
+/* we error out */
+static int
+jack_buffer_size_cb (jack_nframes_t nframes, void *arg)
+{
+  jack_shutdown_cb (arg);
+  return 0;
 }
 
 typedef struct
@@ -505,6 +527,7 @@ gst_jack_audio_client_new (const gchar * id, const gchar * server,
   client->buffer_size = buffer_size;
   client->sample_rate = sample_rate;
   client->user_data = user_data;
+  client->server_down = FALSE;
 
   /* add the client to the connection */
   gst_jack_audio_connection_add_client (conn, client);
@@ -585,7 +608,7 @@ gst_jack_audio_client_set_active (GstJackAudioClient * client, gboolean active)
     client->deactivate = TRUE;
 
     /* need to wait for process_cb run once more */
-    while (client->deactivate)
+    while (client->deactivate && !client->server_down)
       g_cond_wait (&client->conn->flush_cond, &client->conn->lock);
   }
   client->active = active;

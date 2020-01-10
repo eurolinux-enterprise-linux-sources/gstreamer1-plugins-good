@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  *
  * Author: Dejan Sakelsak sahel@kiberpipa.org
  */
@@ -24,7 +24,6 @@
 
 #include <gst/gst.h>
 #include <gst/rtp/gstrtpbasepayload.h>
-#include <gst/base/gstadapter.h>
 
 G_BEGIN_DECLS
 #define GST_TYPE_RTP_H263_PAY \
@@ -63,7 +62,9 @@ struct _GstRtpH263Pay
 {
   GstRTPBasePayload payload;
 
-  GstAdapter *adapter;
+  GstBuffer *current_buffer;
+  GstMapInfo map;
+
   GstClockTime first_ts;
   gboolean prop_payload_mode;
   guint8 *data;

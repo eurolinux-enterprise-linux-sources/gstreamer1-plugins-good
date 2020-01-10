@@ -14,8 +14,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -27,6 +27,7 @@
 #include <gst/rtp/gstrtpbuffer.h>
 
 #include "gstrtpdvpay.h"
+#include "gstrtputils.h"
 
 GST_DEBUG_CATEGORY (rtpdvpay_debug);
 #define GST_CAT_DEFAULT (rtpdvpay_debug)
@@ -119,10 +120,10 @@ gst_rtp_dv_pay_class_init (GstRTPDVPayClass * klass)
           GST_TYPE_DV_PAY_MODE, DEFAULT_MODE,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_dv_pay_sink_template));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_dv_pay_src_template));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_dv_pay_sink_template);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_dv_pay_src_template);
 
   gst_element_class_set_static_metadata (gstelement_class, "RTP DV Payloader",
       "Codec/Payloader/Network/RTP",
@@ -300,7 +301,12 @@ gst_rtp_dv_pay_handle_buffer (GstRTPBasePayload * basepayload,
   max_payload_size = ((GST_RTP_BASE_PAYLOAD_MTU (rtpdvpay) - hdrlen) / 80) * 80;
 
   /* The length of the buffer to transmit. */
-  gst_buffer_map (buffer, &map, GST_MAP_READ);
+  if (!gst_buffer_map (buffer, &map, GST_MAP_READ)) {
+    GST_ELEMENT_ERROR (rtpdvpay, CORE, FAILED,
+        (NULL), ("Failed to map buffer"));
+    gst_buffer_unref (buffer);
+    return GST_FLOW_ERROR;
+  }
   data = map.data;
   size = map.size;
 
@@ -308,7 +314,7 @@ gst_rtp_dv_pay_handle_buffer (GstRTPBasePayload * basepayload,
       "DV RTP payloader got buffer of %" G_GSIZE_FORMAT
       " bytes, splitting in %u byte " "payload fragments, at time %"
       GST_TIME_FORMAT, size, max_payload_size,
-      GST_TIME_ARGS (GST_BUFFER_TIMESTAMP (buffer)));
+      GST_TIME_ARGS (GST_BUFFER_PTS (buffer)));
 
   if (!rtpdvpay->negotiated) {
     gst_dv_pay_negotiate (rtpdvpay, data, size);
@@ -325,9 +331,15 @@ gst_rtp_dv_pay_handle_buffer (GstRTPBasePayload * basepayload,
     /* Allocate a new buffer, set the timestamp */
     if (outbuf == NULL) {
       outbuf = gst_rtp_buffer_new_allocate (max_payload_size, 0, 0);
-      GST_BUFFER_TIMESTAMP (outbuf) = GST_BUFFER_TIMESTAMP (buffer);
+      GST_BUFFER_PTS (outbuf) = GST_BUFFER_PTS (buffer);
 
-      gst_rtp_buffer_map (outbuf, GST_MAP_WRITE, &rtp);
+      if (!gst_rtp_buffer_map (outbuf, GST_MAP_WRITE, &rtp)) {
+        gst_buffer_unref (outbuf);
+        GST_ELEMENT_ERROR (rtpdvpay, CORE, FAILED,
+            (NULL), ("Failed to map RTP buffer"));
+        ret = GST_FLOW_ERROR;
+        goto beach;
+      }
       dest = gst_rtp_buffer_get_payload (&rtp);
       filled = 0;
     }
@@ -361,6 +373,7 @@ gst_rtp_dv_pay_handle_buffer (GstRTPBasePayload * basepayload,
 
       /* Push out the created piece, and check for errors. */
       gst_rtp_buffer_unmap (&rtp);
+      gst_rtp_copy_meta (GST_ELEMENT_CAST (basepayload), outbuf, buffer, 0);
       ret = gst_rtp_base_payload_push (basepayload, outbuf);
       if (ret != GST_FLOW_OK)
         break;
@@ -368,6 +381,8 @@ gst_rtp_dv_pay_handle_buffer (GstRTPBasePayload * basepayload,
       outbuf = NULL;
     }
   }
+
+beach:
   gst_buffer_unmap (buffer, &map);
   gst_buffer_unref (buffer);
 

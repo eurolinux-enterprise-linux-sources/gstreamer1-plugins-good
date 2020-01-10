@@ -37,8 +37,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifndef __GST_OSXAUDIOSRC_H__
@@ -51,12 +51,19 @@
 
 G_BEGIN_DECLS
 
+#define GST_OSX_AUDIO_SRC_CAPS "audio/x-raw, " \
+        "format = (string) " GST_AUDIO_FORMATS_ALL ", " \
+        "layout = (string) interleaved, " \
+        "rate = (int) [1, MAX], " "channels = (int) [1, MAX]"
+
 #define GST_TYPE_OSX_AUDIO_SRC \
   (gst_osx_audio_src_get_type())
 #define GST_OSX_AUDIO_SRC(obj) \
   (G_TYPE_CHECK_INSTANCE_CAST((obj),GST_TYPE_OSX_AUDIO_SRC,GstOsxAudioSrc))
 #define GST_OSX_AUDIO_SRC_CLASS(klass) \
   (G_TYPE_CHECK_CLASS_CAST((klass),GST_TYPE_OSX_AUDIO_SRC,GstOsxAudioSrcClass))
+#define GST_IS_OSX_AUDIO_SRC(obj) \
+  (G_TYPE_CHECK_INSTANCE_TYPE((obj),GST_TYPE_OSX_AUDIO_SRC))
 
 typedef struct _GstOsxAudioSrc GstOsxAudioSrc;
 typedef struct _GstOsxAudioSrcClass GstOsxAudioSrcClass;
@@ -66,12 +73,9 @@ struct _GstOsxAudioSrc
   GstAudioBaseSrc src;
 
   AudioDeviceID device_id;
-
-  /* actual number of channels reported by input device */
-  int deviceChannels;
 };
 
-struct _GstOsxAudioSrcClass 
+struct _GstOsxAudioSrcClass
 {
   GstAudioBaseSrcClass parent_class;
 };

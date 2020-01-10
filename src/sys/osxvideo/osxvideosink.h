@@ -15,8 +15,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  *
  *
  * The development of this code was made possible due to the involvement of Pioneers 
@@ -27,6 +27,7 @@
 #ifndef __GST_OSX_VIDEO_SINK_H__
 #define __GST_OSX_VIDEO_SINK_H__
 
+#include <gst/video/video.h>
 #include <gst/video/gstvideosink.h>
 
 #include <string.h>
@@ -34,19 +35,10 @@
 #include <objc/runtime.h>
 #include <Cocoa/Cocoa.h>
 
-#include <QuickTime/QuickTime.h>
 #import "cocoawindow.h"
 
 GST_DEBUG_CATEGORY_EXTERN (gst_debug_osx_video_sink);
 #define GST_CAT_DEFAULT gst_debug_osx_video_sink
-
-/* The hack doesn't work on leopard, the _CFMainPThread symbol
- * is doesn't exist in the CoreFoundation library */
-#if MAC_OS_X_VERSION_MIN_REQUIRED <= MAC_OS_X_VERSION_10_5
-#ifdef RUN_NS_APP_THREAD
-#undef RUN_NS_APP_THREAD
-#endif
-#endif
 
 G_BEGIN_DECLS
 
@@ -68,6 +60,12 @@ typedef struct _GstOSXVideoSinkClass GstOSXVideoSinkClass;
 
 #define GST_TYPE_OSXVIDEOBUFFER (gst_osxvideobuffer_get_type())
 
+typedef enum {
+  GST_OSX_VIDEO_SINK_RUN_LOOP_STATE_NOT_RUNNING = 0,
+  GST_OSX_VIDEO_SINK_RUN_LOOP_STATE_RUNNING = 1,
+  GST_OSX_VIDEO_SINK_RUN_LOOP_STATE_UNKNOWN = 2,
+} GstOSXVideoSinkRunLoopState;
+
 /* OSXWindow stuff */
 struct _GstOSXWindow {
   gint width, height;
@@ -83,33 +81,22 @@ struct _GstOSXVideoSink {
   GstOSXWindow *osxwindow;
   void *osxvideosinkobject;
   NSView *superview;
-  NSThread *ns_app_thread;
-#ifdef RUN_NS_APP_THREAD
-  GMutex loop_thread_lock;
-  GCond loop_thread_cond;
-#else
-  guint cocoa_timeout;
-#endif
-  GMutex mrl_check_lock;
-  GCond mrl_check_cond;
-  gboolean mrl_check_done;
-  gboolean main_run_loop_running;
-  gboolean app_started;
   gboolean keep_par;
-  gboolean embed;
+  GstVideoInfo info;
 };
 
 struct _GstOSXVideoSinkClass {
   GstVideoSinkClass parent_class;
+
+  GstOSXVideoSinkRunLoopState run_loop_state;
+  NSThread *ns_app_thread;
 };
 
 GType gst_osx_video_sink_get_type(void);
 
-#if MAC_OS_X_VERSION_MAX_ALLOWED >= MAC_OS_X_VERSION_10_4
 @interface NSApplication(AppleMenu)
 - (void)setAppleMenu:(NSMenu *)menu;
 @end
-#endif
 
 @interface GstBufferObject : NSObject
 {
@@ -121,11 +108,7 @@ GType gst_osx_video_sink_get_type(void);
 @end
 
 
-#if MAC_OS_X_VERSION_MIN_REQUIRED <= MAC_OS_X_VERSION_10_5
-@interface GstWindowDelegate : NSObject
-#else
 @interface GstWindowDelegate : NSObject <NSWindowDelegate>
-#endif
 {
   @public
   GstOSXVideoSink *osxvideosink;
@@ -135,8 +118,6 @@ GType gst_osx_video_sink_get_type(void);
 
 @interface GstOSXVideoSinkObject : NSObject
 {
-  BOOL destroyed;
-
   @public
   GstOSXVideoSink *osxvideosink;
 }
@@ -146,8 +127,9 @@ GType gst_osx_video_sink_get_type(void);
 -(void) resize;
 -(void) destroy;
 -(void) showFrame: (GstBufferObject*) buf;
-#ifdef RUN_NS_APP_THREAD
+-(void) setView: (NSView*) view;
 + (BOOL) isMainThread;
+#ifndef GSTREAMER_GLIB_COCOA_NSAPPLICATION
 -(void) nsAppThread;
 -(void) checkMainRunLoop;
 #endif

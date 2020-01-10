@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -26,8 +26,10 @@
 #include <stdio.h>
 
 #include <gst/rtp/gstrtpbuffer.h>
+#include <gst/video/video.h>
 
 #include "gstrtph263ppay.h"
+#include "gstrtputils.h"
 
 #define DEFAULT_FRAGMENTATION_MODE   GST_FRAGMENTATION_MODE_NORMAL
 
@@ -137,10 +139,10 @@ gst_rtp_h263p_pay_class_init (GstRtpH263PPayClass * klass)
           DEFAULT_FRAGMENTATION_MODE,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_h263p_pay_src_template));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_h263p_pay_sink_template));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_h263p_pay_src_template);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_h263p_pay_sink_template);
 
   gst_element_class_set_static_metadata (gstelement_class, "RTP H263 payloader",
       "Codec/Payloader/Network/RTP",
@@ -184,8 +186,10 @@ gst_rtp_h263p_pay_setcaps (GstRTPBasePayload * payload, GstCaps * caps)
   peercaps =
       gst_pad_peer_query_caps (GST_RTP_BASE_PAYLOAD_SRCPAD (payload), NULL);
   if (peercaps) {
-    GstCaps *intersect = gst_caps_intersect (peercaps,
-        gst_pad_get_pad_template_caps (GST_RTP_BASE_PAYLOAD_SRCPAD (payload)));
+    GstCaps *tcaps =
+        gst_pad_get_pad_template_caps (GST_RTP_BASE_PAYLOAD_SRCPAD (payload));
+    GstCaps *intersect = gst_caps_intersect (peercaps, tcaps);
+    gst_caps_unref (tcaps);
 
     gst_caps_unref (peercaps);
     if (!gst_caps_is_empty (intersect)) {
@@ -243,15 +247,16 @@ gst_rtp_h263p_pay_sink_getcaps (GstRTPBasePayload * payload, GstPad * pad,
   rtph263ppay = GST_RTP_H263P_PAY (payload);
 
   peercaps =
-      gst_pad_peer_query_caps (GST_RTP_BASE_PAYLOAD_SRCPAD (payload), filter);
+      gst_pad_peer_query_caps (GST_RTP_BASE_PAYLOAD_SRCPAD (payload), NULL);
 
   /* if we're just outputting to udpsink or fakesink or so, we should also
    * accept any input compatible with our sink template caps */
   if (!peercaps || gst_caps_is_any (peercaps)) {
     if (peercaps)
       gst_caps_unref (peercaps);
-    return
+    caps =
         gst_pad_get_pad_template_caps (GST_RTP_BASE_PAYLOAD_SINKPAD (payload));
+    goto done;
   }
 
   /* We basically need to differentiate two use-cases here: One where there's
@@ -260,9 +265,12 @@ gst_rtp_h263p_pay_sink_getcaps (GstRTPBasePayload * payload, GstPad * pad,
    * we want it to produce. The second case is simply payloader ! depayloader
    * where we are dealing with the depayloader's template caps. In this case
    * we should accept any input compatible with our sink template caps. */
-  if (!gst_caps_is_fixed (peercaps))
-    return
+  if (!gst_caps_is_fixed (peercaps)) {
+    gst_caps_unref (peercaps);
+    caps =
         gst_pad_get_pad_template_caps (GST_RTP_BASE_PAYLOAD_SINKPAD (payload));
+    goto done;
+  }
 
   templ = gst_pad_get_pad_template_caps (GST_RTP_BASE_PAYLOAD_SRCPAD (payload));
   intersect = gst_caps_intersect (peercaps, templ);
@@ -597,6 +605,18 @@ gst_rtp_h263p_pay_sink_getcaps (GstRTPBasePayload * payload, GstPad * pad,
 
   gst_caps_unref (intersect);
 
+done:
+
+  if (filter) {
+    GstCaps *tmp;
+
+    GST_DEBUG_OBJECT (payload, "Intersect %" GST_PTR_FORMAT " and filter %"
+        GST_PTR_FORMAT, caps, filter);
+    tmp = gst_caps_intersect_full (filter, caps, GST_CAPS_INTERSECT_FIRST);
+    gst_caps_unref (caps);
+    caps = tmp;
+  }
+
   return caps;
 }
 
@@ -641,9 +661,10 @@ static GstFlowReturn
 gst_rtp_h263p_pay_flush (GstRtpH263PPay * rtph263ppay)
 {
   guint avail;
-  GstBuffer *outbuf;
+  GstBufferList *list = NULL;
+  GstBuffer *outbuf = NULL;
   GstFlowReturn ret;
-  gboolean fragmented;
+  gboolean fragmented = FALSE;
 
   avail = gst_adapter_available (rtph263ppay->adapter);
   if (avail == 0)
@@ -664,45 +685,44 @@ gst_rtp_h263p_pay_flush (GstRtpH263PPay * rtph263ppay)
   while (avail > 0) {
     guint towrite;
     guint8 *payload;
-    guint payload_len;
     gint header_len;
     guint next_gop = 0;
     gboolean found_gob = FALSE;
     GstRTPBuffer rtp = { NULL };
+    GstBuffer *payload_buf;
 
     if (rtph263ppay->fragmentation_mode == GST_FRAGMENTATION_MODE_SYNC) {
       /* start after 1st gop possible */
-      guint parsed_len = 3;
-      const guint8 *parse_data = NULL;
-
-      parse_data = gst_adapter_map (rtph263ppay->adapter, avail);
 
       /* Check if we have a gob or eos , eossbs */
       /* FIXME EOS and EOSSBS packets should never contain any gobs and vice-versa */
-      if (avail >= 3 && *parse_data == 0 && *(parse_data + 1) == 0
-          && *(parse_data + 2) >= 0x80) {
+      next_gop =
+          gst_adapter_masked_scan_uint32 (rtph263ppay->adapter, 0xffff8000,
+          0x00008000, 0, avail);
+      if (next_gop == 0) {
         GST_DEBUG_OBJECT (rtph263ppay, " Found GOB header");
         found_gob = TRUE;
       }
+
       /* Find next and cut the packet accordingly */
       /* TODO we should get as many gobs as possible until MTU is reached, this
        * code seems to just get one GOB per packet */
-      while (parsed_len + 2 < avail) {
-        if (parse_data[parsed_len] == 0 && parse_data[parsed_len + 1] == 0
-            && parse_data[parsed_len + 2] >= 0x80) {
-          next_gop = parsed_len;
-          GST_DEBUG_OBJECT (rtph263ppay, " Next GOB Detected at :  %d",
-              next_gop);
-          break;
-        }
-        parsed_len++;
-      }
-      gst_adapter_unmap (rtph263ppay->adapter);
+      if (next_gop == 0 && avail > 3)
+        next_gop =
+            gst_adapter_masked_scan_uint32 (rtph263ppay->adapter, 0xffff8000,
+            0x00008000, 3, avail - 3);
+      GST_DEBUG_OBJECT (rtph263ppay, " Next GOB Detected at :  %d", next_gop);
+      if (next_gop == -1)
+        next_gop = 0;
     }
 
     /* for picture start frames (non-fragmented), we need to remove the first
      * two 0x00 bytes and set P=1 */
-    header_len = (fragmented && !found_gob) ? 2 : 0;
+    if (!fragmented || found_gob) {
+      gst_adapter_flush (rtph263ppay->adapter, 2);
+      avail -= 2;
+    }
+    header_len = 2;
 
     towrite = MIN (avail, gst_rtp_buffer_calc_payload_len
         (GST_RTP_BASE_PAYLOAD_MTU (rtph263ppay) - header_len, 0, 0));
@@ -710,17 +730,13 @@ gst_rtp_h263p_pay_flush (GstRtpH263PPay * rtph263ppay)
     if (next_gop > 0)
       towrite = MIN (next_gop, towrite);
 
-    payload_len = header_len + towrite;
-
-    outbuf = gst_rtp_buffer_new_allocate (payload_len, 0, 0);
+    outbuf = gst_rtp_buffer_new_allocate (header_len, 0, 0);
 
     gst_rtp_buffer_map (outbuf, GST_MAP_WRITE, &rtp);
     /* last fragment gets the marker bit set */
     gst_rtp_buffer_set_marker (&rtp, avail > towrite ? 0 : 1);
 
     payload = gst_rtp_buffer_get_payload (&rtp);
-
-    gst_adapter_copy (rtph263ppay->adapter, &payload[header_len], 0, towrite);
 
     /*  0                   1
      *  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5
@@ -732,17 +748,41 @@ gst_rtp_h263p_pay_flush (GstRtpH263PPay * rtph263ppay)
     payload[0] = (fragmented && !found_gob) ? 0x00 : 0x04;
     payload[1] = 0;
 
-    GST_BUFFER_TIMESTAMP (outbuf) = rtph263ppay->first_timestamp;
+    GST_BUFFER_PTS (outbuf) = rtph263ppay->first_timestamp;
     GST_BUFFER_DURATION (outbuf) = rtph263ppay->first_duration;
     gst_rtp_buffer_unmap (&rtp);
 
-    gst_adapter_flush (rtph263ppay->adapter, towrite);
+    payload_buf = gst_adapter_take_buffer_fast (rtph263ppay->adapter, towrite);
+    gst_rtp_copy_meta (GST_ELEMENT_CAST (rtph263ppay), outbuf, payload_buf,
+        g_quark_from_static_string (GST_META_TAG_VIDEO_STR));
+    outbuf = gst_buffer_append (outbuf, payload_buf);
+    avail -= towrite;
 
+    /* If more data is available and this is our first iteration,
+     * we create a buffer list and remember that we're fragmented.
+     *
+     * If we're fragmented already, add buffers to the previously
+     * created buffer list.
+     *
+     * Otherwise fragmented will be FALSE and we just push the single output
+     * buffer, and no list is allocated.
+     */
+    if (avail && !fragmented) {
+      fragmented = TRUE;
+      list = gst_buffer_list_new ();
+      gst_buffer_list_add (list, outbuf);
+    } else if (fragmented) {
+      gst_buffer_list_add (list, outbuf);
+    }
+  }
+
+  if (fragmented) {
+    ret =
+        gst_rtp_base_payload_push_list (GST_RTP_BASE_PAYLOAD (rtph263ppay),
+        list);
+  } else {
     ret =
         gst_rtp_base_payload_push (GST_RTP_BASE_PAYLOAD (rtph263ppay), outbuf);
-
-    avail -= towrite;
-    fragmented = TRUE;
   }
 
   return ret;
@@ -757,7 +797,7 @@ gst_rtp_h263p_pay_handle_buffer (GstRTPBasePayload * payload,
 
   rtph263ppay = GST_RTP_H263P_PAY (payload);
 
-  rtph263ppay->first_timestamp = GST_BUFFER_TIMESTAMP (buffer);
+  rtph263ppay->first_timestamp = GST_BUFFER_PTS (buffer);
   rtph263ppay->first_duration = GST_BUFFER_DURATION (buffer);
 
   /* we always encode and flush a full picture */

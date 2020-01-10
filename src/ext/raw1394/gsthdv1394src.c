@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 /**
  * SECTION:element-hdv1394src
@@ -152,12 +152,10 @@ gst_hdv1394src_class_init (GstHDV1394SrcClass * klass)
           "like 0xhhhhhhhhhhhhhhhh. (0 = no guid)", 0, G_MAXUINT64,
           DEFAULT_GUID, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
   /**
-   * GstHDV1394Src:device-name
+   * GstHDV1394Src:device-name:
    *
    * Descriptive name of the currently opened device
-   *
-   * Since: 0.10.7
-   **/
+   */
   g_object_class_install_property (G_OBJECT_CLASS (klass), PROP_DEVICE_NAME,
       g_param_spec_string ("device-name", "device name",
           "user-friendly name of the device", "Default",
@@ -170,8 +168,7 @@ gst_hdv1394src_class_init (GstHDV1394SrcClass * klass)
 
   gstpushsrc_class->create = gst_hdv1394src_create;
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&src_factory));
+  gst_element_class_add_static_pad_template (gstelement_class, &src_factory);
 
   gst_element_class_set_static_metadata (gstelement_class,
       "Firewire (1394) HDV video source", "Source/Video",
@@ -529,8 +526,12 @@ gst_hdv1394src_start (GstBaseSrc * bsrc)
   READ_SOCKET (src) = control_sock[0];
   WRITE_SOCKET (src) = control_sock[1];
 
-  fcntl (READ_SOCKET (src), F_SETFL, O_NONBLOCK);
-  fcntl (WRITE_SOCKET (src), F_SETFL, O_NONBLOCK);
+  if (fcntl (READ_SOCKET (src), F_SETFL, O_NONBLOCK) < 0)
+    GST_ERROR_OBJECT (src, "failed to make read socket non-blocking: %s",
+        g_strerror (errno));
+  if (fcntl (WRITE_SOCKET (src), F_SETFL, O_NONBLOCK) < 0)
+    GST_ERROR_OBJECT (src, "failed to make write socket non-blocking: %s",
+        g_strerror (errno));
 
   src->handle = raw1394_new_handle ();
 
@@ -561,6 +562,22 @@ gst_hdv1394src_start (GstBaseSrc * bsrc)
 
   raw1394_set_userdata (src->handle, src);
   raw1394_set_bus_reset_handler (src->handle, gst_hdv1394src_bus_reset);
+
+  {
+    nodeid_t m_node = (src->avc_node | 0xffc0);
+    int m_channel = -1;
+    int m_bandwidth = 0;
+    int m_outputPort = -1;
+    int m_inputPort = -1;
+
+    m_channel = iec61883_cmp_connect (src->handle, m_node, &m_outputPort,
+        raw1394_get_local_id (src->handle), &m_inputPort, &m_bandwidth);
+
+    if (m_channel >= 0) {
+      src->channel = m_channel;
+    }
+  }
+
 
   if ((src->iec61883mpeg2 =
           iec61883_mpeg2_recv_init (src->handle,

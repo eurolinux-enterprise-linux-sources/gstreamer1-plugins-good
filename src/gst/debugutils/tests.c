@@ -16,8 +16,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -158,7 +158,8 @@ timedur_add (gpointer test, GstBuffer * buffer)
 
   if (GST_BUFFER_TIMESTAMP_IS_VALID (buffer) &&
       GST_CLOCK_TIME_IS_VALID (t->expected)) {
-    t->diff += labs (GST_BUFFER_TIMESTAMP (buffer) - t->expected);
+    t->diff +=
+        ABS (GST_CLOCK_DIFF (t->expected, GST_BUFFER_TIMESTAMP (buffer)));
     t->count++;
   }
   if (GST_BUFFER_TIMESTAMP_IS_VALID (buffer) &&

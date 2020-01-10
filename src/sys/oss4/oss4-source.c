@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
@@ -31,8 +31,6 @@
  * Ogg/Vorbis file (this will only work if your mixer settings are right
  * and the right inputs areenabled etc.)
  * </refsect2>
- *
- * Since: 0.10.7
  */
 
 /* FIXME: make sure we're not doing ioctls from the app thread (e.g. via the

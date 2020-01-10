@@ -1,5 +1,9 @@
+GDatagramBased GObject
 GIcon GObject
 GInitable GObject
+GLoadableIcon GIcon GObject
+GProxyResolver GObject
+GSocketConnectable GObject
 GstChildProxy GObject
 GstChildProxy GstObject
 GstColorBalance GstImplementsInterface GstElement

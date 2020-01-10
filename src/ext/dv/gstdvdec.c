@@ -14,8 +14,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
@@ -34,8 +34,6 @@
  * gst-launch-1.0 filesrc location=test.dv ! dvdemux name=demux ! dvdec ! xvimagesink
  * ]| This pipeline decodes and renders the raw DV stream to a videosink.
  * </refsect2>
- *
- * Last reviewed on 2006-02-28 (0.10.3)
  */
 
 #ifdef HAVE_CONFIG_H
@@ -60,15 +58,15 @@
 #define PAL_FRAMERATE_NUMERATOR 25
 #define PAL_FRAMERATE_DENOMINATOR 1
 
-#define PAL_NORMAL_PAR_X        59
-#define PAL_NORMAL_PAR_Y        54
-#define PAL_WIDE_PAR_X          118
-#define PAL_WIDE_PAR_Y          81
+#define PAL_NORMAL_PAR_X        16
+#define PAL_NORMAL_PAR_Y        15
+#define PAL_WIDE_PAR_X          64
+#define PAL_WIDE_PAR_Y          45
 
-#define NTSC_NORMAL_PAR_X       10
-#define NTSC_NORMAL_PAR_Y       11
-#define NTSC_WIDE_PAR_X         40
-#define NTSC_WIDE_PAR_Y         33
+#define NTSC_NORMAL_PAR_X       8
+#define NTSC_NORMAL_PAR_Y       9
+#define NTSC_WIDE_PAR_X         32
+#define NTSC_WIDE_PAR_Y         27
 
 #define DV_DEFAULT_QUALITY DV_QUALITY_BEST
 #define DV_DEFAULT_DECODE_NTH 1
@@ -176,10 +174,8 @@ gst_dvdec_class_init (GstDVDecClass * klass)
 
   gstelement_class->change_state = GST_DEBUG_FUNCPTR (gst_dvdec_change_state);
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&sink_temp));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&src_temp));
+  gst_element_class_add_static_pad_template (gstelement_class, &sink_temp);
+  gst_element_class_add_static_pad_template (gstelement_class, &src_temp);
 
   gst_element_class_set_static_metadata (gstelement_class, "DV video decoder",
       "Codec/Decoder/Video",
@@ -368,15 +364,24 @@ gst_dvdec_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
   switch (GST_EVENT_TYPE (event)) {
     case GST_EVENT_FLUSH_STOP:
       gst_segment_init (&dvdec->segment, GST_FORMAT_UNDEFINED);
+      dvdec->need_segment = FALSE;
       break;
     case GST_EVENT_SEGMENT:{
       const GstSegment *segment;
 
       gst_event_parse_segment (event, &segment);
 
-      GST_DEBUG_OBJECT (dvdec, "Got NEWSEGMENT %" GST_SEGMENT_FORMAT, &segment);
+      GST_DEBUG_OBJECT (dvdec, "Got SEGMENT %" GST_SEGMENT_FORMAT, &segment);
 
       gst_segment_copy_into (segment, &dvdec->segment);
+      if (!gst_pad_has_current_caps (dvdec->srcpad)) {
+        dvdec->need_segment = TRUE;
+        gst_event_unref (event);
+        event = NULL;
+        res = TRUE;
+      } else {
+        dvdec->need_segment = FALSE;
+      }
       break;
     }
     case GST_EVENT_CAPS:
@@ -384,10 +389,9 @@ gst_dvdec_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
       GstCaps *caps;
 
       gst_event_parse_caps (event, &caps);
-      gst_dvdec_sink_setcaps (dvdec, caps);
+      res = gst_dvdec_sink_setcaps (dvdec, caps);
       gst_event_unref (event);
       event = NULL;
-      res = TRUE;
       break;
     }
 
@@ -413,7 +417,7 @@ gst_dvdec_chain (GstPad * pad, GstObject * parent, GstBuffer * buf)
   GstBuffer *outbuf;
   GstFlowReturn ret = GST_FLOW_OK;
   guint length;
-  guint64 cstart, cstop;
+  guint64 cstart = GST_CLOCK_TIME_NONE, cstop = GST_CLOCK_TIME_NONE;
   gboolean PAL, wide;
 
   dvdec = GST_DVDEC (parent);
@@ -473,8 +477,16 @@ gst_dvdec_chain (GstPad * pad, GstObject * parent, GstBuffer * buf)
     GstCaps *caps;
 
     caps = gst_pad_get_current_caps (dvdec->srcpad);
+    if (!caps)
+      goto not_negotiated;
+
     gst_dvdec_negotiate_pool (dvdec, caps, &dvdec->vinfo);
     gst_caps_unref (caps);
+  }
+
+  if (dvdec->need_segment) {
+    gst_pad_push_event (dvdec->srcpad, gst_event_new_segment (&dvdec->segment));
+    dvdec->need_segment = FALSE;
   }
 
   ret = gst_buffer_pool_acquire_buffer (dvdec->pool, &outbuf, NULL);
@@ -505,8 +517,15 @@ gst_dvdec_chain (GstPad * pad, GstObject * parent, GstBuffer * buf)
 
   GST_BUFFER_OFFSET (outbuf) = GST_BUFFER_OFFSET (buf);
   GST_BUFFER_OFFSET_END (outbuf) = GST_BUFFER_OFFSET_END (buf);
-  GST_BUFFER_TIMESTAMP (outbuf) = cstart;
-  GST_BUFFER_DURATION (outbuf) = cstop - cstart;
+
+  /* FIXME : Compute values when using non-TIME segments,
+   * but for the moment make sure we at least don't set bogus values
+   */
+  if (GST_CLOCK_TIME_IS_VALID (cstart)) {
+    GST_BUFFER_TIMESTAMP (outbuf) = cstart;
+    if (GST_CLOCK_TIME_IS_VALID (cstop))
+      GST_BUFFER_DURATION (outbuf) = cstop - cstart;
+  }
 
   ret = gst_pad_push (dvdec->srcpad, outbuf);
 
@@ -573,6 +592,7 @@ gst_dvdec_change_state (GstElement * element, GstStateChange transition)
       gst_segment_init (&dvdec->segment, GST_FORMAT_UNDEFINED);
       dvdec->src_negotiated = FALSE;
       dvdec->sink_negotiated = FALSE;
+      dvdec->need_segment = FALSE;
       /* 
        * Enable this function call when libdv2 0.100 or higher is more
        * common

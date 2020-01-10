@@ -1,5 +1,5 @@
 /* GStreamer GdkPixbuf overlay
- * Copyright (C) 2012 Tim-Philipp Müller <tim centricular net>
+ * Copyright (C) 2012-2014 Tim-Philipp Müller <tim centricular net>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifndef _GST_GDK_PIXBUF_OVERLAY_H_
@@ -37,6 +37,11 @@ G_BEGIN_DECLS
 typedef struct _GstGdkPixbufOverlay GstGdkPixbufOverlay;
 typedef struct _GstGdkPixbufOverlayClass GstGdkPixbufOverlayClass;
 
+typedef enum {
+  GST_GDK_PIXBUF_POSITIONING_PIXELS_RELATIVE_TO_EDGES,
+  GST_GDK_PIXBUF_POSITIONING_PIXELS_ABSOLUTE
+} GstGdkPixbufPositioningMode;
+
 /**
  * GstGdkPixbufOverlay:
  *
@@ -49,11 +54,16 @@ struct _GstGdkPixbufOverlay
   /* properties */
   gchar                      * location;
 
+  /* pixbuf set via pixbuf property */
+  GdkPixbuf                  * pixbuf;
+
   gint                         offset_x;
   gint                         offset_y;
 
   gdouble                      relative_x;
   gdouble                      relative_y;
+
+  GstGdkPixbufPositioningMode  positioning_mode;
 
   gint                         overlay_width;
   gint                         overlay_height;
@@ -61,7 +71,7 @@ struct _GstGdkPixbufOverlay
   gdouble                      alpha;
 
   /* the loaded image, as BGRA/ARGB pixels, with GstVideoMeta */
-  GstBuffer                  * pixels;
+  GstBuffer                  * pixels;               /* OBJECT_LOCK */
 
   GstVideoOverlayComposition * comp;
 

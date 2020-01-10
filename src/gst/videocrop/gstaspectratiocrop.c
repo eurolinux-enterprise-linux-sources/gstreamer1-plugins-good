@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
@@ -50,15 +50,16 @@ GST_DEBUG_CATEGORY_STATIC (aspect_ratio_crop_debug);
 
 enum
 {
-  ARG_0,
-  ARG_ASPECT_RATIO_CROP,
+  PROP_0,
+  PROP_ASPECT_RATIO_CROP,
 };
 
-/* we support the same caps as videocrop */
+/* we support the same caps as videocrop (sync changes) */
 #define ASPECT_RATIO_CROP_CAPS                        \
   GST_VIDEO_CAPS_MAKE ("{ RGBx, xRGB, BGRx, xBGR, "    \
       "RGBA, ARGB, BGRA, ABGR, RGB, BGR, AYUV, YUY2, " \
-      "YVYU, UYVY, I420, RGB16, RGB15, GRAY8 }")
+      "YVYU, UYVY, I420, YV12, RGB16, RGB15, GRAY8, "  \
+      "NV12, NV21, GRAY16_LE, GRAY16_BE }")
 
 static GstStaticPadTemplate src_template = GST_STATIC_PAD_TEMPLATE ("src",
     GST_PAD_SRC,
@@ -151,12 +152,7 @@ static gboolean
 gst_aspect_ratio_crop_sink_event (GstPad * pad, GstObject * parent,
     GstEvent * evt)
 {
-  gboolean ret;
   GstAspectRatioCrop *aspect_ratio_crop = GST_ASPECT_RATIO_CROP (parent);
-
-  ret =
-      aspect_ratio_crop->sinkpad_old_eventfunc (pad, parent,
-      gst_event_ref (evt));
 
   switch (GST_EVENT_TYPE (evt)) {
     case GST_EVENT_CAPS:
@@ -164,15 +160,14 @@ gst_aspect_ratio_crop_sink_event (GstPad * pad, GstObject * parent,
       GstCaps *caps;
 
       gst_event_parse_caps (evt, &caps);
-      ret = gst_aspect_ratio_crop_set_caps (aspect_ratio_crop, caps);
+      gst_aspect_ratio_crop_set_caps (aspect_ratio_crop, caps);
       break;
     }
     default:
       break;
   }
-  gst_event_unref (evt);
 
-  return ret;
+  return gst_pad_event_default (pad, parent, evt);
 }
 
 static void
@@ -188,7 +183,7 @@ gst_aspect_ratio_crop_class_init (GstAspectRatioCropClass * klass)
   gobject_class->get_property = gst_aspect_ratio_crop_get_property;
   gobject_class->finalize = gst_aspect_ratio_crop_finalize;
 
-  g_object_class_install_property (gobject_class, ARG_ASPECT_RATIO_CROP,
+  g_object_class_install_property (gobject_class, PROP_ASPECT_RATIO_CROP,
       gst_param_spec_fraction ("aspect-ratio", "aspect-ratio",
           "Target aspect-ratio of video", 0, 1, G_MAXINT, 1, 0, 1,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
@@ -198,10 +193,8 @@ gst_aspect_ratio_crop_class_init (GstAspectRatioCropClass * klass)
       "Crops video into a user-defined aspect-ratio",
       "Thijs Vermeir <thijsvermeir@gmail.com>");
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&sink_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&src_template));
+  gst_element_class_add_static_pad_template (element_class, &sink_template);
+  gst_element_class_add_static_pad_template (element_class, &src_template);
 }
 
 static void
@@ -252,8 +245,6 @@ gst_aspect_ratio_crop_init (GstAspectRatioCrop * aspect_ratio_crop)
       aspect_ratio_crop->sink);
   gst_object_unref (link_pad);
 
-  aspect_ratio_crop->sinkpad_old_eventfunc =
-      GST_PAD_EVENTFUNC (aspect_ratio_crop->sink);
   gst_pad_set_event_function (aspect_ratio_crop->sink,
       GST_DEBUG_FUNCPTR (gst_aspect_ratio_crop_sink_event));
 }
@@ -455,7 +446,7 @@ gst_aspect_ratio_crop_set_property (GObject * object, guint prop_id,
 
   GST_OBJECT_LOCK (aspect_ratio_crop);
   switch (prop_id) {
-    case ARG_ASPECT_RATIO_CROP:
+    case PROP_ASPECT_RATIO_CROP:
       if (GST_VALUE_HOLDS_FRACTION (value)) {
         aspect_ratio_crop->ar_num = gst_value_get_fraction_numerator (value);
         aspect_ratio_crop->ar_denom =
@@ -471,8 +462,10 @@ gst_aspect_ratio_crop_set_property (GObject * object, guint prop_id,
 
   if (recheck) {
     GstCaps *caps = gst_pad_get_current_caps (aspect_ratio_crop->sink);
-    gst_aspect_ratio_crop_set_caps (aspect_ratio_crop, caps);
-    gst_caps_unref (caps);
+    if (caps != NULL) {
+      gst_aspect_ratio_crop_set_caps (aspect_ratio_crop, caps);
+      gst_caps_unref (caps);
+    }
   }
 }
 
@@ -486,7 +479,7 @@ gst_aspect_ratio_crop_get_property (GObject * object, guint prop_id,
 
   GST_OBJECT_LOCK (aspect_ratio_crop);
   switch (prop_id) {
-    case ARG_ASPECT_RATIO_CROP:
+    case PROP_ASPECT_RATIO_CROP:
       gst_value_set_fraction (value, aspect_ratio_crop->ar_num,
           aspect_ratio_crop->ar_denom);
       break;

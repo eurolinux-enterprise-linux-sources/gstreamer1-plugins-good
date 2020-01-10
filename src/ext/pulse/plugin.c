@@ -15,7 +15,7 @@
  *
  *  You should have received a copy of the GNU Lesser General Public
  *  License along with gst-pulse; if not, write to the Free Software
- *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
+ *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301
  *  USA.
  */
 
@@ -27,6 +27,7 @@
 
 #include "pulsesink.h"
 #include "pulsesrc.h"
+#include "pulsedeviceprovider.h"
 
 GST_DEBUG_CATEGORY (pulse_debug);
 
@@ -46,6 +47,10 @@ plugin_init (GstPlugin * plugin)
 
   if (!gst_element_register (plugin, "pulsesrc", GST_RANK_PRIMARY + 10,
           GST_TYPE_PULSESRC))
+    return FALSE;
+
+  if (!gst_device_provider_register (plugin, "pulsedeviceprovider",
+          GST_RANK_PRIMARY, GST_TYPE_PULSE_DEVICE_PROVIDER))
     return FALSE;
 
   GST_DEBUG_CATEGORY_INIT (pulse_debug, "pulse", 0, "PulseAudio elements");

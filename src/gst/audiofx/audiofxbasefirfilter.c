@@ -17,8 +17,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  * 
  */
 
@@ -110,13 +110,13 @@ process_##channels##_##width (GstAudioFXBaseFIRFilter * self, const g##ctype * s
   gint off; \
   gdouble *buffer = self->buffer; \
   gdouble *kernel = self->kernel; \
-  guint buffer_length = self->buffer_length; \
   \
   if (!buffer) { \
-    self->buffer_length = buffer_length = kernel_length * channels; \
+    self->buffer_length = kernel_length * channels; \
     self->buffer = buffer = g_new0 (gdouble, self->buffer_length); \
   } \
   \
+  input_samples *= channels; \
   /* convolution */ \
   for (i = 0; i < input_samples; i++) { \
     dst[i] = 0.0; \
@@ -156,7 +156,7 @@ process_##channels##_##width (GstAudioFXBaseFIRFilter * self, const g##ctype * s
   if (self->buffer_fill > kernel_length) \
     self->buffer_fill = kernel_length; \
   \
-  return input_samples; \
+  return input_samples / channels; \
 } G_STMT_END
 
 DEFINE_PROCESS_FUNC (32, float);
@@ -543,12 +543,10 @@ gst_audio_fx_base_fir_filter_class_init (GstAudioFXBaseFIRFilterClass * klass)
   gobject_class->get_property = gst_audio_fx_base_fir_filter_get_property;
 
   /**
-   * GstAudioFXBaseFIRFilter::low-latency:
+   * GstAudioFXBaseFIRFilter:low-latency:
    *
    * Work in low-latency mode. This mode is much slower for large filter sizes
    * but the latency is always only the pre-latency of the filter.
-   *
-   * Since: 0.10.18
    */
   g_object_class_install_property (gobject_class, PROP_LOW_LATENCY,
       g_param_spec_boolean ("low-latency", "Low latency",
@@ -558,14 +556,12 @@ gst_audio_fx_base_fir_filter_class_init (GstAudioFXBaseFIRFilterClass * klass)
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
   /**
-   * GstAudioFXBaseFIRFilter::drain-on-changes:
+   * GstAudioFXBaseFIRFilter:drain-on-changes:
    *
    * Whether the filter should be drained when its coeficients change
    *
    * Note: Currently this only works if the kernel size is not changed!
    * Support for drainless kernel size changes will be added in the future.
-   *
-   * Since: 0.10.18
    */
   g_object_class_install_property (gobject_class, PROP_DRAIN_ON_CHANGES,
       g_param_spec_boolean ("drain-on-changes", "Drain on changes",
@@ -835,7 +831,7 @@ gst_audio_fx_base_fir_filter_transform (GstBaseTransform * base,
   if (GST_BUFFER_IS_DISCONT (inbuf)
       || (GST_CLOCK_TIME_IS_VALID (expected_timestamp)
           && (ABS (GST_CLOCK_DIFF (timestamp,
-                      expected_timestamp) > 5 * GST_MSECOND)))) {
+                      expected_timestamp)) > 5 * GST_MSECOND))) {
     GST_DEBUG_OBJECT (self, "Discontinuity detected - flushing");
     if (GST_CLOCK_TIME_IS_VALID (expected_timestamp))
       gst_audio_fx_base_fir_filter_push_residue (self);

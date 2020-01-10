@@ -1,17 +1,17 @@
 # Slovenian translation for gst-plugins-good.
 # This file is distributed under the same license as the gst-plugins-good package.
-# Copyright (C) 2005 - 2013 Free Software Foundation, Inc.
+# Copyright (C) 2005 - 2014 Free Software Foundation, Inc.
 #
 # Robert Horvat <robi@hipnos.net>, 2010.
 # Matej Urbančič <matej.urban@gmail.com>, 2010 - 2011.
-# Klemen Košir <klemen913@gmail.com>, 2012 - 2013.
+# Klemen Košir <klemen913@gmail.com>, 2012 - 2014.
 #
 msgid ""
 msgstr ""
-"Project-Id-Version: gst-plugins-good-1.0.3\n"
+"Project-Id-Version: gst-plugins-good-1.2.1\n"
 "Report-Msgid-Bugs-To: http://bugzilla.gnome.org/\n"
-"POT-Creation-Date: 2013-04-26 12:50+0200\n"
-"PO-Revision-Date: 2013-01-05 10:03+0100\n"
+"POT-Creation-Date: 2017-02-23 15:16+0200\n"
+"PO-Revision-Date: 2014-04-09 22:52+0100\n"
 "Last-Translator: Klemen Košir <klemen913@gmail.com>\n"
 "Language-Team: Slovenian <translation-team-sl@lists.sourceforge.net>\n"
 "Language: sl\n"
@@ -21,16 +21,22 @@ msgstr ""
 "Plural-Forms: nplurals=4; plural=(n%100==1 ? 1 : n%100==2 ? 2 : n%100==3 || n"
 "%100==4 ? 3 : 0);\n"
 
+msgid "Jack server not found"
+msgstr "Strežnika JACK ni mogoče najti"
+
+msgid "Failed to decode JPEG image"
+msgstr "Napaka med dekodiranjem JPEG slike"
+
 #. TRANSLATORS: 'song title' by 'artist name'
 #, c-format
 msgid "'%s' by '%s'"
 msgstr "'%s' izvajalca '%s'"
 
-msgid "Failed to decode JPEG image"
-msgstr "Napaka med dekodiranjem JPEG slike"
-
 msgid "Could not connect to server"
 msgstr "Ni se mogoče povezati s strežnikom"
+
+msgid "No URL set."
+msgstr "Ni nastavljenega naslova URL."
 
 msgid "Server does not support seeking."
 msgstr "Strežnik ne podpira iskanja."
@@ -44,19 +50,14 @@ msgstr "Ni mogoče vzpostaviti povezave s strežnikom."
 msgid "Secure connection setup failed."
 msgstr "Nastavitev varne povezave je spodletela."
 
+#, fuzzy
 msgid ""
-"A network error occured, or the server closed the connection unexpectedly."
+"A network error occurred, or the server closed the connection unexpectedly."
 msgstr ""
 "Prišlo je do omrežne napake ali pa je povezava nepričakovano prekinjena."
 
 msgid "Server sent bad data."
 msgstr "Strežnik je poslal slabe podatke."
-
-msgid "No URL set."
-msgstr "Ni nastavljenega naslova URL."
-
-msgid "Internal data stream error."
-msgstr "Notranja napaka pretoka podatkov."
 
 msgid "No or invalid input audio, AVI stream will be corrupt."
 msgstr "Napaka vhodnega zvoka, AVI pretok bo pokvarjen."
@@ -67,11 +68,14 @@ msgstr "Datoteka ne vsebuje pretokov za predvajanje."
 msgid "This file is invalid and cannot be played."
 msgstr "Datoteka je napačna, zato je ni mogoče predvajati."
 
+msgid "Cannot play stream because it is encrypted with PlayReady DRM."
+msgstr "Pretoka ni mogoče predvajati, ker je šifriran s PlayReady DRM."
+
 msgid "This file is corrupt and cannot be played."
 msgstr "Datoteka je pokvarjena, zato je ni mogoče predvajati."
 
 msgid "Invalid atom size."
-msgstr "Neveljavna velikost atoma"
+msgstr "Neveljavna velikost atoma."
 
 msgid "This file is incomplete and cannot be played."
 msgstr "Datoteka ni popolna, zato je ni mogoče predvajati."
@@ -99,9 +103,6 @@ msgstr ""
 "protokolov prenosa, oziroma manjka ustrezen vstavek GStreamer RTSP "
 "razširitve."
 
-msgid "Internal data flow error."
-msgstr "Notranja napaka pretoka podatkov."
-
 msgid ""
 "Could not open audio device for playback. Device is being used by another "
 "application."
@@ -120,16 +121,6 @@ msgid "Could not open audio device for playback."
 msgstr "Ni mogoče odpreti zvočne naprave za predvajanje."
 
 msgid ""
-"Could not open audio device for recording. You don't have permission to open "
-"the device."
-msgstr ""
-"Ni mogoče odpreti zvočne naprave za snemanje. Ni ustreznih dovoljenj za "
-"odpiranje naprave."
-
-msgid "Could not open audio device for recording."
-msgstr "Ni mogoče odpreti zvočne naprave za snemanje."
-
-msgid ""
 "Could not open audio device for playback. This version of the Open Sound "
 "System is not supported by this element."
 msgstr ""
@@ -139,13 +130,56 @@ msgid "Playback is not supported by this audio device."
 msgstr "Predvajane s to zvočno napravo ni podprto."
 
 msgid "Audio playback error."
-msgstr "Napaka predvajanja zvoka"
+msgstr "Med predvajanjem zvoka je prišlo do napake."
 
 msgid "Recording is not supported by this audio device."
 msgstr "Snemanje s to zvočno napravo ni podprto."
 
 msgid "Error recording from audio device."
 msgstr "Napaka med shranjevanjem preko zvočne naprave"
+
+msgid ""
+"Could not open audio device for recording. You don't have permission to open "
+"the device."
+msgstr ""
+"Zvočne naprave ni mogoče odpreti za snemanje. Ni ustreznih dovoljenj za "
+"odpiranje naprave."
+
+msgid "Could not open audio device for recording."
+msgstr "Zvočne naprave ni mogoče odpreti za snemanje."
+
+msgid "CoreAudio device not found"
+msgstr ""
+
+msgid "CoreAudio device could not be opened"
+msgstr ""
+
+msgid "Record Source"
+msgstr "Vir snemanja"
+
+msgid "Microphone"
+msgstr "Mikrofon"
+
+msgid "Line In"
+msgstr "Analogni vhod"
+
+msgid "Internal CD"
+msgstr "Notranji CD"
+
+msgid "SPDIF In"
+msgstr "Vhod SPDIF"
+
+msgid "AUX 1 In"
+msgstr "Vhod AUX 1"
+
+msgid "AUX 2 In"
+msgstr "Vhod AUX 2"
+
+msgid "Codec Loopback"
+msgstr "Povratna zanka kodeka"
+
+msgid "SunVTS Loopback"
+msgstr "Povratna zanka SunVTS"
 
 msgid "Volume"
 msgstr "Glasnost"
@@ -169,10 +203,10 @@ msgid "SPDIF Out"
 msgstr "Izhod SPDIF"
 
 msgid "AUX 1 Out"
-msgstr "AUX 1 izhod"
+msgstr "Izhod AUX 1"
 
 msgid "AUX 2 Out"
-msgstr "AUX 2 izhod"
+msgstr "Izhod AUX 2"
 
 #, c-format
 msgid "Error reading %d bytes from device '%s'."
@@ -197,10 +231,6 @@ msgid "The driver of device '%s' does not support any known IO method."
 msgstr "Gonilnik naprave \"%s\" ne podpira nobenega znanega načina I/O."
 
 #, c-format
-msgid "Device '%s' does not support video capture"
-msgstr "Naprava \"%s\" ne podpira zajemanja videa."
-
-#, c-format
 msgid "Device '%s' is busy"
 msgstr "Naprava \"%s\" je zaposlena."
 
@@ -212,6 +242,10 @@ msgstr "Naprava \"%s\" ne podpira zajemanja v ločljivosti %dx%d."
 msgid "Device '%s' cannot capture in the specified format"
 msgstr "Naprava \"%s\" ne podpira zajemanja v izbrani obliki."
 
+#, fuzzy, c-format
+msgid "Device '%s' does support non-contiguous planes"
+msgstr "Naprava \"%s\" ne podpira zajemanja videa."
+
 #, c-format
 msgid "Could not get parameters on device '%s'"
 msgstr "Ni mogoče pridobiti parametrov na napravi '%s'."
@@ -219,8 +253,31 @@ msgstr "Ni mogoče pridobiti parametrov na napravi '%s'."
 msgid "Video device did not accept new frame rate setting."
 msgstr "Napravi ni mogoče določiti novih nastavitev hitrosti sličic."
 
-msgid "Video device could not create buffer pool."
+#, fuzzy
+msgid "Video device did not provide output format."
+msgstr "Napravi ni mogoče določiti novih nastavitev hitrosti sličic."
+
+msgid "Video device returned invalid dimensions."
+msgstr ""
+
+#, fuzzy
+msgid "Video device uses an unsupported interlacing method."
+msgstr "Gonilnik naprave \"%s\" ne podpira nobenega načina I/O %d."
+
+#, fuzzy
+msgid "Video device uses an unsupported pixel format."
+msgstr "Gonilnik naprave \"%s\" ne podpira nobenega načina I/O %d."
+
+#, fuzzy
+msgid "Failed to configure internal buffer pool."
 msgstr "Naprava ne more ustvariti zaloge medpomnilnika."
+
+#, fuzzy
+msgid "Video device did not suggest any buffer size."
+msgstr "Naprava ne more ustvariti zaloge medpomnilnika."
+
+msgid "No downstream pool to import from."
+msgstr ""
 
 #, c-format
 msgid "Failed to get settings of tuner %d on device '%s'."
@@ -249,6 +306,35 @@ msgid "Failed to change mute state for device '%s'."
 msgstr ""
 "Med nastavljanjem stanja glasnosti na napravi \"%s\" je prišlo do napake."
 
+msgid "Failed to allocated required memory."
+msgstr ""
+
+msgid "Failed to allocate required memory."
+msgstr ""
+
+#, fuzzy, c-format
+msgid "Converter on device %s has no supported input format"
+msgstr "Gonilnik naprave \"%s\" ne podpira nobenega načina I/O %d."
+
+#, fuzzy, c-format
+msgid "Converter on device %s has no supported output format"
+msgstr "Napravi ni mogoče določiti novih nastavitev hitrosti sličic."
+
+#, fuzzy, c-format
+msgid "Encoder on device %s has no supported input format"
+msgstr "Napravi ni mogoče določiti novih nastavitev hitrosti sličic."
+
+#, fuzzy, c-format
+msgid "Encoder on device %s has no supported output format"
+msgstr "Napravi ni mogoče določiti novih nastavitev hitrosti sličic."
+
+#, fuzzy
+msgid "Failed to start decoding thread."
+msgstr "Napaka med dekodiranjem JPEG slike"
+
+msgid "Failed to process frame."
+msgstr ""
+
 #, c-format
 msgid ""
 "Error getting capabilities for device '%s': It isn't a v4l2 driver. Check if "
@@ -275,11 +361,11 @@ msgstr "Napaka med pridobivanjem atributov nadzora naprave '%s'."
 
 #, c-format
 msgid "Cannot identify device '%s'."
-msgstr "Ni mogoče določiti naprave '%s'."
+msgstr "Naprave \"%s\" ni mogoče določiti."
 
 #, c-format
 msgid "This isn't a device '%s'."
-msgstr "To ni naprava '%s'."
+msgstr "To ni naprava \"%s\"."
 
 #, c-format
 msgid "Could not open device '%s' for reading and writing."
@@ -293,9 +379,17 @@ msgstr "Naprava '%s' ni naprava za zajemanje."
 msgid "Device '%s' is not a output device."
 msgstr "Naprava '%s' ni izhodna naprava."
 
+#, fuzzy, c-format
+msgid "Device '%s' is not a M2M device."
+msgstr "Naprava '%s' ni izhodna naprava."
+
+#, fuzzy, c-format
+msgid "Could not dup device '%s' for reading and writing."
+msgstr "Ni mogoče odpreti naprave '%s' za branje in pisanje."
+
 #, c-format
 msgid "Failed to set norm for device '%s'."
-msgstr "Napaka med nastavljanjem naprave '%s'."
+msgstr "Med nastavljanjem naprave \"%s\" je prišlo do napake."
 
 #, c-format
 msgid "Failed to get current tuner frequency for device '%s'."
@@ -340,3 +434,12 @@ msgstr "Spreminjanje ločljivosti med delovanjem še ni podprto."
 
 msgid "Cannot operate without a clock"
 msgstr "Izvajanje opravil brez ure ni mogoče"
+
+#~ msgid "Internal data stream error."
+#~ msgstr "Notranja napaka pretoka podatkov."
+
+#~ msgid "Internal data flow error."
+#~ msgstr "Notranja napaka pretoka podatkov."
+
+#~ msgid "Device '%s' does not support video capture"
+#~ msgstr "Naprava \"%s\" ne podpira zajemanja videa."

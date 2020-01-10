@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -25,6 +25,7 @@
 
 #include <string.h>
 #include "gstrtpmp2tdepay.h"
+#include "gstrtputils.h"
 
 /* RtpMP2TDepay signals and args */
 enum
@@ -55,8 +56,8 @@ static GstStaticPadTemplate gst_rtp_mp2t_depay_sink_template =
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS ("application/x-rtp, "
         "media = (string) \"video\", "
-        "payload = (int) " GST_RTP_PAYLOAD_DYNAMIC_STRING ", "
-        "clock-rate = (int) [1, MAX ], " "encoding-name = (string) \"MP2T\";"
+        "clock-rate = (int) [1, MAX ], "
+        "encoding-name = (string) { MP2T, MP2T-ES } ;"
         /* All optional parameters
          *
          * "profile-level-id=[1,MAX]"
@@ -74,7 +75,7 @@ G_DEFINE_TYPE (GstRtpMP2TDepay, gst_rtp_mp2t_depay,
 static gboolean gst_rtp_mp2t_depay_setcaps (GstRTPBaseDepayload * depayload,
     GstCaps * caps);
 static GstBuffer *gst_rtp_mp2t_depay_process (GstRTPBaseDepayload * depayload,
-    GstBuffer * buf);
+    GstRTPBuffer * rtp);
 
 static void gst_rtp_mp2t_depay_set_property (GObject * object, guint prop_id,
     const GValue * value, GParamSpec * pspec);
@@ -92,16 +93,16 @@ gst_rtp_mp2t_depay_class_init (GstRtpMP2TDepayClass * klass)
   gstelement_class = (GstElementClass *) klass;
   gstrtpbasedepayload_class = (GstRTPBaseDepayloadClass *) klass;
 
-  gstrtpbasedepayload_class->process = gst_rtp_mp2t_depay_process;
+  gstrtpbasedepayload_class->process_rtp_packet = gst_rtp_mp2t_depay_process;
   gstrtpbasedepayload_class->set_caps = gst_rtp_mp2t_depay_setcaps;
 
   gobject_class->set_property = gst_rtp_mp2t_depay_set_property;
   gobject_class->get_property = gst_rtp_mp2t_depay_get_property;
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_mp2t_depay_src_template));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_mp2t_depay_sink_template));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_mp2t_depay_src_template);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_mp2t_depay_sink_template);
 
   gst_element_class_set_static_metadata (gstelement_class,
       "RTP MPEG Transport Stream depayloader", "Codec/Depayloader/Network/RTP",
@@ -146,17 +147,15 @@ gst_rtp_mp2t_depay_setcaps (GstRTPBaseDepayload * depayload, GstCaps * caps)
 }
 
 static GstBuffer *
-gst_rtp_mp2t_depay_process (GstRTPBaseDepayload * depayload, GstBuffer * buf)
+gst_rtp_mp2t_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
 {
   GstRtpMP2TDepay *rtpmp2tdepay;
   GstBuffer *outbuf;
   gint payload_len, leftover;
-  GstRTPBuffer rtp = { NULL };
 
   rtpmp2tdepay = GST_RTP_MP2T_DEPAY (depayload);
 
-  gst_rtp_buffer_map (buf, GST_MAP_READ, &rtp);
-  payload_len = gst_rtp_buffer_get_payload_len (&rtp);
+  payload_len = gst_rtp_buffer_get_payload_len (rtp);
 
   if (G_UNLIKELY (payload_len <= rtpmp2tdepay->skip_first_bytes))
     goto empty_packet;
@@ -179,13 +178,15 @@ gst_rtp_mp2t_depay_process (GstRTPBaseDepayload * depayload, GstBuffer * buf)
   }
 
   outbuf =
-      gst_rtp_buffer_get_payload_subbuffer (&rtp,
+      gst_rtp_buffer_get_payload_subbuffer (rtp,
       rtpmp2tdepay->skip_first_bytes, payload_len);
 
-  gst_rtp_buffer_unmap (&rtp);
-  if (outbuf)
+  if (outbuf) {
     GST_DEBUG ("gst_rtp_mp2t_depay_chain: pushing buffer of size %"
         G_GSIZE_FORMAT, gst_buffer_get_size (outbuf));
+
+    gst_rtp_drop_meta (GST_ELEMENT_CAST (depayload), outbuf, 0);
+  }
 
   return outbuf;
 
@@ -194,7 +195,6 @@ empty_packet:
   {
     GST_ELEMENT_WARNING (rtpmp2tdepay, STREAM, DECODE,
         (NULL), ("Packet was empty"));
-    gst_rtp_buffer_unmap (&rtp);
     return NULL;
   }
 }

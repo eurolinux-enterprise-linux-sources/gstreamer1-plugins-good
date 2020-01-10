@@ -15,8 +15,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -66,10 +66,10 @@ gst_rtp_pcma_pay_class_init (GstRtpPcmaPayClass * klass)
   gstelement_class = (GstElementClass *) klass;
   gstrtpbasepayload_class = (GstRTPBasePayloadClass *) klass;
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_pcma_pay_sink_template));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_pcma_pay_src_template));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_pcma_pay_sink_template);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_pcma_pay_src_template);
 
   gst_element_class_set_static_metadata (gstelement_class, "RTP PCMA payloader",
       "Codec/Payloader/Network/RTP",
@@ -86,6 +86,7 @@ gst_rtp_pcma_pay_init (GstRtpPcmaPay * rtppcmapay)
 
   rtpbaseaudiopayload = GST_RTP_BASE_AUDIO_PAYLOAD (rtppcmapay);
 
+  GST_RTP_BASE_PAYLOAD (rtppcmapay)->pt = GST_RTP_PAYLOAD_PCMA;
   GST_RTP_BASE_PAYLOAD (rtppcmapay)->clock_rate = 8000;
 
   /* tell rtpbaseaudiopayload that this is a sample based codec */
@@ -100,9 +101,8 @@ gst_rtp_pcma_pay_setcaps (GstRTPBasePayload * payload, GstCaps * caps)
 {
   gboolean res;
 
-  payload->pt = GST_RTP_PAYLOAD_PCMA;
-
-  gst_rtp_base_payload_set_options (payload, "audio", FALSE, "PCMA", 8000);
+  gst_rtp_base_payload_set_options (payload, "audio",
+      payload->pt != GST_RTP_PAYLOAD_PCMA, "PCMA", 8000);
   res = gst_rtp_base_payload_set_outcaps (payload, NULL);
 
   return res;

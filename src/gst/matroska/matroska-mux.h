@@ -16,8 +16,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifndef __GST_MATROSKA_MUX_H__
@@ -55,6 +55,8 @@ typedef struct _GstMatroskaMetaSeekIndex {
 
 typedef gboolean (*GstMatroskaCapsFunc) (GstPad *pad, GstCaps *caps);
 
+typedef struct _GstMatroskaMux GstMatroskaMux;
+
 /* all information needed for one matroska stream */
 typedef struct
 {
@@ -62,7 +64,10 @@ typedef struct
   GstMatroskaCapsFunc capsfunc;
   GstMatroskaTrackContext *track;
 
-  guint64 duration;
+  GstMatroskaMux *mux;
+
+  GstTagList *tags;
+
   GstClockTime start_ts;
   GstClockTime end_ts;    /* last timestamp + (if available) duration */
   guint64 default_duration_scaled;
@@ -70,7 +75,7 @@ typedef struct
 GstMatroskaPad;
 
 
-typedef struct _GstMatroskaMux {
+struct _GstMatroskaMux {
   GstElement     element;
   
   /* < private > */
@@ -99,7 +104,6 @@ typedef struct _GstMatroskaMux {
   GstMatroskaIndex *index;
   guint          num_indexes;
   GstClockTimeDiff min_index_interval;
-  gboolean       streamable;
  
   /* timescale in the file */
   guint64        time_scale;
@@ -129,7 +133,13 @@ typedef struct _GstMatroskaMux {
 
   /* GstForceKeyUnit event */
   GstEvent       *force_key_unit_event;
-} GstMatroskaMux;
+
+  /* Flag to ease handling of WebM specifics */
+  gboolean is_webm;
+
+  /* used uids */
+  GArray *used_uids;
+};
 
 typedef struct _GstMatroskaMuxClass {
   GstElementClass parent;

@@ -14,8 +14,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -242,10 +242,10 @@ gst_navigationtest_class_init (GstNavigationtestClass * klass)
       "Handle navigation events showing a black square following mouse pointer",
       "David Schleef <ds@schleef.org>");
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_navigationtest_sink_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_navigationtest_src_template));
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_navigationtest_sink_template);
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_navigationtest_src_template);
 
   trans_class->src_event = GST_DEBUG_FUNCPTR (gst_navigationtest_src_event);
 

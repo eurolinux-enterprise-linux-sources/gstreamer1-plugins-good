@@ -14,8 +14,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
@@ -34,8 +34,6 @@
  * ]| Decode an Ogg/Speex file. To create an Ogg/Speex file refer to the
  * documentation of speexenc.
  * </refsect2>
- *
- * Last reviewed on 2006-04-05 (0.10.2)
  */
 
 #ifdef HAVE_CONFIG_H
@@ -116,10 +114,10 @@ gst_speex_dec_class_init (GstSpeexDecClass * klass)
       g_param_spec_boolean ("enh", "Enh", "Enable perceptual enhancement",
           DEFAULT_ENH, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&speex_dec_src_factory));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&speex_dec_sink_factory));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &speex_dec_src_factory);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &speex_dec_sink_factory);
   gst_element_class_set_static_metadata (gstelement_class,
       "Speex audio decoder", "Codec/Decoder/Audio",
       "decode speex streams to audio", "Wim Taymans <wim@fluendo.com>");
@@ -138,6 +136,7 @@ gst_speex_dec_reset (GstSpeexDec * dec)
   free (dec->header);
   dec->header = NULL;
   speex_bits_destroy (&dec->bits);
+  speex_bits_set_bit_buffer (&dec->bits, NULL, 0);
 
   gst_buffer_replace (&dec->streamheader, NULL);
   gst_buffer_replace (&dec->vorbiscomment, NULL);
@@ -156,6 +155,11 @@ gst_speex_dec_reset (GstSpeexDec * dec)
 static void
 gst_speex_dec_init (GstSpeexDec * dec)
 {
+  gst_audio_decoder_set_needs_format (GST_AUDIO_DECODER (dec), TRUE);
+  gst_audio_decoder_set_use_default_pad_acceptcaps (GST_AUDIO_DECODER_CAST
+      (dec), TRUE);
+  GST_PAD_SET_ACCEPT_TEMPLATE (GST_AUDIO_DECODER_SINK_PAD (dec));
+
   dec->enh = DEFAULT_ENH;
 
   gst_speex_dec_reset (dec);
@@ -419,13 +423,7 @@ gst_speex_dec_parse_data (GstSpeexDec * dec, GstBuffer * buf)
 
     if (ret == -1) {
       /* uh? end of stream */
-      if (fpp == 0 && speex_bits_remaining (bits) < 8) {
-        /* if we did not know how many frames to expect, then we get this
-           at the end if there are leftover bits to pad to the next byte */
-        GST_DEBUG_OBJECT (dec, "Discarding leftover bits");
-      } else {
-        GST_WARNING_OBJECT (dec, "Unexpected end of stream found");
-      }
+      GST_WARNING_OBJECT (dec, "Unexpected end of stream found");
       corrupted = TRUE;
     } else if (ret == -2) {
       GST_WARNING_OBJECT (dec, "Decoding error: corrupted stream?");

@@ -15,8 +15,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 /**
  * SECTION:element-spectrum
@@ -90,12 +90,10 @@
  *
  * <refsect2>
  * <title>Example application</title>
- * |[
+ * <informalexample><programlisting language="C">
  * <xi:include xmlns:xi="http://www.w3.org/2003/XInclude" parse="text" href="../../../../tests/examples/spectrum/spectrum-example.c" />
- * ]|
+ * </programlisting></informalexample>
  * </refsect2>
- *
- * Last reviewed on 2011-03-10 (0.10.29)
  */
 
 #ifdef HAVE_CONFIG_H
@@ -176,13 +174,6 @@ gst_spectrum_class_init (GstSpectrumClass * klass)
 
   filter_class->setup = GST_DEBUG_FUNCPTR (gst_spectrum_setup);
 
-  /**
-   * GstSpectrum:post-messages
-   *
-   * Post messages on the bus with spectrum information.
-   *
-   * Since: 0.10.17
-   */
   g_object_class_install_property (gobject_class, PROP_POST_MESSAGES,
       g_param_spec_boolean ("post-messages", "Post Messages",
           "Whether to post a 'spectrum' element message on the bus for each "
@@ -210,7 +201,7 @@ gst_spectrum_class_init (GstSpectrumClass * klass)
 
   g_object_class_install_property (gobject_class, PROP_BANDS,
       g_param_spec_uint ("bands", "Bands", "Number of frequency bands",
-          0, G_MAXUINT, DEFAULT_BANDS,
+          2, ((guint) G_MAXINT + 2) / 2, DEFAULT_BANDS,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
   g_object_class_install_property (gobject_class, PROP_THRESHOLD,
@@ -219,13 +210,6 @@ gst_spectrum_class_init (GstSpectrumClass * klass)
           G_MININT, 0, DEFAULT_THRESHOLD,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
-  /**
-   * GstSpectrum:multi-channel
-   *
-   * Send separate results for each channel
-   *
-   * Since: 0.10.29
-   */
   g_object_class_install_property (gobject_class, PROP_MULTI_CHANNEL,
       g_param_spec_boolean ("multi-channel", "Multichannel results",
           "Send separate results for each channel",
@@ -762,8 +746,7 @@ gst_spectrum_message_new (GstSpectrum * spectrum, GstClockTime timestamp,
             spectrum->bands);
       }
       if (spectrum->message_phase) {
-        gst_spectrum_message_add_array (pcv, cd->spect_magnitude,
-            spectrum->bands);
+        gst_spectrum_message_add_array (pcv, cd->spect_phase, spectrum->bands);
       }
     }
   }

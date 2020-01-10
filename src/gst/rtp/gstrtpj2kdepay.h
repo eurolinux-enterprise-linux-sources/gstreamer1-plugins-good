@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifndef __GST_RTP_J2K_DEPAY_H__
@@ -25,7 +25,6 @@
 #include <gst/rtp/gstrtpbasedepayload.h>
 
 G_BEGIN_DECLS
-
 #define GST_TYPE_RTP_J2K_DEPAY \
   (gst_rtp_j2k_depay_get_type())
 #define GST_RTP_J2K_DEPAY(obj) \
@@ -36,7 +35,6 @@ G_BEGIN_DECLS
   (G_TYPE_CHECK_INSTANCE_TYPE((obj),GST_TYPE_RTP_J2K_DEPAY))
 #define GST_IS_RTP_J2K_DEPAY_CLASS(klass) \
   (G_TYPE_CHECK_CLASS_TYPE((klass),GST_TYPE_RTP_J2K_DEPAY))
-
 typedef struct _GstRtpJ2KDepay GstRtpJ2KDepay;
 typedef struct _GstRtpJ2KDepayClass GstRtpJ2KDepayClass;
 
@@ -71,5 +69,4 @@ GType gst_rtp_j2k_depay_get_type (void);
 gboolean gst_rtp_j2k_depay_plugin_init (GstPlugin * plugin);
 
 G_END_DECLS
-
 #endif /* __GST_RTP_J2K_DEPAY_H__ */

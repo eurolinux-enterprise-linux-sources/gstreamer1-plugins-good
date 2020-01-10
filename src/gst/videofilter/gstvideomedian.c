@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -109,13 +109,12 @@ gst_video_median_class_init (GstVideoMedianClass * klass)
           "luminance", DEFAULT_LUM_ONLY,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&video_median_sink_factory));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&video_median_src_factory));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &video_median_sink_factory);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &video_median_src_factory);
   gst_element_class_set_static_metadata (gstelement_class, "Median effect",
-      "Filter/Effect/Video",
-      "Apply a median filter to an image",
+      "Filter/Effect/Video", "Apply a median filter to an image",
       "Wim Taymans <wim.taymans@gmail.com>");
 
   vfilter_class->transform_frame =

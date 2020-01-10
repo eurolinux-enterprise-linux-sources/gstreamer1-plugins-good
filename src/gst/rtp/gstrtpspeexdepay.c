@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -24,8 +24,10 @@
 #include <string.h>
 #include <stdlib.h>
 #include <gst/rtp/gstrtpbuffer.h>
+#include <gst/audio/audio.h>
 
 #include "gstrtpspeexdepay.h"
+#include "gstrtputils.h"
 
 /* RtpSPEEXDepay signals and args */
 enum
@@ -36,7 +38,7 @@ enum
 
 enum
 {
-  ARG_0
+  PROP_0
 };
 
 static GstStaticPadTemplate gst_rtp_speex_depay_sink_template =
@@ -45,10 +47,9 @@ GST_STATIC_PAD_TEMPLATE ("sink",
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS ("application/x-rtp, "
         "media = (string) \"audio\", "
-        "payload = (int) " GST_RTP_PAYLOAD_DYNAMIC_STRING ", "
         "clock-rate =  (int) [6000, 48000], "
-        "encoding-name = (string) \"SPEEX\", "
-        "encoding-params = (string) \"1\"")
+        "encoding-name = (string) \"SPEEX\"")
+    /*  "encoding-params = (string) \"1\"" */
     );
 
 static GstStaticPadTemplate gst_rtp_speex_depay_src_template =
@@ -59,7 +60,7 @@ GST_STATIC_PAD_TEMPLATE ("src",
     );
 
 static GstBuffer *gst_rtp_speex_depay_process (GstRTPBaseDepayload * depayload,
-    GstBuffer * buf);
+    GstRTPBuffer * rtp);
 static gboolean gst_rtp_speex_depay_setcaps (GstRTPBaseDepayload * depayload,
     GstCaps * caps);
 
@@ -75,13 +76,13 @@ gst_rtp_speex_depay_class_init (GstRtpSPEEXDepayClass * klass)
   gstelement_class = (GstElementClass *) klass;
   gstrtpbasedepayload_class = (GstRTPBaseDepayloadClass *) klass;
 
-  gstrtpbasedepayload_class->process = gst_rtp_speex_depay_process;
+  gstrtpbasedepayload_class->process_rtp_packet = gst_rtp_speex_depay_process;
   gstrtpbasedepayload_class->set_caps = gst_rtp_speex_depay_setcaps;
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_speex_depay_src_template));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_speex_depay_sink_template));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_speex_depay_src_template);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_speex_depay_sink_template);
   gst_element_class_set_static_metadata (gstelement_class,
       "RTP Speex depayloader", "Codec/Depayloader/Network/RTP",
       "Extracts Speex audio from RTP packets",
@@ -196,24 +197,24 @@ no_clockrate:
 }
 
 static GstBuffer *
-gst_rtp_speex_depay_process (GstRTPBaseDepayload * depayload, GstBuffer * buf)
+gst_rtp_speex_depay_process (GstRTPBaseDepayload * depayload,
+    GstRTPBuffer * rtp)
 {
   GstBuffer *outbuf = NULL;
-  GstRTPBuffer rtp = { NULL };
-
-  gst_rtp_buffer_map (buf, GST_MAP_READ, &rtp);
 
   GST_DEBUG ("process : got %" G_GSIZE_FORMAT " bytes, mark %d ts %u seqn %d",
-      gst_buffer_get_size (buf),
-      gst_rtp_buffer_get_marker (&rtp),
-      gst_rtp_buffer_get_timestamp (&rtp), gst_rtp_buffer_get_seq (&rtp));
+      gst_buffer_get_size (rtp->buffer),
+      gst_rtp_buffer_get_marker (rtp),
+      gst_rtp_buffer_get_timestamp (rtp), gst_rtp_buffer_get_seq (rtp));
 
   /* nothing special to be done */
-  outbuf = gst_rtp_buffer_get_payload_buffer (&rtp);
-  gst_rtp_buffer_unmap (&rtp);
+  outbuf = gst_rtp_buffer_get_payload_buffer (rtp);
 
-  if (outbuf)
+  if (outbuf) {
     GST_BUFFER_DURATION (outbuf) = 20 * GST_MSECOND;
+    gst_rtp_drop_meta (GST_ELEMENT_CAST (depayload), outbuf,
+        g_quark_from_static_string (GST_META_TAG_AUDIO_STR));
+  }
 
   return outbuf;
 }

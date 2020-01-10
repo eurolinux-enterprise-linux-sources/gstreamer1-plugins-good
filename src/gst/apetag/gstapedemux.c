@@ -14,8 +14,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
@@ -91,8 +91,7 @@ gst_ape_demux_class_init (GstApeDemuxClass * klass)
       "Read and output APE tags while demuxing the contents",
       "Tim-Philipp Müller <tim centricular net>");
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&sink_factory));
+  gst_element_class_add_static_pad_template (element_class, &sink_factory);
 
   tagdemux_class->identify_tag = GST_DEBUG_FUNCPTR (gst_ape_demux_identify_tag);
   tagdemux_class->parse_tag = GST_DEBUG_FUNCPTR (gst_ape_demux_parse_tag);
@@ -214,7 +213,7 @@ ape_demux_parse_tags (const guint8 * data, gint size)
       while (sp != NULL && (sp2 = strchr (sp + 1, ' ')) != NULL)
         sp = sp2;
       if (sp) {
-        g_memmove (val, sp + 1, strlen (sp + 1) + 1);
+        memmove (val, sp + 1, strlen (sp + 1) + 1);
       }
     }
 

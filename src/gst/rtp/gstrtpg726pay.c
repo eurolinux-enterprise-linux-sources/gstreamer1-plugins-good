@@ -16,8 +16,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -38,8 +38,7 @@ GST_DEBUG_CATEGORY_STATIC (rtpg726pay_debug);
 enum
 {
   PROP_0,
-  PROP_FORCE_AAL2,
-  PROP_LAST
+  PROP_FORCE_AAL2
 };
 
 static GstStaticPadTemplate gst_rtp_g726_pay_sink_template =
@@ -98,10 +97,10 @@ gst_rtp_g726_pay_class_init (GstRtpG726PayClass * klass)
           "Force AAL2 encoding for compatibility with bad depayloaders",
           DEFAULT_FORCE_AAL2, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_g726_pay_sink_template));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_g726_pay_src_template));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_g726_pay_sink_template);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_g726_pay_src_template);
 
   gst_element_class_set_static_metadata (gstelement_class,
       "RTP G.726 payloader", "Codec/Payloader/Network/RTP",
@@ -198,10 +197,12 @@ gst_rtp_g726_pay_setcaps (GstRTPBasePayload * payload, GstCaps * caps)
         "encoding-name = (string) AAL2-%s", encoding_name, encoding_name);
     filter = gst_caps_from_string (capsstr);
     g_free (capsstr);
+    g_free (encoding_name);
 
     /* intersect to filter */
     intersect = gst_caps_intersect (peercaps, filter);
     gst_caps_unref (peercaps);
+    gst_caps_unref (filter);
 
     GST_DEBUG_OBJECT (payload, "intersected to %" GST_PTR_FORMAT, intersect);
 

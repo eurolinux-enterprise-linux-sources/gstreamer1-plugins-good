@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -22,9 +22,11 @@
 #endif
 
 #include <gst/rtp/gstrtpbuffer.h>
+#include <gst/video/video.h>
 
 #include <string.h>
 #include "gstrtpmpvdepay.h"
+#include "gstrtputils.h"
 
 GST_DEBUG_CATEGORY_STATIC (rtpmpvdepay_debug);
 #define GST_CAT_DEFAULT (rtpmpvdepay_debug)
@@ -45,7 +47,6 @@ static GstStaticPadTemplate gst_rtp_mpv_depay_sink_template =
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS ("application/x-rtp, "
         "media = (string) \"video\", "
-        "payload = (int) " GST_RTP_PAYLOAD_DYNAMIC_STRING ", "
         "clock-rate = (int) 90000, " "encoding-name = (string) \"MPV\";"
         "application/x-rtp, "
         "media = (string) \"video\", "
@@ -58,7 +59,7 @@ G_DEFINE_TYPE (GstRtpMPVDepay, gst_rtp_mpv_depay, GST_TYPE_RTP_BASE_DEPAYLOAD);
 static gboolean gst_rtp_mpv_depay_setcaps (GstRTPBaseDepayload * depayload,
     GstCaps * caps);
 static GstBuffer *gst_rtp_mpv_depay_process (GstRTPBaseDepayload * depayload,
-    GstBuffer * buf);
+    GstRTPBuffer * rtp);
 
 static void
 gst_rtp_mpv_depay_class_init (GstRtpMPVDepayClass * klass)
@@ -69,10 +70,10 @@ gst_rtp_mpv_depay_class_init (GstRtpMPVDepayClass * klass)
   gstelement_class = (GstElementClass *) klass;
   gstrtpbasedepayload_class = (GstRTPBaseDepayloadClass *) klass;
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_mpv_depay_src_template));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_mpv_depay_sink_template));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_mpv_depay_src_template);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_mpv_depay_sink_template);
 
   gst_element_class_set_static_metadata (gstelement_class,
       "RTP MPEG video depayloader", "Codec/Depayloader/Network/RTP",
@@ -80,7 +81,7 @@ gst_rtp_mpv_depay_class_init (GstRtpMPVDepayClass * klass)
       "Wim Taymans <wim.taymans@gmail.com>");
 
   gstrtpbasedepayload_class->set_caps = gst_rtp_mpv_depay_setcaps;
-  gstrtpbasedepayload_class->process = gst_rtp_mpv_depay_process;
+  gstrtpbasedepayload_class->process_rtp_packet = gst_rtp_mpv_depay_process;
 
   GST_DEBUG_CATEGORY_INIT (rtpmpvdepay_debug, "rtpmpvdepay", 0,
       "MPEG Video RTP Depayloader");
@@ -115,23 +116,20 @@ gst_rtp_mpv_depay_setcaps (GstRTPBaseDepayload * depayload, GstCaps * caps)
 }
 
 static GstBuffer *
-gst_rtp_mpv_depay_process (GstRTPBaseDepayload * depayload, GstBuffer * buf)
+gst_rtp_mpv_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
 {
   GstRtpMPVDepay *rtpmpvdepay;
-  GstBuffer *outbuf;
-  GstRTPBuffer rtp = { NULL };
+  GstBuffer *outbuf = NULL;
 
   rtpmpvdepay = GST_RTP_MPV_DEPAY (depayload);
-
-  gst_rtp_buffer_map (buf, GST_MAP_READ, &rtp);
 
   {
     gint payload_len, payload_header;
     guint8 *payload;
     guint8 T;
 
-    payload_len = gst_rtp_buffer_get_payload_len (&rtp);
-    payload = gst_rtp_buffer_get_payload (&rtp);
+    payload_len = gst_rtp_buffer_get_payload_len (rtp);
+    payload = gst_rtp_buffer_get_payload (rtp);
     payload_header = 0;
 
     if (payload_len <= 4)
@@ -170,17 +168,19 @@ gst_rtp_mpv_depay_process (GstRTPBaseDepayload * depayload, GstBuffer * buf)
       payload += 4;
     }
 
-    outbuf = gst_rtp_buffer_get_payload_subbuffer (&rtp, payload_header, -1);
+    outbuf = gst_rtp_buffer_get_payload_subbuffer (rtp, payload_header, -1);
 
     if (outbuf) {
       GST_DEBUG_OBJECT (rtpmpvdepay,
           "gst_rtp_mpv_depay_chain: pushing buffer of size %" G_GSIZE_FORMAT,
           gst_buffer_get_size (outbuf));
+      gst_rtp_drop_meta (GST_ELEMENT_CAST (rtpmpvdepay), outbuf,
+          g_quark_from_static_string (GST_META_TAG_VIDEO_STR));
+
     }
-    return outbuf;
   }
 
-  return NULL;
+  return outbuf;
 
   /* ERRORS */
 empty_packet:

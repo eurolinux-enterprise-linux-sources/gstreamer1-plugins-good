@@ -14,8 +14,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  * 
  */
 
@@ -35,9 +35,9 @@
  *
  * <refsect2>
  * <title>Example application</title>
- * |[
+ * <informalexample><programlisting language="C">
  * <xi:include xmlns:xi="http://www.w3.org/2003/XInclude" parse="text" href="../../../../tests/examples/audiofx/iirfilter-example.c" />
- * ]|
+ * </programlisting></informalexample>
  * </refsect2>
  */
 
@@ -186,7 +186,7 @@ static void
 gst_audio_iir_filter_init (GstAudioIIRFilter * self)
 {
   GValue v = { 0, };
-  GValueArray *a, *b;
+  GValueArray *a;
 
   a = g_value_array_new (1);
 
@@ -195,8 +195,7 @@ gst_audio_iir_filter_init (GstAudioIIRFilter * self)
   g_value_array_append (a, &v);
   g_value_unset (&v);
 
-  b = NULL;
-  gst_audio_iir_filter_update_coefficients (self, a, b);
+  gst_audio_iir_filter_update_coefficients (self, a, g_value_array_copy (a));
 
   g_mutex_init (&self->lock);
 }

@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifndef __GST_XIMAGEUTIL_H__
@@ -50,7 +50,6 @@ typedef struct _GstMetaXImage GstMetaXImage;
  * GstXContext:
  * @disp: the X11 Display of this context
  * @screen: the default Screen of Display @disp
- * @screen_num: the Screen number of @screen
  * @visual: the default Visual of Screen @screen
  * @root: the root Window of Display @disp
  * @white: the value of a white pixel on Screen @screen
@@ -78,7 +77,6 @@ struct _GstXContext {
   Display *disp;
 
   Screen *screen;
-  gint screen_num;
 
   Visual *visual;
 
@@ -134,7 +132,7 @@ void ximageutil_calculate_pixel_aspect_ratio (GstXContext * xcontext);
 /* custom ximagesrc buffer, copied from ximagesink */
 
 /* BufferReturnFunc is called when a buffer is finalised */
-typedef void (*BufferReturnFunc) (GstElement *parent, GstBuffer *buf);
+typedef gboolean (*BufferReturnFunc) (GstElement *parent, GstBuffer *buf);
 
 /**
  * GstMetaXImage:

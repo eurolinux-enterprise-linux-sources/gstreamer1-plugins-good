@@ -15,8 +15,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -28,17 +28,7 @@
 #include "ebml-read.h"
 #include "ebml-ids.h"
 
-#include <math.h>
-
-/* NAN is supposed to be in math.h, Microsoft defines it in xmath.h */
-#ifdef _MSC_VER
-#include <xmath.h>
-#endif
-
-/* If everything goes wrong try 0.0/0.0 which should be NAN */
-#ifndef NAN
-#define NAN (0.0 / 0.0)
-#endif
+#include <gst/math-compat.h>
 
 GST_DEBUG_CATEGORY (ebmlread_debug);
 #define GST_CAT_DEFAULT ebmlread_debug
@@ -137,7 +127,10 @@ gst_ebml_peek_id_length (guint32 * _id, guint64 * _length, guint * _needed,
   /* ERRORS */
 peek_error:
   {
-    GST_WARNING_OBJECT (el, "peek failed, ret = %d", ret);
+    if (ret != GST_FLOW_FLUSHING)
+      GST_WARNING_OBJECT (el, "peek failed, ret = %s", gst_flow_get_name (ret));
+    else
+      GST_DEBUG_OBJECT (el, "peek failed, ret = %s", gst_flow_get_name (ret));
     *_needed = needed;
     return ret;
   }
@@ -218,7 +211,7 @@ gst_ebml_peek_id_full (GstEbmlRead * ebml, guint32 * id, guint64 * length,
       gst_ebml_read_get_pos (ebml), *length, *prefix);
 
 #ifndef GST_DISABLE_GST_DEBUG
-  {
+  if (ebmlread_debug->threshold >= GST_LEVEL_LOG) {
     const guint8 *data = NULL;
     GstByteReader *br = gst_ebml_read_br (ebml);
     guint size = gst_byte_reader_get_remaining (br);
@@ -374,7 +367,7 @@ gst_ebml_read_bytes (GstEbmlRead * ebml, guint32 * id, const guint8 ** data,
     return GST_FLOW_ERROR;      /* FIXME: do proper error handling */
 
   *data = NULL;
-  if (G_LIKELY (length >= 0)) {
+  if (G_LIKELY (length > 0)) {
     if (!gst_byte_reader_get_data (gst_ebml_read_br (ebml), length, data))
       return GST_FLOW_PARSE;
   }

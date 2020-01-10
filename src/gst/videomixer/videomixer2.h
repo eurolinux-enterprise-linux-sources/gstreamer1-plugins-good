@@ -14,8 +14,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
  
 #ifndef __GST_VIDEO_MIXER2_H__
@@ -92,8 +92,11 @@ struct _GstVideoMixer2
   /* Output caps */
   GstVideoInfo info;
 
+  /* current caps */
+  GstCaps *current_caps;
+  gboolean send_caps;
+
   gboolean newseg_pending;
-  gboolean flush_stop_pending;
 
   GstVideoMixer2Background background;
 
@@ -110,6 +113,13 @@ struct _GstVideoMixer2
   BlendFunction blend, overlay;
   FillCheckerFunction fill_checker;
   FillColorFunction fill_color;
+
+  gboolean send_stream_start;
+
+  /* latency */
+  gboolean live;
+
+  GstTagList *pending_tags;
 };
 
 struct _GstVideoMixer2Class

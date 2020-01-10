@@ -15,13 +15,15 @@
  *
  *  You should have received a copy of the GNU Lesser General Public
  *  License along with gst-pulse; if not, write to the Free Software
- *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
+ *  Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301
  *  USA.
  */
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
+
+#include <gst/audio/audio.h>
 
 #include "pulseutil.h"
 
@@ -144,12 +146,10 @@ gst_pulse_fill_format_info (GstAudioRingBufferSpec * spec, pa_format_info ** f,
 
   format = pa_format_info_new ();
 
-  if (spec->type == GST_AUDIO_RING_BUFFER_FORMAT_TYPE_MU_LAW
-      && GST_AUDIO_INFO_WIDTH (ainfo) == 8) {
+  if (spec->type == GST_AUDIO_RING_BUFFER_FORMAT_TYPE_MU_LAW) {
     format->encoding = PA_ENCODING_PCM;
     sf = PA_SAMPLE_ULAW;
-  } else if (spec->type == GST_AUDIO_RING_BUFFER_FORMAT_TYPE_A_LAW
-      && GST_AUDIO_INFO_WIDTH (ainfo) == 8) {
+  } else if (spec->type == GST_AUDIO_RING_BUFFER_FORMAT_TYPE_A_LAW) {
     format->encoding = PA_ENCODING_PCM;
     sf = PA_SAMPLE_ALAW;
   } else if (spec->type == GST_AUDIO_RING_BUFFER_FORMAT_TYPE_RAW) {
@@ -164,6 +164,13 @@ gst_pulse_fill_format_info (GstAudioRingBufferSpec * spec, pa_format_info ** f,
     format->encoding = PA_ENCODING_DTS_IEC61937;
   } else if (spec->type == GST_AUDIO_RING_BUFFER_FORMAT_TYPE_MPEG) {
     format->encoding = PA_ENCODING_MPEG_IEC61937;
+#if PA_CHECK_VERSION(3,99,0)
+  } else if (spec->type == GST_AUDIO_RING_BUFFER_FORMAT_TYPE_MPEG2_AAC) {
+    format->encoding = PA_ENCODING_MPEG2_AAC_IEC61937;
+  } else if (spec->type == GST_AUDIO_RING_BUFFER_FORMAT_TYPE_MPEG4_AAC) {
+    /* HACK. treat MPEG4 AAC as MPEG2 AAC for the moment */
+    format->encoding = PA_ENCODING_MPEG2_AAC_IEC61937;
+#endif
   } else {
     goto fail;
   }
@@ -187,6 +194,48 @@ fail:
   if (format)
     pa_format_info_free (format);
   return FALSE;
+}
+
+const char *
+gst_pulse_sample_format_to_caps_format (pa_sample_format_t sf)
+{
+  switch (sf) {
+    case PA_SAMPLE_U8:
+      return "U8";
+
+    case PA_SAMPLE_S16LE:
+      return "S16LE";
+
+    case PA_SAMPLE_S16BE:
+      return "S16BE";
+
+    case PA_SAMPLE_FLOAT32LE:
+      return "F32LE";
+
+    case PA_SAMPLE_FLOAT32BE:
+      return "F32BE";
+
+    case PA_SAMPLE_S32LE:
+      return "S32LE";
+
+    case PA_SAMPLE_S32BE:
+      return "S32BE";
+
+    case PA_SAMPLE_S24LE:
+      return "S24LE";
+
+    case PA_SAMPLE_S24BE:
+      return "S24BE";
+
+    case PA_SAMPLE_S24_32LE:
+      return "S24_32LE";
+
+    case PA_SAMPLE_S24_32BE:
+      return "S24_32BE";
+
+    default:
+      return NULL;
+  }
 }
 
 /* PATH_MAX is not defined everywhere, e.g. on GNU Hurd */
@@ -325,4 +374,136 @@ gst_pulse_make_proplist (const GstStructure * properties)
   /* iterate the structure and fill the proplist */
   gst_structure_foreach (properties, make_proplist_item, proplist);
   return proplist;
+}
+
+GstStructure *
+gst_pulse_make_structure (pa_proplist * properties)
+{
+  GstStructure *str;
+  void *state = NULL;
+
+  str = gst_structure_new_empty ("pulse-proplist");
+
+  while (TRUE) {
+    const char *key, *val;
+
+    key = pa_proplist_iterate (properties, &state);
+    if (key == NULL)
+      break;
+
+    val = pa_proplist_gets (properties, key);
+
+    gst_structure_set (str, key, G_TYPE_STRING, val, NULL);
+  }
+  return str;
+}
+
+static gboolean
+gst_pulse_format_info_int_prop_to_value (pa_format_info * format,
+    const char *key, GValue * value)
+{
+  GValue v = { 0, };
+  int i;
+  int *a, n;
+  int min, max;
+
+  if (pa_format_info_get_prop_int (format, key, &i) == 0) {
+    g_value_init (value, G_TYPE_INT);
+    g_value_set_int (value, i);
+
+  } else if (pa_format_info_get_prop_int_array (format, key, &a, &n) == 0) {
+    g_value_init (value, GST_TYPE_LIST);
+    g_value_init (&v, G_TYPE_INT);
+
+    for (i = 0; i < n; i++) {
+      g_value_set_int (&v, a[i]);
+      gst_value_list_append_value (value, &v);
+    }
+
+    pa_xfree (a);
+
+  } else if (pa_format_info_get_prop_int_range (format, key, &min, &max) == 0) {
+    g_value_init (value, GST_TYPE_INT_RANGE);
+    gst_value_set_int_range (value, min, max);
+
+  } else {
+    /* Property not available or is not an int type */
+    return FALSE;
+  }
+
+  return TRUE;
+}
+
+GstCaps *
+gst_pulse_format_info_to_caps (pa_format_info * format)
+{
+  GstCaps *ret = NULL;
+  GValue v = { 0, };
+  pa_sample_spec ss;
+
+  switch (format->encoding) {
+    case PA_ENCODING_PCM:{
+      char *tmp = NULL;
+
+      pa_format_info_to_sample_spec (format, &ss, NULL);
+
+      if (pa_format_info_get_prop_string (format,
+              PA_PROP_FORMAT_SAMPLE_FORMAT, &tmp)) {
+        /* No specific sample format means any sample format */
+        ret = gst_caps_from_string (_PULSE_CAPS_PCM);
+        goto out;
+
+      } else if (ss.format == PA_SAMPLE_ALAW) {
+        ret = gst_caps_from_string (_PULSE_CAPS_ALAW);
+
+      } else if (ss.format == PA_SAMPLE_ULAW) {
+        ret = gst_caps_from_string (_PULSE_CAPS_MULAW);
+
+      } else {
+        /* Linear PCM format */
+        const char *sformat =
+            gst_pulse_sample_format_to_caps_format (ss.format);
+
+        ret = gst_caps_from_string (_PULSE_CAPS_LINEAR);
+
+        if (sformat)
+          gst_caps_set_simple (ret, "format", G_TYPE_STRING, NULL);
+      }
+
+      pa_xfree (tmp);
+      break;
+    }
+
+    case PA_ENCODING_AC3_IEC61937:
+      ret = gst_caps_from_string (_PULSE_CAPS_AC3);
+      break;
+
+    case PA_ENCODING_EAC3_IEC61937:
+      ret = gst_caps_from_string (_PULSE_CAPS_EAC3);
+      break;
+
+    case PA_ENCODING_DTS_IEC61937:
+      ret = gst_caps_from_string (_PULSE_CAPS_DTS);
+      break;
+
+    case PA_ENCODING_MPEG_IEC61937:
+      ret = gst_caps_from_string (_PULSE_CAPS_MP3);
+      break;
+
+    default:
+      GST_WARNING ("Found a PA format that we don't support yet");
+      goto out;
+  }
+
+  if (gst_pulse_format_info_int_prop_to_value (format, PA_PROP_FORMAT_RATE, &v))
+    gst_caps_set_value (ret, "rate", &v);
+
+  g_value_unset (&v);
+
+  if (gst_pulse_format_info_int_prop_to_value (format, PA_PROP_FORMAT_CHANNELS,
+          &v))
+    gst_caps_set_value (ret, "channels", &v);
+
+out:
+  return ret;
 }

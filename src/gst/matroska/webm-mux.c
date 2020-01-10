@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
@@ -25,13 +25,13 @@
  * <refsect2>
  * <title>Example launch line</title>
  * |[
- * gst-launch-0.10 webmmux name=mux ! filesink location=newfile.webm         \
+ * gst-launch-1.0 webmmux name=mux ! filesink location=newfile.webm         \
  *   uridecodebin uri=file:///path/to/somefile.ogv name=demux                \
  *   demux. ! videoconvert ! vp8enc ! queue ! mux.video_0    \
  *   demux. ! progressreport ! audioconvert ! audiorate ! vorbisenc ! queue ! mux.audio_0
  * ]| This pipeline re-encodes a video file of any format into a WebM file.
  * |[
- * gst-launch-0.10 webmmux name=mux ! filesink location=test.webm            \
+ * gst-launch-1.0 webmmux name=mux ! filesink location=test.webm            \
  *   videotestsrc num-buffers=250 ! video/x-raw,framerate=25/1 ! videoconvert ! vp8enc ! queue ! mux.video_0 \
  *   audiotestsrc samplesperbuffer=44100 num-buffers=10 ! audio/x-raw,rate=44100 ! vorbisenc ! queue ! mux.audio_0
  * ]| This pipeline muxes a test video and a sine wave into a WebM file.
@@ -62,17 +62,19 @@ static GstStaticPadTemplate webm_src_templ = GST_STATIC_PAD_TEMPLATE ("src",
     );
 
 static GstStaticPadTemplate webm_videosink_templ =
-GST_STATIC_PAD_TEMPLATE ("video_%u",
+    GST_STATIC_PAD_TEMPLATE ("video_%u",
     GST_PAD_SINK,
     GST_PAD_REQUEST,
-    GST_STATIC_CAPS ("video/x-vp8, " COMMON_VIDEO_CAPS)
+    GST_STATIC_CAPS ("video/x-vp8, " COMMON_VIDEO_CAPS ";"
+        "video/x-vp9, " COMMON_VIDEO_CAPS)
     );
 
 static GstStaticPadTemplate webm_audiosink_templ =
-GST_STATIC_PAD_TEMPLATE ("audio_%u",
+    GST_STATIC_PAD_TEMPLATE ("audio_%u",
     GST_PAD_SINK,
     GST_PAD_REQUEST,
-    GST_STATIC_CAPS ("audio/x-vorbis, " COMMON_AUDIO_CAPS)
+    GST_STATIC_CAPS ("audio/x-vorbis, " COMMON_AUDIO_CAPS ";"
+        "audio/x-opus, " COMMON_AUDIO_CAPS)
     );
 
 static void
@@ -80,20 +82,20 @@ gst_webm_mux_class_init (GstWebMMuxClass * klass)
 {
   GstElementClass *gstelement_class = (GstElementClass *) klass;
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&webm_videosink_templ));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&webm_audiosink_templ));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&webm_src_templ));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &webm_videosink_templ);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &webm_audiosink_templ);
+  gst_element_class_add_static_pad_template (gstelement_class, &webm_src_templ);
   gst_element_class_set_static_metadata (gstelement_class, "WebM muxer",
       "Codec/Muxer",
       "Muxes video and audio streams into a WebM stream",
-      "GStreamer maintainers <gstreamer-devel@lists.sourceforge.net>");
+      "GStreamer maintainers <gstreamer-devel@lists.freedesktop.org>");
 }
 
 static void
 gst_webm_mux_init (GstWebMMux * mux)
 {
   GST_MATROSKA_MUX (mux)->doctype = GST_MATROSKA_DOCTYPE_WEBM;
+  GST_MATROSKA_MUX (mux)->is_webm = TRUE;
 }

@@ -14,8 +14,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /*
@@ -33,8 +33,8 @@
 
 enum
 {
-  ARG_0,
-  ARG_SEEKOFFSET
+  PROP_0,
+  PROP_SEEKOFFSET
 };
 
 GstStaticPadTemplate navseek_src_template = GST_STATIC_PAD_TEMPLATE ("src",
@@ -80,14 +80,14 @@ gst_navseek_class_init (GstNavSeekClass * klass)
   gobject_class->get_property = gst_navseek_get_property;
 
   g_object_class_install_property (gobject_class,
-      ARG_SEEKOFFSET, g_param_spec_double ("seek-offset", "Seek Offset",
+      PROP_SEEKOFFSET, g_param_spec_double ("seek-offset", "Seek Offset",
           "Time in seconds to seek by", 0.0, G_MAXDOUBLE, 5.0,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&navseek_sink_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&navseek_src_template));
+  gst_element_class_add_static_pad_template (element_class,
+      &navseek_sink_template);
+  gst_element_class_add_static_pad_template (element_class,
+      &navseek_src_template);
 
   gst_element_class_set_static_metadata (element_class,
       "Seek based on left-right arrows", "Filter/Video",
@@ -173,6 +173,7 @@ gst_navseek_change_playback_rate (GstNavSeek * navseek, gdouble rate)
 
     gst_pad_send_event (peer_pad, event);
   }
+  gst_object_unref (peer_pad);
 }
 
 static void
@@ -301,7 +302,7 @@ gst_navseek_set_property (GObject * object, guint prop_id,
   GstNavSeek *navseek = GST_NAVSEEK (object);
 
   switch (prop_id) {
-    case ARG_SEEKOFFSET:
+    case PROP_SEEKOFFSET:
       GST_OBJECT_LOCK (navseek);
       navseek->seek_offset = g_value_get_double (value);
       GST_OBJECT_UNLOCK (navseek);
@@ -319,7 +320,7 @@ gst_navseek_get_property (GObject * object, guint prop_id,
   GstNavSeek *navseek = GST_NAVSEEK (object);
 
   switch (prop_id) {
-    case ARG_SEEKOFFSET:
+    case PROP_SEEKOFFSET:
       GST_OBJECT_LOCK (navseek);
       g_value_set_double (value, navseek->seek_offset);
       GST_OBJECT_UNLOCK (navseek);

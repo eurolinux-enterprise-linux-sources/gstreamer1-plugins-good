@@ -14,13 +14,12 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
  * SECTION:element-audioecho
- * @Since: 0.10.14
  *
  * audioecho adds an echo or (simple) reverb effect to an audio stream. The echo
  * delay, intensity and the percentage of feedback can be configured.
@@ -36,7 +35,7 @@
  * <refsect2>
  * <title>Example launch line</title>
  * |[
- * gst-launch-1.0 filesrc location="melo1.ogg" ! audioconvert ! audioecho delay=500000000 intensity=0.6 feedback=0.4 ! audioconvert ! autoaudiosink
+ * gst-launch-1.0 autoaudiosrc ! audioconvert ! audioecho delay=500000000 intensity=0.6 feedback=0.4 ! audioconvert ! autoaudiosink
  * gst-launch-1.0 filesrc location="melo1.ogg" ! decodebin ! audioconvert ! audioecho delay=50000000 intensity=0.6 feedback=0.4 ! audioconvert ! autoaudiosink
  * ]|
  * </refsect2>
@@ -187,6 +186,7 @@ gst_audio_echo_set_property (GObject * object, guint prop_id,
   switch (prop_id) {
     case PROP_DELAY:{
       guint64 max_delay, delay;
+      guint rate;
 
       g_mutex_lock (&self->lock);
       delay = g_value_get_uint64 (value);
@@ -200,23 +200,32 @@ gst_audio_echo_set_property (GObject * object, guint prop_id,
       } else {
         self->delay = delay;
         self->max_delay = MAX (delay, max_delay);
+        if (delay > max_delay) {
+          g_free (self->buffer);
+          self->buffer = NULL;
+        }
       }
+      rate = GST_AUDIO_FILTER_RATE (self);
+      if (rate > 0)
+        self->delay_frames =
+            MAX (gst_util_uint64_scale (self->delay, rate, GST_SECOND), 1);
+
       g_mutex_unlock (&self->lock);
       break;
     }
     case PROP_MAX_DELAY:{
-      guint64 max_delay, delay;
+      guint64 max_delay;
 
       g_mutex_lock (&self->lock);
       max_delay = g_value_get_uint64 (value);
-      delay = self->delay;
 
       if (GST_STATE (self) > GST_STATE_READY) {
         GST_ERROR_OBJECT (self, "Can't change maximum delay in"
             " PLAYING or PAUSED state");
       } else {
-        self->delay = delay;
         self->max_delay = max_delay;
+        g_free (self->buffer);
+        self->buffer = NULL;
       }
       g_mutex_unlock (&self->lock);
       break;

@@ -16,8 +16,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #include <unistd.h>
@@ -43,7 +43,7 @@ static GstBus *bus;
                         "rate = (int) 44100"
 
 #define WAVPACK_CAPS_STRING "audio/x-wavpack, " \
-                            "width = (int) 32, " \
+                            "depth = (int) 32, " \
                             "channels = (int) 1, " \
                             "rate = (int) 44100, " \
                             "framed = (boolean) true"
@@ -52,7 +52,7 @@ static GstStaticPadTemplate sinktemplate = GST_STATIC_PAD_TEMPLATE ("sink",
     GST_PAD_SINK,
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS ("audio/x-wavpack, "
-        "width = (int) 32, "
+        "depth = (int) 32, "
         "channels = (int) 1, "
         "rate = (int) 44100, " "framed = (boolean) true"));
 
@@ -179,19 +179,4 @@ wavpackenc_suite (void)
   return s;
 }
 
-int
-main (int argc, char **argv)
-{
-  int nf;
-
-  Suite *s = wavpackenc_suite ();
-  SRunner *sr = srunner_create (s);
-
-  gst_check_init (&argc, &argv);
-
-  srunner_run_all (sr, CK_NORMAL);
-  nf = srunner_ntests_failed (sr);
-  srunner_free (sr);
-
-  return nf;
-}
+GST_CHECK_MAIN (wavpackenc);

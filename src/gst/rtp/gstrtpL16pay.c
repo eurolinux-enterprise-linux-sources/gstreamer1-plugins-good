@@ -13,8 +13,24 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
+ */
+
+/**
+ * SECTION:element-rtpL16pay
+ * @see_also: rtpL16depay
+ *
+ * Payload raw audio into RTP packets according to RFC 3551.
+ * For detailed information see: http://www.rfc-editor.org/rfc/rfc3551.txt
+ *
+ * <refsect2>
+ * <title>Example pipeline</title>
+ * |[
+ * gst-launch-1.0 -v audiotestsrc ! audioconvert ! rtpL16pay ! udpsink
+ * ]| This example pipeline will payload raw audio. Refer to
+ * the rtpL16depay example to depayload and play the RTP stream.
+ * </refsect2>
  */
 
 #ifdef HAVE_CONFIG_H
@@ -88,10 +104,10 @@ gst_rtp_L16_pay_class_init (GstRtpL16PayClass * klass)
   gstrtpbasepayload_class->get_caps = gst_rtp_L16_pay_getcaps;
   gstrtpbasepayload_class->handle_buffer = gst_rtp_L16_pay_handle_buffer;
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_L16_pay_src_template));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_L16_pay_sink_template));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_L16_pay_src_template);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_L16_pay_sink_template);
 
   gst_element_class_set_static_metadata (gstelement_class,
       "RTP audio payloader", "Codec/Payloader/Network/RTP",
@@ -192,16 +208,16 @@ gst_rtp_L16_pay_getcaps (GstRTPBasePayload * rtppayload, GstPad * pad,
       if (gst_structure_get_int (structure, "channels", &channels)) {
         gst_caps_set_simple (caps, "channels", G_TYPE_INT, channels, NULL);
       } else if (gst_structure_get_int (structure, "payload", &pt)) {
-        if (pt == 10)
+        if (pt == GST_RTP_PAYLOAD_L16_STEREO)
           gst_caps_set_simple (caps, "channels", G_TYPE_INT, 2, NULL);
-        else if (pt == 11)
+        else if (pt == GST_RTP_PAYLOAD_L16_MONO)
           gst_caps_set_simple (caps, "channels", G_TYPE_INT, 1, NULL);
       }
 
       if (gst_structure_get_int (structure, "clock-rate", &rate)) {
         gst_caps_set_simple (caps, "rate", G_TYPE_INT, rate, NULL);
       } else if (gst_structure_get_int (structure, "payload", &pt)) {
-        if (pt == 10 || pt == 11)
+        if (pt == GST_RTP_PAYLOAD_L16_STEREO || pt == GST_RTP_PAYLOAD_L16_MONO)
           gst_caps_set_simple (caps, "rate", G_TYPE_INT, 44100, NULL);
       }
 

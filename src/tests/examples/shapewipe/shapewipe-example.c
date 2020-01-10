@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #include <gst/gst.h>
@@ -83,7 +83,7 @@ main (gint argc, gchar ** argv)
 
   pipeline_string =
       g_strdup_printf
-      ("videotestsrc ! video/x-raw,format=(string)AYUV,width=640,height=480 ! shapewipe name=shape border=%f ! videomixer name=mixer ! videoconvert ! autovideosink     filesrc location=%s ! typefind ! decodebin2 ! videoconvert ! videoscale ! queue ! shape.mask_sink    videotestsrc pattern=snow ! video/x-raw,format=(string)AYUV,width=640,height=480 ! queue ! mixer.",
+      ("videotestsrc ! video/x-raw,format=(string)AYUV,width=640,height=480 ! shapewipe name=shape border=%f ! videomixer name=mixer ! videoconvert ! autovideosink     filesrc location=%s ! typefind ! decodebin ! videoconvert ! videoscale ! queue ! shape.mask_sink    videotestsrc pattern=snow ! video/x-raw,format=(string)AYUV,width=640,height=480 ! queue ! mixer.",
       border, argv[1]);
 
   pipeline = gst_parse_launch (pipeline_string, NULL);
@@ -101,6 +101,7 @@ main (gint argc, gchar ** argv)
   gst_object_add_control_binding (GST_OBJECT_CAST (shapewipe),
       gst_direct_control_binding_new (GST_OBJECT_CAST (shapewipe), "position",
           cs));
+  gst_object_unref (shapewipe);
 
   g_object_set (cs,
       "amplitude", 0.5,

@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /* FIXME 0.11: suppress warnings for deprecated API such as GValueArray
@@ -271,7 +271,7 @@ gst_oss4_audio_set_ringbuffer_channel_layout (GstObject * obj, gint fd,
   GstAudioChannelPosition ch_layout[8] = { 0, };
 
   num_channels = GST_AUDIO_INFO_CHANNELS (&spec->info);
-  if (num_channels < 3 || num_channels > 9)
+  if (num_channels < 3 || num_channels > 8)
     return;
 
   if (spec->type != GST_AUDIO_RING_BUFFER_FORMAT_TYPE_RAW)

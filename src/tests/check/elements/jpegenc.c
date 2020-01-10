@@ -16,8 +16,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #include <unistd.h>
@@ -81,6 +81,7 @@ cleanup_jpegenc (GstElement * jpegenc)
   GST_DEBUG ("cleanup_jpegenc");
   gst_element_set_state (jpegenc, GST_STATE_NULL);
 
+  gst_check_drop_buffers ();
   gst_pad_set_active (mysrcpad, FALSE);
   gst_pad_set_active (mysinkpad, FALSE);
   gst_check_teardown_sink_pad (jpegenc);
@@ -195,7 +196,7 @@ GST_START_TEST (test_jpegenc_different_caps)
   caps = gst_caps_new_simple ("video/x-raw", "width", G_TYPE_INT,
       800, "height", G_TYPE_INT, 600, "framerate",
       GST_TYPE_FRACTION, 1, 1, "format", G_TYPE_STRING, "I420", NULL);
-  fail_unless (gst_pad_set_caps (mysrcpad, caps));
+  gst_check_setup_events (mysrcpad, jpegenc, caps, GST_FORMAT_TIME);
   fail_unless ((buffer = create_video_buffer (caps)) != NULL);
   gst_caps_unref (caps);
   fail_unless (gst_pad_push (mysrcpad, buffer) == GST_FLOW_OK);
@@ -236,19 +237,4 @@ jpegenc_suite (void)
   return s;
 }
 
-int
-main (int argc, char **argv)
-{
-  int nf;
-
-  Suite *s = jpegenc_suite ();
-  SRunner *sr = srunner_create (s);
-
-  gst_check_init (&argc, &argv);
-
-  srunner_run_all (sr, CK_NORMAL);
-  nf = srunner_ntests_failed (sr);
-  srunner_free (sr);
-
-  return nf;
-}
+GST_CHECK_MAIN (jpegenc);

@@ -13,13 +13,15 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
+
+#include <gst/tag/tag.h>
 
 #include "gstrtpac3depay.h"
 #include "gstrtpac3pay.h"
@@ -54,18 +56,28 @@
 #include "gstrtpmparobustdepay.h"
 #include "gstrtpmpvdepay.h"
 #include "gstrtpmpvpay.h"
+#include "gstrtpopusdepay.h"
+#include "gstrtpopuspay.h"
+#include "gstrtph261pay.h"
+#include "gstrtph261depay.h"
 #include "gstrtph263pdepay.h"
 #include "gstrtph263ppay.h"
 #include "gstrtph263depay.h"
 #include "gstrtph263pay.h"
 #include "gstrtph264depay.h"
 #include "gstrtph264pay.h"
+#include "gstrtph265depay.h"
+#include "gstrtph265pay.h"
 #include "gstrtpj2kdepay.h"
 #include "gstrtpj2kpay.h"
 #include "gstrtpjpegdepay.h"
 #include "gstrtpjpegpay.h"
+#include "gstrtpklvdepay.h"
+#include "gstrtpklvpay.h"
 #include "gstrtpL16depay.h"
 #include "gstrtpL16pay.h"
+#include "gstrtpL24depay.h"
+#include "gstrtpL24pay.h"
 #include "gstasteriskh263.h"
 #include "gstrtpmp1sdepay.h"
 #include "gstrtpmp2tdepay.h"
@@ -78,6 +90,8 @@
 #include "gstrtpmp4gpay.h"
 #include "gstrtpqcelpdepay.h"
 #include "gstrtpqdmdepay.h"
+#include "gstrtpsbcdepay.h"
+#include "gstrtpsbcpay.h"
 #include "gstrtpsirenpay.h"
 #include "gstrtpsirendepay.h"
 #include "gstrtpspeexpay.h"
@@ -87,12 +101,20 @@
 #include "gstrtptheorapay.h"
 #include "gstrtpvorbisdepay.h"
 #include "gstrtpvorbispay.h"
+#include "gstrtpvp8depay.h"
+#include "gstrtpvp8pay.h"
+#include "gstrtpvp9depay.h"
+#include "gstrtpvp9pay.h"
 #include "gstrtpvrawdepay.h"
 #include "gstrtpvrawpay.h"
+#include "gstrtpstreampay.h"
+#include "gstrtpstreamdepay.h"
 
 static gboolean
 plugin_init (GstPlugin * plugin)
 {
+  gst_tag_image_type_get_type ();
+
   if (!gst_rtp_ac3_depay_plugin_init (plugin))
     return FALSE;
 
@@ -192,6 +214,18 @@ plugin_init (GstPlugin * plugin)
   if (!gst_rtp_mpv_pay_plugin_init (plugin))
     return FALSE;
 
+  if (!gst_rtp_opus_depay_plugin_init (plugin))
+    return FALSE;
+
+  if (!gst_rtp_opus_pay_plugin_init (plugin))
+    return FALSE;
+
+  if (!gst_rtp_h261_pay_plugin_init (plugin))
+    return FALSE;
+
+  if (!gst_rtp_h261_depay_plugin_init (plugin))
+    return FALSE;
+
   if (!gst_rtp_h263p_pay_plugin_init (plugin))
     return FALSE;
 
@@ -210,6 +244,12 @@ plugin_init (GstPlugin * plugin)
   if (!gst_rtp_h264_pay_plugin_init (plugin))
     return FALSE;
 
+  if (!gst_rtp_h265_depay_plugin_init (plugin))
+    return FALSE;
+
+  if (!gst_rtp_h265_pay_plugin_init (plugin))
+    return FALSE;
+
   if (!gst_rtp_j2k_depay_plugin_init (plugin))
     return FALSE;
 
@@ -222,10 +262,22 @@ plugin_init (GstPlugin * plugin)
   if (!gst_rtp_jpeg_pay_plugin_init (plugin))
     return FALSE;
 
+  if (!gst_rtp_klv_depay_plugin_init (plugin))
+    return FALSE;
+
+  if (!gst_rtp_klv_pay_plugin_init (plugin))
+    return FALSE;
+
   if (!gst_rtp_L16_pay_plugin_init (plugin))
     return FALSE;
 
   if (!gst_rtp_L16_depay_plugin_init (plugin))
+    return FALSE;
+
+  if (!gst_rtp_L24_pay_plugin_init (plugin))
+    return FALSE;
+
+  if (!gst_rtp_L24_depay_plugin_init (plugin))
     return FALSE;
 
   if (!gst_asteriskh263_plugin_init (plugin))
@@ -264,6 +316,12 @@ plugin_init (GstPlugin * plugin)
   if (!gst_rtp_qdm2_depay_plugin_init (plugin))
     return FALSE;
 
+  if (!gst_rtp_sbc_depay_plugin_init (plugin))
+    return FALSE;
+
+  if (!gst_rtp_sbc_pay_plugin_init (plugin))
+    return FALSE;
+
   if (!gst_rtp_siren_pay_plugin_init (plugin))
     return FALSE;
 
@@ -291,10 +349,28 @@ plugin_init (GstPlugin * plugin)
   if (!gst_rtp_vorbis_pay_plugin_init (plugin))
     return FALSE;
 
+  if (!gst_rtp_vp8_depay_plugin_init (plugin))
+    return FALSE;
+
+  if (!gst_rtp_vp8_pay_plugin_init (plugin))
+    return FALSE;
+
+  if (!gst_rtp_vp9_depay_plugin_init (plugin))
+    return FALSE;
+
+  if (!gst_rtp_vp9_pay_plugin_init (plugin))
+    return FALSE;
+
   if (!gst_rtp_vraw_depay_plugin_init (plugin))
     return FALSE;
 
   if (!gst_rtp_vraw_pay_plugin_init (plugin))
+    return FALSE;
+
+  if (!gst_rtp_stream_pay_plugin_init (plugin))
+    return FALSE;
+
+  if (!gst_rtp_stream_depay_plugin_init (plugin))
     return FALSE;
 
   return TRUE;

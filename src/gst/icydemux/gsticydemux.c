@@ -15,8 +15,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
@@ -103,10 +103,8 @@ gst_icydemux_class_init (GstICYDemuxClass * klass)
 
   gstelement_class->change_state = gst_icydemux_change_state;
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&src_factory));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&sink_factory));
+  gst_element_class_add_static_pad_template (gstelement_class, &src_factory);
+  gst_element_class_add_static_pad_template (gstelement_class, &sink_factory);
 
   gst_element_class_set_static_metadata (gstelement_class, "ICY tag demuxer",
       "Codec/Demuxer/Metadata",
@@ -207,6 +205,28 @@ gst_icydemux_dispose (GObject * object)
   G_OBJECT_CLASS (parent_class)->dispose (object);
 }
 
+typedef struct
+{
+  GstCaps *caps;
+  GstPad *pad;
+} CopyStickyEventsData;
+
+static gboolean
+copy_sticky_events (GstPad * pad, GstEvent ** event, gpointer user_data)
+{
+  CopyStickyEventsData *data = user_data;
+
+  if (GST_EVENT_TYPE (*event) >= GST_EVENT_CAPS && data->caps) {
+    gst_pad_set_caps (data->pad, data->caps);
+    data->caps = NULL;
+  }
+
+  if (GST_EVENT_TYPE (*event) != GST_EVENT_CAPS)
+    gst_pad_push_event (data->pad, gst_event_ref (*event));
+
+  return TRUE;
+}
+
 static gboolean
 gst_icydemux_add_srcpad (GstICYDemux * icydemux, GstCaps * new_caps)
 {
@@ -225,6 +245,8 @@ gst_icydemux_add_srcpad (GstICYDemux * icydemux, GstCaps * new_caps)
   }
 
   if (icydemux->srcpad == NULL) {
+    CopyStickyEventsData data;
+
     icydemux->srcpad =
         gst_pad_new_from_template (gst_element_class_get_pad_template
         (GST_ELEMENT_GET_CLASS (icydemux), "src"), "src");
@@ -233,10 +255,12 @@ gst_icydemux_add_srcpad (GstICYDemux * icydemux, GstCaps * new_caps)
     gst_pad_use_fixed_caps (icydemux->srcpad);
     gst_pad_set_active (icydemux->srcpad, TRUE);
 
-    if (icydemux->src_caps) {
-      if (!gst_pad_set_caps (icydemux->srcpad, icydemux->src_caps))
-        GST_WARNING_OBJECT (icydemux, "Failed to set caps on src pad");
-    }
+    data.pad = icydemux->srcpad;
+    data.caps = icydemux->src_caps;
+    gst_pad_sticky_events_foreach (icydemux->sinkpad, copy_sticky_events,
+        &data);
+    if (data.caps)
+      gst_pad_set_caps (data.pad, data.caps);
 
     GST_DEBUG_OBJECT (icydemux, "Adding src pad with caps %" GST_PTR_FORMAT,
         icydemux->src_caps);
@@ -299,6 +323,7 @@ gst_icydemux_parse_and_send_tags (GstICYDemux * icydemux)
   GstTagList *tags;
   const guint8 *data;
   int length, i;
+  gboolean tags_found = FALSE;
   gchar *buffer;
   gchar **strings;
 
@@ -316,6 +341,7 @@ gst_icydemux_parse_and_send_tags (GstICYDemux * icydemux)
   for (i = 0; strings[i]; i++) {
     if (!g_ascii_strncasecmp (strings[i], "StreamTitle=", 12)) {
       char *title = gst_icydemux_unicodify (strings[i] + 13);
+      tags_found = TRUE;
 
       if (title && *title) {
         gst_tag_list_add (tags, GST_TAG_MERGE_REPLACE, GST_TAG_TITLE,
@@ -324,6 +350,7 @@ gst_icydemux_parse_and_send_tags (GstICYDemux * icydemux)
       }
     } else if (!g_ascii_strncasecmp (strings[i], "StreamUrl=", 10)) {
       char *url = gst_icydemux_unicodify (strings[i] + 11);
+      tags_found = TRUE;
 
       if (url && *url) {
         gst_tag_list_add (tags, GST_TAG_MERGE_REPLACE, GST_TAG_HOMEPAGE,
@@ -338,7 +365,7 @@ gst_icydemux_parse_and_send_tags (GstICYDemux * icydemux)
   gst_adapter_unmap (icydemux->meta_adapter);
   gst_adapter_flush (icydemux->meta_adapter, length);
 
-  if (!gst_tag_list_is_empty (tags))
+  if (tags_found)
     gst_icydemux_tag_found (icydemux, tags);
   else
     gst_tag_list_unref (tags);
@@ -383,8 +410,12 @@ gst_icydemux_handle_event (GstPad * pad, GstObject * parent, GstEvent * event)
 
         return gst_pad_event_default (pad, parent, event);
       default:
-        icydemux->cached_events = g_list_append (icydemux->cached_events,
-            event);
+        if (!GST_EVENT_IS_STICKY (event)) {
+          icydemux->cached_events =
+              g_list_append (icydemux->cached_events, event);
+        } else {
+          gst_event_unref (event);
+        }
         return TRUE;
     }
   } else {
@@ -521,6 +552,7 @@ gst_icydemux_chain (GstPad * pad, GstObject * parent, GstBuffer * buf)
 
   if (icydemux->meta_interval == 0) {
     ret = gst_icydemux_typefind_or_forward (icydemux, buf);
+    buf = NULL;
     goto done;
   }
 
@@ -532,7 +564,12 @@ gst_icydemux_chain (GstPad * pad, GstObject * parent, GstBuffer * buf)
   while (size) {
     if (icydemux->remaining) {
       chunk = (size <= icydemux->remaining) ? size : icydemux->remaining;
-      sub = gst_buffer_copy_region (buf, GST_BUFFER_COPY_ALL, offset, chunk);
+      if (offset == 0 && chunk == size) {
+        sub = buf;
+        buf = NULL;
+      } else {
+        sub = gst_buffer_copy_region (buf, GST_BUFFER_COPY_ALL, offset, chunk);
+      }
       offset += chunk;
       icydemux->remaining -= chunk;
       size -= chunk;
@@ -576,7 +613,8 @@ gst_icydemux_chain (GstPad * pad, GstObject * parent, GstBuffer * buf)
   }
 
 done:
-  gst_buffer_unref (buf);
+  if (buf)
+    gst_buffer_unref (buf);
 
   return ret;
 

@@ -16,8 +16,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 /**
  * SECTION:element-ac3parse
@@ -35,7 +35,7 @@
  */
 
 /* TODO:
- *  - add support for audio/x-private1-ac3 as well
+ *  - audio/ac3 to audio/x-private1-ac3 is not implemented (done in the muxer)
  *  - should accept framed and unframed input (needs decodebin fixes first)
  */
 
@@ -46,8 +46,8 @@
 #include <string.h>
 
 #include "gstac3parse.h"
-#include <gst/base/gstbytereader.h>
-#include <gst/base/gstbitreader.h>
+#include <gst/base/base.h>
+#include <gst/pbutils/pbutils.h>
 
 GST_DEBUG_CATEGORY_STATIC (ac3_parse_debug);
 #define GST_CAT_DEFAULT ac3_parse_debug
@@ -153,7 +153,8 @@ static GstStaticPadTemplate src_template = GST_STATIC_PAD_TEMPLATE ("src",
 static GstStaticPadTemplate sink_template = GST_STATIC_PAD_TEMPLATE ("sink",
     GST_PAD_SINK,
     GST_PAD_ALWAYS,
-    GST_STATIC_CAPS ("audio/x-ac3; " "audio/x-eac3; " "audio/ac3"));
+    GST_STATIC_CAPS ("audio/x-ac3; " "audio/x-eac3; " "audio/ac3; "
+        "audio/x-private1-ac3"));
 
 static void gst_ac3_parse_finalize (GObject * object);
 
@@ -161,10 +162,14 @@ static gboolean gst_ac3_parse_start (GstBaseParse * parse);
 static gboolean gst_ac3_parse_stop (GstBaseParse * parse);
 static GstFlowReturn gst_ac3_parse_handle_frame (GstBaseParse * parse,
     GstBaseParseFrame * frame, gint * skipsize);
+static GstFlowReturn gst_ac3_parse_pre_push_frame (GstBaseParse * parse,
+    GstBaseParseFrame * frame);
 static gboolean gst_ac3_parse_src_event (GstBaseParse * parse,
     GstEvent * event);
 static GstCaps *gst_ac3_parse_get_sink_caps (GstBaseParse * parse,
     GstCaps * filter);
+static gboolean gst_ac3_parse_set_sink_caps (GstBaseParse * parse,
+    GstCaps * caps);
 
 #define gst_ac3_parse_parent_class parent_class
 G_DEFINE_TYPE (GstAc3Parse, gst_ac3_parse, GST_TYPE_BASE_PARSE);
@@ -181,10 +186,8 @@ gst_ac3_parse_class_init (GstAc3ParseClass * klass)
 
   object_class->finalize = gst_ac3_parse_finalize;
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&sink_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&src_template));
+  gst_element_class_add_static_pad_template (element_class, &sink_template);
+  gst_element_class_add_static_pad_template (element_class, &src_template);
 
   gst_element_class_set_static_metadata (element_class,
       "AC3 audio stream parser", "Codec/Parser/Converter/Audio",
@@ -193,8 +196,11 @@ gst_ac3_parse_class_init (GstAc3ParseClass * klass)
   parse_class->start = GST_DEBUG_FUNCPTR (gst_ac3_parse_start);
   parse_class->stop = GST_DEBUG_FUNCPTR (gst_ac3_parse_stop);
   parse_class->handle_frame = GST_DEBUG_FUNCPTR (gst_ac3_parse_handle_frame);
+  parse_class->pre_push_frame =
+      GST_DEBUG_FUNCPTR (gst_ac3_parse_pre_push_frame);
   parse_class->src_event = GST_DEBUG_FUNCPTR (gst_ac3_parse_src_event);
   parse_class->get_sink_caps = GST_DEBUG_FUNCPTR (gst_ac3_parse_get_sink_caps);
+  parse_class->set_sink_caps = GST_DEBUG_FUNCPTR (gst_ac3_parse_set_sink_caps);
 }
 
 static void
@@ -204,14 +210,19 @@ gst_ac3_parse_reset (GstAc3Parse * ac3parse)
   ac3parse->sample_rate = -1;
   ac3parse->blocks = -1;
   ac3parse->eac = FALSE;
+  ac3parse->sent_codec_tag = FALSE;
   g_atomic_int_set (&ac3parse->align, GST_AC3_PARSE_ALIGN_NONE);
 }
 
 static void
 gst_ac3_parse_init (GstAc3Parse * ac3parse)
 {
-  gst_base_parse_set_min_frame_size (GST_BASE_PARSE (ac3parse), 6);
+  gst_base_parse_set_min_frame_size (GST_BASE_PARSE (ac3parse), 8);
   gst_ac3_parse_reset (ac3parse);
+  ac3parse->baseparse_chainfunc =
+      GST_BASE_PARSE_SINK_PAD (GST_BASE_PARSE (ac3parse))->chainfunc;
+  GST_PAD_SET_ACCEPT_INTERSECT (GST_BASE_PARSE_SINK_PAD (ac3parse));
+  GST_PAD_SET_ACCEPT_TEMPLATE (GST_BASE_PARSE_SINK_PAD (ac3parse));
 }
 
 static void
@@ -466,7 +477,8 @@ gst_ac3_parse_frame_header (GstAc3Parse * parse, GstBuffer * buf, gint skip,
     goto cleanup;
   } else {
     GST_DEBUG_OBJECT (parse, "unexpected bsid %d", bsid);
-    return FALSE;
+    ret = FALSE;
+    goto cleanup;
   }
 
   GST_DEBUG_OBJECT (parse, "unexpected bsid %d", bsid);
@@ -497,7 +509,7 @@ gst_ac3_parse_handle_frame (GstBaseParse * parse,
 
   gst_buffer_map (buf, &map, GST_MAP_READ);
 
-  if (G_UNLIKELY (map.size < 6)) {
+  if (G_UNLIKELY (map.size < 8)) {
     *skipsize = 1;
     goto cleanup;
   }
@@ -589,7 +601,7 @@ gst_ac3_parse_handle_frame (GstBaseParse * parse,
     if (more || !gst_byte_reader_skip (&reader, frmsiz) ||
         !gst_byte_reader_get_uint16_be (&reader, &word)) {
       GST_DEBUG_OBJECT (ac3parse, "... but not sufficient data");
-      gst_base_parse_set_min_frame_size (parse, framesize + 6);
+      gst_base_parse_set_min_frame_size (parse, framesize + 8);
       *skipsize = 0;
       goto cleanup;
     } else {
@@ -660,6 +672,145 @@ cleanup:
   return res;
 }
 
+
+/*
+ * MPEG-PS private1 streams add a 2 bytes "Audio Substream Headers" for each
+ * buffer (not each frame) with the offset of the next frame's start.
+ *
+ * Buffer 1:
+ * -------------------------------------------
+ * |firstAccUnit|AC3SyncWord|xxxxxxxxxxxxxxxxx
+ * -------------------------------------------
+ * Buffer 2:
+ * -------------------------------------------
+ * |firstAccUnit|xxxxxx|AC3SyncWord|xxxxxxxxxx
+ * -------------------------------------------
+ *
+ * These 2 bytes can be dropped safely as they do not include any timing
+ * information, only the offset to the start of the next frame.
+ *
+ * From http://stnsoft.com/DVD/ass-hdr.html:
+ * "FirstAccUnit offset to frame which corresponds to PTS value offset 0 is the
+ * last byte of FirstAccUnit, ie add the offset of byte 2 to get the AU's offset
+ * The value 0000 indicates there is no first access unit"
+ * */
+
+static GstFlowReturn
+gst_ac3_parse_chain_priv (GstPad * pad, GstObject * parent, GstBuffer * buf)
+{
+  GstAc3Parse *ac3parse = GST_AC3_PARSE (parent);
+  GstFlowReturn ret;
+  gsize size;
+  guint8 data[2];
+  gint offset;
+  gint len;
+  GstBuffer *subbuf;
+  gint first_access;
+
+  size = gst_buffer_get_size (buf);
+  if (size < 2)
+    goto not_enough_data;
+
+  gst_buffer_extract (buf, 0, data, 2);
+  first_access = (data[0] << 8) | data[1];
+
+  /* Skip the first_access header */
+  offset = 2;
+
+  if (first_access > 1) {
+    /* Length of data before first_access */
+    len = first_access - 1;
+
+    if (len <= 0 || offset + len > size)
+      goto bad_first_access_parameter;
+
+    subbuf = gst_buffer_copy_region (buf, GST_BUFFER_COPY_ALL, offset, len);
+    GST_BUFFER_DTS (subbuf) = GST_CLOCK_TIME_NONE;
+    GST_BUFFER_PTS (subbuf) = GST_CLOCK_TIME_NONE;
+    ret = ac3parse->baseparse_chainfunc (pad, parent, subbuf);
+    if (ret != GST_FLOW_OK) {
+      gst_buffer_unref (buf);
+      goto done;
+    }
+
+    offset += len;
+    len = size - offset;
+
+    if (len > 0) {
+      subbuf = gst_buffer_copy_region (buf, GST_BUFFER_COPY_ALL, offset, len);
+      GST_BUFFER_PTS (subbuf) = GST_BUFFER_PTS (buf);
+      GST_BUFFER_DTS (subbuf) = GST_BUFFER_DTS (buf);
+
+      ret = ac3parse->baseparse_chainfunc (pad, parent, subbuf);
+    }
+    gst_buffer_unref (buf);
+  } else {
+    /* first_access = 0 or 1, so if there's a timestamp it applies to the first byte */
+    subbuf =
+        gst_buffer_copy_region (buf, GST_BUFFER_COPY_ALL, offset,
+        size - offset);
+    GST_BUFFER_PTS (subbuf) = GST_BUFFER_PTS (buf);
+    GST_BUFFER_DTS (subbuf) = GST_BUFFER_DTS (buf);
+    gst_buffer_unref (buf);
+    ret = ac3parse->baseparse_chainfunc (pad, parent, subbuf);
+  }
+
+done:
+  return ret;
+
+/* ERRORS */
+not_enough_data:
+  {
+    GST_ELEMENT_ERROR (GST_ELEMENT (ac3parse), STREAM, FORMAT, (NULL),
+        ("Insufficient data in buffer. Can't determine first_acess"));
+    gst_buffer_unref (buf);
+    return GST_FLOW_ERROR;
+  }
+bad_first_access_parameter:
+  {
+    GST_ELEMENT_ERROR (GST_ELEMENT (ac3parse), STREAM, FORMAT, (NULL),
+        ("Bad first_access parameter (%d) in buffer", first_access));
+    gst_buffer_unref (buf);
+    return GST_FLOW_ERROR;
+  }
+}
+
+static GstFlowReturn
+gst_ac3_parse_pre_push_frame (GstBaseParse * parse, GstBaseParseFrame * frame)
+{
+  GstAc3Parse *ac3parse = GST_AC3_PARSE (parse);
+
+  if (!ac3parse->sent_codec_tag) {
+    GstTagList *taglist;
+    GstCaps *caps;
+
+    /* codec tag */
+    caps = gst_pad_get_current_caps (GST_BASE_PARSE_SRC_PAD (parse));
+    if (G_UNLIKELY (caps == NULL)) {
+      if (GST_PAD_IS_FLUSHING (GST_BASE_PARSE_SRC_PAD (parse))) {
+        GST_INFO_OBJECT (parse, "Src pad is flushing");
+        return GST_FLOW_FLUSHING;
+      } else {
+        GST_INFO_OBJECT (parse, "Src pad is not negotiated!");
+        return GST_FLOW_NOT_NEGOTIATED;
+      }
+    }
+
+    taglist = gst_tag_list_new_empty ();
+    gst_pb_utils_add_codec_description_to_tag_list (taglist,
+        GST_TAG_AUDIO_CODEC, caps);
+    gst_caps_unref (caps);
+
+    gst_base_parse_merge_tags (parse, taglist, GST_TAG_MERGE_REPLACE);
+    gst_tag_list_unref (taglist);
+
+    /* also signals the end of first-frame processing */
+    ac3parse->sent_codec_tag = TRUE;
+  }
+
+  return GST_FLOW_OK;
+}
+
 static gboolean
 gst_ac3_parse_src_event (GstBaseParse * parse, GstEvent * event)
 {
@@ -690,6 +841,57 @@ gst_ac3_parse_src_event (GstBaseParse * parse, GstEvent * event)
   return GST_BASE_PARSE_CLASS (parent_class)->src_event (parse, event);
 }
 
+static void
+remove_fields (GstCaps * caps)
+{
+  guint i, n;
+
+  n = gst_caps_get_size (caps);
+  for (i = 0; i < n; i++) {
+    GstStructure *s = gst_caps_get_structure (caps, i);
+
+    gst_structure_remove_field (s, "framed");
+    gst_structure_remove_field (s, "alignment");
+  }
+}
+
+static GstCaps *
+extend_caps (GstCaps * caps, gboolean add_private)
+{
+  guint i, n;
+  GstCaps *ncaps = gst_caps_new_empty ();
+
+  n = gst_caps_get_size (caps);
+  for (i = 0; i < n; i++) {
+    GstStructure *s = gst_caps_get_structure (caps, i);
+
+    if (add_private && !gst_structure_has_name (s, "audio/x-private1-ac3")) {
+      GstStructure *ns = gst_structure_copy (s);
+      gst_structure_set_name (ns, "audio/x-private1-ac3");
+      gst_caps_append_structure (ncaps, ns);
+    } else if (!add_private &&
+        gst_structure_has_name (s, "audio/x-private1-ac3")) {
+      GstStructure *ns = gst_structure_copy (s);
+      gst_structure_set_name (ns, "audio/x-ac3");
+      gst_caps_append_structure (ncaps, ns);
+      ns = gst_structure_copy (s);
+      gst_structure_set_name (ns, "audio/x-eac3");
+      gst_caps_append_structure (ncaps, ns);
+    } else if (!add_private) {
+      gst_caps_append_structure (ncaps, gst_structure_copy (s));
+    }
+  }
+
+  if (add_private) {
+    gst_caps_append (caps, ncaps);
+  } else {
+    gst_caps_unref (caps);
+    caps = ncaps;
+  }
+
+  return caps;
+}
+
 static GstCaps *
 gst_ac3_parse_get_sink_caps (GstBaseParse * parse, GstCaps * filter)
 {
@@ -697,31 +899,28 @@ gst_ac3_parse_get_sink_caps (GstBaseParse * parse, GstCaps * filter)
   GstCaps *res;
 
   templ = gst_pad_get_pad_template_caps (GST_BASE_PARSE_SINK_PAD (parse));
-  peercaps = gst_pad_peer_query_caps (GST_BASE_PARSE_SRC_PAD (parse), filter);
+  if (filter) {
+    GstCaps *fcopy = gst_caps_copy (filter);
+    /* Remove the fields we convert */
+    remove_fields (fcopy);
+    /* we do not ask downstream to handle x-private1-ac3 */
+    fcopy = extend_caps (fcopy, FALSE);
+    peercaps = gst_pad_peer_query_caps (GST_BASE_PARSE_SRC_PAD (parse), fcopy);
+    gst_caps_unref (fcopy);
+  } else
+    peercaps = gst_pad_peer_query_caps (GST_BASE_PARSE_SRC_PAD (parse), NULL);
 
   if (peercaps) {
-    guint i, n;
-
     /* Remove the framed and alignment field. We can convert
      * between different alignments. */
     peercaps = gst_caps_make_writable (peercaps);
-    n = gst_caps_get_size (peercaps);
-    for (i = 0; i < n; i++) {
-      GstStructure *s = gst_caps_get_structure (peercaps, i);
-
-      gst_structure_remove_field (s, "framed");
-      gst_structure_remove_field (s, "alignment");
-    }
+    remove_fields (peercaps);
+    /* also allow for x-private1-ac3 input */
+    peercaps = extend_caps (peercaps, TRUE);
 
     res = gst_caps_intersect_full (peercaps, templ, GST_CAPS_INTERSECT_FIRST);
     gst_caps_unref (peercaps);
-    res = gst_caps_make_writable (res);
-
-    /* Append the template caps because we still want to accept
-     * caps without any fields in the case upstream does not
-     * know anything.
-     */
-    gst_caps_append (res, templ);
+    gst_caps_unref (templ);
   } else {
     res = templ;
   }
@@ -736,4 +935,19 @@ gst_ac3_parse_get_sink_caps (GstBaseParse * parse, GstCaps * filter)
   }
 
   return res;
+}
+
+static gboolean
+gst_ac3_parse_set_sink_caps (GstBaseParse * parse, GstCaps * caps)
+{
+  GstStructure *s;
+  GstAc3Parse *ac3parse = GST_AC3_PARSE (parse);
+
+  s = gst_caps_get_structure (caps, 0);
+  if (gst_structure_has_name (s, "audio/x-private1-ac3")) {
+    gst_pad_set_chain_function (parse->sinkpad, gst_ac3_parse_chain_priv);
+  } else {
+    gst_pad_set_chain_function (parse->sinkpad, ac3parse->baseparse_chainfunc);
+  }
+  return TRUE;
 }

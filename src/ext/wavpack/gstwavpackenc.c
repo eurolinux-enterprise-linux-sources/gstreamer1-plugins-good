@@ -15,8 +15,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
@@ -136,9 +136,7 @@ gst_wavpack_enc_mode_get_type (void)
       {GST_WAVPACK_ENC_MODE_FAST, "Fast Compression", "fast"},
       {GST_WAVPACK_ENC_MODE_DEFAULT, "Normal Compression", "normal"},
       {GST_WAVPACK_ENC_MODE_HIGH, "High Compression", "high"},
-#ifndef WAVPACK_OLD_API
       {GST_WAVPACK_ENC_MODE_VERY_HIGH, "Very High Compression", "veryhigh"},
-#endif
       {0, NULL, NULL}
     };
 
@@ -211,12 +209,9 @@ gst_wavpack_enc_class_init (GstWavpackEncClass * klass)
   GstAudioEncoderClass *base_class = (GstAudioEncoderClass *) (klass);
 
   /* add pad templates */
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&sink_factory));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&src_factory));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&wvcsrc_factory));
+  gst_element_class_add_static_pad_template (element_class, &sink_factory);
+  gst_element_class_add_static_pad_template (element_class, &src_factory);
+  gst_element_class_add_static_pad_template (element_class, &wvcsrc_factory);
 
   /* set element details */
   gst_element_class_set_static_metadata (element_class, "Wavpack audio encoder",
@@ -347,6 +342,8 @@ gst_wavpack_enc_init (GstWavpackEnc * enc)
 
   /* require perfect ts */
   gst_audio_encoder_set_perfect_timestamp (benc, TRUE);
+
+  GST_PAD_SET_ACCEPT_TEMPLATE (GST_AUDIO_ENCODER_SINK_PAD (enc));
 }
 
 
@@ -466,12 +463,10 @@ gst_wavpack_enc_set_wp_config (GstWavpackEnc * enc)
     case GST_WAVPACK_ENC_MODE_HIGH:
       enc->wp_config->flags |= CONFIG_HIGH_FLAG;
       break;
-#ifndef WAVPACK_OLD_API
     case GST_WAVPACK_ENC_MODE_VERY_HIGH:
       enc->wp_config->flags |= CONFIG_HIGH_FLAG;
       enc->wp_config->flags |= CONFIG_VERY_HIGH_FLAG;
       break;
-#endif
   }
 
   /* Bitrate, enables lossy mode */
@@ -590,7 +585,9 @@ gst_wavpack_enc_push_block (void *id, void *data, int32_t count)
         enc->pending_offset = wph.block_index;
       }
 
-      if (!(wph.flags & FINAL_BLOCK))
+      /* Is this the not-final block of multi-channel data? If so, just
+       * accumulate and return here. */
+      if (!(wph.flags & FINAL_BLOCK) && ((block[32] & ID_OPTIONAL_DATA) == 0))
         return TRUE;
 
       buffer = enc->pending_buffer;

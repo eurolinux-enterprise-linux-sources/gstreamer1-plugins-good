@@ -16,8 +16,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
@@ -183,8 +183,8 @@ gst_oss_sink_class_init (GstOssSinkClass * klass)
       "Erik Walthinsen <omega@cse.ogi.edu>, "
       "Wim Taymans <wim.taymans@chello.be>");
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&osssink_sink_factory));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &osssink_sink_factory);
 }
 
 static void

@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 // --- CHUI EN TRAIN DE SUPPRIMER LES EXTERN RESOLX ET C_RESOLY ---
 
@@ -71,16 +71,6 @@ setPixelRGB_ (Pixel * buffer, Uint x, Color c)
   buffer[x].channels.r = c.r;
   buffer[x].channels.g = c.v;
   buffer[x].channels.b = c.b;
-}
-
-static inline void
-getPixelRGB (PluginInfo * goomInfo, Pixel * buffer, Uint x, Uint y, Color * c)
-{
-  Pixel i = *(buffer + (x + y * goomInfo->screen.width));
-
-  c->b = i.channels.b;
-  c->v = i.channels.g;
-  c->r = i.channels.r;
 }
 
 static inline void
@@ -741,7 +731,7 @@ generatePrecalCoef (int precalCoef[16][16])
       if (!(coefh || coefv)) {
         i = 255;
       } else {
-        int i1, i2, i3, i4;
+        Uint i1, i2, i3, i4;
 
         i1 = diffcoeffh * diffcoeffv;
         i2 = coefh * diffcoeffv;

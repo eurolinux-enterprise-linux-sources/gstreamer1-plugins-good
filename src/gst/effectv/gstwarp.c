@@ -17,8 +17,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /*
@@ -245,10 +245,10 @@ gst_warptv_class_init (GstWarpTVClass * klass)
       "WarpTV does realtime goo'ing of the video input",
       "Sam Lantinga <slouken@devolution.com>");
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_warptv_sink_template));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_warptv_src_template));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_warptv_sink_template);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_warptv_src_template);
 
   trans_class->start = GST_DEBUG_FUNCPTR (gst_warptv_start);
 

@@ -20,8 +20,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
@@ -334,7 +334,7 @@ gst_agingtv_transform_frame (GstVideoFilter * filter, GstVideoFrame * in_frame,
   if (agingtv->color_aging)
     coloraging (src, dest, video_size, &agingtv->coloraging_state);
   else
-    memcpy (dest, src, video_size);
+    memcpy (dest, src, stride * height);
 
   scratching (agingtv->scratches, agingtv->scratch_lines, dest, width, height);
   if (agingtv->pits)
@@ -381,10 +381,10 @@ gst_agingtv_class_init (GstAgingTVClass * klass)
       "AgingTV adds age to video input using scratches and dust",
       "Sam Lantinga <slouken@devolution.com>");
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_agingtv_sink_template));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_agingtv_src_template));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_agingtv_sink_template);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_agingtv_src_template);
 
   trans_class->start = GST_DEBUG_FUNCPTR (gst_agingtv_start);
 

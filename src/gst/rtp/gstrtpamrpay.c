@@ -13,22 +13,25 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
-#ifdef HAVE_CONFIG_H
-#  include "config.h"
-#endif
-
-#include <string.h>
-
-#include <gst/rtp/gstrtpbuffer.h>
-
-#include "gstrtpamrpay.h"
-
-GST_DEBUG_CATEGORY_STATIC (rtpamrpay_debug);
-#define GST_CAT_DEFAULT (rtpamrpay_debug)
+/**
+ * SECTION:element-rtpamrpay
+ * @see_also: rtpamrdepay
+ *
+ * Payload AMR audio into RTP packets according to RFC 3267.
+ * For detailed information see: http://www.rfc-editor.org/rfc/rfc3267.txt
+ *
+ * <refsect2>
+ * <title>Example pipeline</title>
+ * |[
+ * gst-launch-1.0 -v audiotestsrc ! amrnbenc ! rtpamrpay ! udpsink
+ * ]| This example pipeline will encode and payload an AMR stream. Refer to
+ * the rtpamrdepay example to depayload and decode the RTP stream.
+ * </refsect2>
+ */
 
 /* references:
  *
@@ -42,6 +45,21 @@ GST_DEBUG_CATEGORY_STATIC (rtpamrpay_debug);
  *                                 Frame structure
  *                    (3GPP TS 26.201 version 6.0.0 Release 6)
  */
+
+#ifdef HAVE_CONFIG_H
+#  include "config.h"
+#endif
+
+#include <string.h>
+
+#include <gst/rtp/gstrtpbuffer.h>
+#include <gst/audio/audio.h>
+
+#include "gstrtpamrpay.h"
+#include "gstrtputils.h"
+
+GST_DEBUG_CATEGORY_STATIC (rtpamrpay_debug);
+#define GST_CAT_DEFAULT (rtpamrpay_debug)
 
 static GstStaticPadTemplate gst_rtp_amr_pay_sink_template =
     GST_STATIC_PAD_TEMPLATE ("sink",
@@ -107,10 +125,10 @@ gst_rtp_amr_pay_class_init (GstRtpAMRPayClass * klass)
 
   gstelement_class->change_state = gst_rtp_amr_pay_change_state;
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_amr_pay_src_template));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_amr_pay_sink_template));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_amr_pay_src_template);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_amr_pay_sink_template);
 
   gst_element_class_set_static_metadata (gstelement_class, "RTP AMR payloader",
       "Codec/Payloader/Network/RTP",
@@ -243,7 +261,7 @@ gst_rtp_amr_pay_handle_buffer (GstRTPBasePayload * basepayload,
 
   gst_buffer_map (buffer, &map, GST_MAP_READ);
 
-  timestamp = GST_BUFFER_TIMESTAMP (buffer);
+  timestamp = GST_BUFFER_PTS (buffer);
   duration = GST_BUFFER_DURATION (buffer);
 
   /* setup frame size pointer */
@@ -299,7 +317,7 @@ gst_rtp_amr_pay_handle_buffer (GstRTPBasePayload * basepayload,
   gst_rtp_buffer_map (outbuf, GST_MAP_WRITE, &rtp);
 
   /* copy timestamp */
-  GST_BUFFER_TIMESTAMP (outbuf) = timestamp;
+  GST_BUFFER_PTS (outbuf) = timestamp;
 
   if (duration != GST_CLOCK_TIME_NONE)
     GST_BUFFER_DURATION (outbuf) = duration;
@@ -372,9 +390,12 @@ gst_rtp_amr_pay_handle_buffer (GstRTPBasePayload * basepayload,
   }
 
   gst_buffer_unmap (buffer, &map);
-  gst_buffer_unref (buffer);
-
   gst_rtp_buffer_unmap (&rtp);
+
+  gst_rtp_copy_meta (GST_ELEMENT_CAST (rtpamrpay), outbuf, buffer,
+      g_quark_from_static_string (GST_META_TAG_AUDIO_STR));
+
+  gst_buffer_unref (buffer);
 
   ret = gst_rtp_base_payload_push (basepayload, outbuf);
 

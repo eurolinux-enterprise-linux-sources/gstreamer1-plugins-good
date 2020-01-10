@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
@@ -32,7 +32,7 @@
  * <refsect2>
  * <title>Example launch line</title>
  * |[
- * gst-launch-1.0 -v videotestsrc ! video/x-raw,format=(string)AYUV,width=640,height=480 ! shapewipe position=0.5 name=shape ! videomixer name=mixer ! videoconvert ! autovideosink     filesrc location=mask.png ! typefind ! decodebin2 ! videoconvert ! videoscale ! queue ! shape.mask_sink    videotestsrc pattern=snow ! video/x-raw,format=(string)AYUV,width=640,height=480 ! queue ! mixer.
+ * gst-launch-1.0 -v videotestsrc ! video/x-raw,format=AYUV,width=640,height=480 ! shapewipe position=0.5 name=shape ! videomixer name=mixer ! videoconvert ! autovideosink     filesrc location=mask.png ! typefind ! decodebin ! videoconvert ! videoscale ! queue ! shape.mask_sink    videotestsrc pattern=snow ! video/x-raw,format=AYUV,width=640,height=480 ! queue ! mixer.
  * ]| This pipeline adds the transition from mask.png with position 0.5 to an SMPTE test screen and snow.
  * </refsect2>
  */
@@ -156,12 +156,12 @@ gst_shape_wipe_class_init (GstShapeWipeClass * klass)
       "Adds a shape wipe transition to a video stream",
       "Sebastian Dröge <sebastian.droege@collabora.co.uk>");
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&video_sink_pad_template));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&mask_sink_pad_template));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&src_pad_template));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &video_sink_pad_template);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &mask_sink_pad_template);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &src_pad_template);
 }
 
 static void
@@ -329,8 +329,9 @@ gst_shape_wipe_video_sink_getcaps (GstShapeWipe * self, GstPad * pad,
 {
   GstCaps *templ, *ret, *tmp;
 
-  if (gst_pad_has_current_caps (pad))
-    return gst_pad_get_current_caps (pad);
+  ret = gst_pad_get_current_caps (pad);
+  if (ret != NULL)
+    return ret;
 
   templ = gst_pad_get_pad_template_caps (pad);
   tmp = gst_pad_peer_query_caps (self->srcpad, NULL);
@@ -448,20 +449,21 @@ static GstCaps *
 gst_shape_wipe_mask_sink_getcaps (GstShapeWipe * self, GstPad * pad,
     GstCaps * filter)
 {
-  GstCaps *ret, *tmp;
+  GstCaps *ret, *tmp, *tcaps;
   guint i, n;
 
-  if (gst_pad_has_current_caps (pad))
-    return gst_pad_get_current_caps (pad);
+  ret = gst_pad_get_current_caps (pad);
+  if (ret != NULL)
+    return ret;
 
+  tcaps = gst_pad_get_pad_template_caps (self->video_sinkpad);
   tmp = gst_pad_peer_query_caps (self->video_sinkpad, NULL);
   if (tmp) {
-    ret =
-        gst_caps_intersect (tmp,
-        gst_pad_get_pad_template_caps (self->video_sinkpad));
+    ret = gst_caps_intersect (tmp, tcaps);
+    gst_caps_unref (tcaps);
     gst_caps_unref (tmp);
   } else {
-    ret = gst_pad_get_pad_template_caps (self->video_sinkpad);
+    ret = tcaps;
   }
 
   GST_LOG_OBJECT (pad, "video sink accepted caps: %" GST_PTR_FORMAT, ret);
@@ -486,6 +488,7 @@ gst_shape_wipe_mask_sink_getcaps (GstShapeWipe * self, GstPad * pad,
   if (gst_caps_is_empty (ret))
     goto done;
 
+  ret = gst_caps_make_writable (ret);
   n = gst_caps_get_size (ret);
   tmp = gst_caps_new_empty ();
   for (i = 0; i < n; i++) {
@@ -534,10 +537,13 @@ gst_shape_wipe_src_getcaps (GstPad * pad, GstCaps * filter)
   GstShapeWipe *self = GST_SHAPE_WIPE (gst_pad_get_parent (pad));
   GstCaps *templ, *ret, *tmp;
 
-  if (gst_pad_has_current_caps (pad))
-    return gst_pad_get_current_caps (pad);
-  else if (gst_pad_has_current_caps (self->video_sinkpad))
-    return gst_pad_get_current_caps (self->video_sinkpad);
+  ret = gst_pad_get_current_caps (pad);
+  if (ret != NULL)
+    return ret;
+
+  ret = gst_pad_get_current_caps (self->video_sinkpad);
+  if (ret != NULL)
+    return ret;
 
   templ = gst_pad_get_pad_template_caps (self->video_sinkpad);
   tmp = gst_pad_peer_query_caps (self->video_sinkpad, NULL);
@@ -831,7 +837,6 @@ gst_shape_wipe_video_sink_chain (GstPad * pad, GstObject * parent,
   GstFlowReturn ret = GST_FLOW_OK;
   GstBuffer *mask = NULL, *outbuf = NULL;
   GstClockTime timestamp;
-  gboolean new_outbuf = FALSE;
   GstVideoFrame inframe, outframe, maskframe;
 
   if (G_UNLIKELY (GST_VIDEO_INFO_FORMAT (&self->vinfo) ==
@@ -866,20 +871,10 @@ gst_shape_wipe_video_sink_chain (GstPad * pad, GstObject * parent,
   if (!gst_shape_wipe_do_qos (self, GST_BUFFER_TIMESTAMP (buffer)))
     goto qos;
 
-  /* Try to blend inplace, if it's not possible
-   * get a new buffer from downstream. */
-  if (!gst_buffer_is_writable (buffer)) {
-    outbuf = gst_buffer_new_allocate (NULL, gst_buffer_get_size (buffer), NULL);
-    gst_buffer_copy_into (outbuf, buffer, GST_BUFFER_COPY_METADATA, 0, -1);
-    new_outbuf = TRUE;
-  } else {
-    outbuf = buffer;
-  }
-
-  gst_video_frame_map (&inframe, &self->vinfo, buffer,
-      new_outbuf ? GST_MAP_READ : GST_MAP_READWRITE);
-  gst_video_frame_map (&outframe, &self->vinfo, outbuf,
-      new_outbuf ? GST_MAP_WRITE : GST_MAP_READWRITE);
+  /* Will blend inplace if buffer is writable */
+  outbuf = gst_buffer_make_writable (buffer);
+  gst_video_frame_map (&outframe, &self->vinfo, outbuf, GST_MAP_READWRITE);
+  gst_video_frame_map (&inframe, &self->vinfo, outbuf, GST_MAP_READ);
 
   gst_video_frame_map (&maskframe, &self->minfo, mask, GST_MAP_READ);
 
@@ -910,8 +905,6 @@ gst_shape_wipe_video_sink_chain (GstPad * pad, GstObject * parent,
   gst_video_frame_unmap (&maskframe);
 
   gst_buffer_unref (mask);
-  if (new_outbuf)
-    gst_buffer_unref (buffer);
 
   ret = gst_pad_push (self->srcpad, outbuf);
   if (G_UNLIKELY (ret != GST_FLOW_OK))
@@ -941,8 +934,9 @@ qos:
   }
 push_failed:
   {
-    GST_ERROR_OBJECT (self, "Pushing buffer downstream failed: %s",
-        gst_flow_get_name (ret));
+    if (ret != GST_FLOW_FLUSHING)
+      GST_ERROR_OBJECT (self, "Pushing buffer downstream failed: %s",
+          gst_flow_get_name (ret));
     return ret;
   }
 }

@@ -13,13 +13,16 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
+
+/* TODO: We use gdk_cairo_create() and others, which are deprecated */
+#define GDK_DISABLE_DEPRECATION_WARNINGS
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -170,7 +173,7 @@ main (int argc, char *argv[])
 
   spectrum = gst_element_factory_make ("spectrum", "spectrum");
   g_object_set (G_OBJECT (spectrum), "bands", spect_bands, "threshold", -80,
-      "message", TRUE, NULL);
+      "post-messages", TRUE, NULL);
 
   sink = gst_element_factory_make ("fakesink", "sink");
 

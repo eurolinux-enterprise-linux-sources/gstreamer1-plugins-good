@@ -39,8 +39,14 @@
 /* The GIO modules directory. */
 #undef GIO_MODULE_DIR
 
+/* The GIO install prefix. */
+#undef GIO_PREFIX
+
 /* GStreamer API Version */
 #define GST_API_VERSION "1.0"
+
+/* Define if extra runtime checks should be enabled */
+#undef GST_ENABLE_EXTRA_CHECKS
 
 /* Defined if gcov is enabled to force a rebuild due to config.h changing */
 #undef GST_GCOV_ENABLED
@@ -58,16 +64,13 @@
 #define GST_PACKAGE_ORIGIN "Unknown package origin"
 
 /* GStreamer package release date/time for plugins as YYYY-MM-DD */
-#define GST_PACKAGE_RELEASE_DATETIME "2013-04-26"
+#define GST_PACKAGE_RELEASE_DATETIME "2017-02-23"
 
 /* Define if static plugins should be built */
 #undef GST_PLUGIN_BUILD_STATIC
 
-/* struct v4l2_buffer missing */
-#undef GST_V4L2_MISSING_BUFDECL
-
-/* I know the API is subject to change. */
-#undef G_UDEV_API_IS_SUBJECT_TO_CHANGE
+/* Define if Video4Linux probe shall be run at plugin load */
+#undef GST_V4L2_ENABLE_PROBE
 
 /* Define to enable aalib ASCII Art library (used by aasink). */
 #undef HAVE_AALIB
@@ -90,11 +93,20 @@
    the CoreFoundation framework. */
 #undef HAVE_CFPREFERENCESCOPYAPPVALUE
 
+/* Define to 1 if you have the `clock_gettime' function. */
+#undef HAVE_CLOCK_GETTIME
+
 /* Define to 1 if you have the `cosh' function. */
 #undef HAVE_COSH
 
+/* Define if the target CPU is AARCH64 */
+#undef HAVE_CPU_AARCH64
+
 /* Define if the target CPU is an Alpha */
 #undef HAVE_CPU_ALPHA
+
+/* Define if the target CPU is an ARC */
+#undef HAVE_CPU_ARC
 
 /* Define if the target CPU is an ARM */
 #undef HAVE_CPU_ARM
@@ -184,7 +196,7 @@
 /* Define if the GNU gettext() function is already present or preinstalled. */
 #undef HAVE_GETTEXT
 
-/* Define to enable Video 4 Linux 2 (used by v4l2src). */
+/* Define to enable Video 4 Linux 2 (used by video4linux2). */
 #undef HAVE_GST_V4L2
 
 /* Whether gudev is available for device detection */
@@ -226,9 +238,6 @@
 /* Define to enable Portable Network Graphics library (used by png). */
 #undef HAVE_LIBPNG
 
-/* soup gnome integration */
-#undef HAVE_LIBSOUP_GNOME
-
 /* Whether libv4l2 is available for video buffer conversion */
 #undef HAVE_LIBV4L2
 
@@ -264,6 +273,12 @@
 
 /* Define to 1 if you have the <process.h> header file. */
 #define HAVE_PROCESS_H 1
+
+/* Define if you have POSIX threads libraries and header files. */
+#undef HAVE_PTHREAD
+
+/* Have PTHREAD_PRIO_INHERIT. */
+#undef HAVE_PTHREAD_PRIO_INHERIT
 
 /* Define to enable pulseaudio plug-in (used by pulseaudio). */
 #undef HAVE_PULSE
@@ -334,8 +349,17 @@
 /* Defined if the VP8 encoder is available */
 #undef HAVE_VP8_ENCODER
 
+/* Defined if the VP9 decoder is available */
+#undef HAVE_VP9_DECODER
+
+/* Defined if the VP9 encoder is available */
+#undef HAVE_VP9_ENCODER
+
 /* Define to enable VPX decoder (used by vpx). */
 #undef HAVE_VPX
+
+/* Defined if the VPX library version is 1.4 or bigger */
+#undef HAVE_VPX_1_4
 
 /* Define to enable Win32 WaveForm (used by waveformsink). */
 #undef HAVE_WAVEFORM
@@ -346,11 +370,14 @@
 /* Define to enable X libraries and plugins (used by ximagesrc). */
 #undef HAVE_X
 
-/* Define to enable X Shared Memory extension. */
-#undef HAVE_XSHM
+/* Defined if Xdamage is available */
+#undef HAVE_XDAMAGE
 
-/* Define to enable X11 XVideo extensions. */
-#undef HAVE_XVIDEO
+/* Defined if Xfixes is available */
+#undef HAVE_XFIXES
+
+/* Defined if XShm is available */
+#undef HAVE_XSHM
 
 /* Define to enable zlib support for qtdemux/matroska. */
 #undef HAVE_ZLIB
@@ -361,12 +388,8 @@
 /* gettext locale dir */
 #define LOCALEDIR PREFIX "\\share\\locale"
 
-/* Define to the sub-directory in which libtool stores uninstalled libraries.
-   */
+/* Define to the sub-directory where libtool stores uninstalled libraries. */
 #undef LT_OBJDIR
-
-/* Define to 1 if your C compiler doesn't accept -c and -o together. */
-#undef NO_MINUS_C_MINUS_O
 
 /* Name of package */
 #define PACKAGE "gst-plugins-good"
@@ -378,7 +401,7 @@
 #define PACKAGE_NAME "GStreamer Good Plug-ins"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "GStreamer Good Plug-ins 1.0.7"
+#define PACKAGE_STRING "GStreamer Good Plug-ins 1.10.4"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "gst-plugins-good"
@@ -387,7 +410,7 @@
 #undef PACKAGE_URL
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "1.0.7"
+#define PACKAGE_VERSION "1.10.4"
 
 /* directory where plugins are located */
 #ifdef _DEBUG
@@ -395,6 +418,10 @@
 #else
 #  define PLUGINDIR PREFIX "\\lib\\gstreamer-0.11"
 #endif
+
+/* Define to necessary symbol if this constant uses a non-standard name on
+   your system. */
+#undef PTHREAD_CREATE_JOINABLE
 
 /* The size of `char', as computed by sizeof. */
 #undef SIZEOF_CHAR
@@ -411,9 +438,6 @@
 /* The size of `void*', as computed by sizeof. */
 #undef SIZEOF_VOIDP
 
-/* defined if speex 1.0.x API detected */
-#undef SPEEX_1_0
-
 /* Define to 1 if you have the ANSI C header files. */
 #undef STDC_HEADERS
 
@@ -421,10 +445,7 @@
 #undef TARGET_CPU
 
 /* Version number of package */
-#define VERSION "1.0.7"
-
-/* old wavpack API */
-#undef WAVPACK_OLD_API
+#define VERSION "1.10.4"
 
 /* Define WORDS_BIGENDIAN to 1 if your processor stores words with the most
    significant byte first (like Motorola and SPARC, unlike Intel). */
@@ -437,6 +458,3 @@
 #  undef WORDS_BIGENDIAN
 # endif
 #endif
-
-/* Define to 1 if the X Window System is missing or not being used. */
-#undef X_DISPLAY_MISSING

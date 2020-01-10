@@ -14,8 +14,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -180,10 +180,10 @@ gst_gdk_pixbuf_dec_class_init (GstGdkPixbufDecClass * klass)
   gstelement_class->change_state =
       GST_DEBUG_FUNCPTR (gst_gdk_pixbuf_dec_change_state);
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_gdk_pixbuf_dec_src_template));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_gdk_pixbuf_dec_sink_template));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_gdk_pixbuf_dec_src_template);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_gdk_pixbuf_dec_sink_template);
   gst_element_class_set_static_metadata (gstelement_class,
       "GdkPixbuf image decoder", "Codec/Decoder/Image",
       "Decodes images in a video stream using GdkPixbuf",
@@ -215,6 +215,7 @@ gst_gdk_pixbuf_dec_init (GstGdkPixbufDec * filter)
 
   filter->last_timestamp = GST_CLOCK_TIME_NONE;
   filter->pixbuf_loader = NULL;
+  filter->packetized = FALSE;
 }
 
 static gboolean
@@ -227,6 +228,8 @@ gst_gdk_pixbuf_dec_setup_pool (GstGdkPixbufDec * filter, GstVideoInfo * info)
   guint size, min, max;
 
   target = gst_pad_get_current_caps (filter->srcpad);
+  if (!target)
+    return FALSE;
 
   /* try to get a bufferpool now */
   /* find a pool for the negotiated caps now */
@@ -245,6 +248,8 @@ gst_gdk_pixbuf_dec_setup_pool (GstGdkPixbufDec * filter, GstVideoInfo * info)
     size = info->size;
     min = max = 0;
   }
+
+  gst_query_unref (query);
 
   if (pool == NULL) {
     /* we did not get a pool, make one ourselves then */
@@ -295,6 +300,7 @@ gst_gdk_pixbuf_dec_flush (GstGdkPixbufDec * filter)
   if (GST_VIDEO_INFO_FORMAT (&filter->info) == GST_VIDEO_FORMAT_UNKNOWN) {
     GstVideoInfo info;
     GstVideoFormat fmt;
+    GList *l;
 
     GST_DEBUG ("Set size to %dx%d", width, height);
 
@@ -323,6 +329,11 @@ gst_gdk_pixbuf_dec_flush (GstGdkPixbufDec * filter)
     gst_caps_unref (caps);
 
     gst_gdk_pixbuf_dec_setup_pool (filter, &info);
+
+    for (l = filter->pending_events; l; l = l->next)
+      gst_pad_push_event (filter->srcpad, l->data);
+    g_list_free (filter->pending_events);
+    filter->pending_events = NULL;
   }
 
   ret = gst_buffer_pool_acquire_buffer (filter->pool, &outbuf, NULL);
@@ -404,27 +415,48 @@ gst_gdk_pixbuf_dec_sink_event (GstPad * pad, GstObject * parent,
         /* as long as we don't have flow returns for event functions we need
          * to post an error here, or the application might never know that
          * things failed */
-        if (res != GST_FLOW_OK && res != GST_FLOW_FLUSHING) {
-          GST_ELEMENT_ERROR (pixbuf, STREAM, FAILED, (NULL),
-              ("Flow: %s", gst_flow_get_name (res)));
+        if (res != GST_FLOW_OK && res != GST_FLOW_FLUSHING
+            && res != GST_FLOW_EOS && res != GST_FLOW_NOT_LINKED) {
+          GST_ELEMENT_FLOW_ERROR (pixbuf, res);
           forward = FALSE;
           ret = FALSE;
         }
       }
       break;
-    case GST_EVENT_SEGMENT:
     case GST_EVENT_FLUSH_STOP:
+      g_list_free_full (pixbuf->pending_events,
+          (GDestroyNotify) gst_event_unref);
+      pixbuf->pending_events = NULL;
+      /* Fall through */
+    case GST_EVENT_SEGMENT:
+    {
+      const GstSegment *segment;
+      gst_event_parse_segment (event, &segment);
+      if (segment->format == GST_FORMAT_BYTES)
+        pixbuf->packetized = FALSE;
+      else
+        pixbuf->packetized = TRUE;
       if (pixbuf->pixbuf_loader != NULL) {
         gdk_pixbuf_loader_close (pixbuf->pixbuf_loader, NULL);
         g_object_unref (G_OBJECT (pixbuf->pixbuf_loader));
         pixbuf->pixbuf_loader = NULL;
       }
       break;
+    }
     default:
       break;
   }
   if (forward) {
-    ret = gst_pad_event_default (pad, parent, event);
+    if (!gst_pad_has_current_caps (pixbuf->srcpad) &&
+        GST_EVENT_IS_SERIALIZED (event)
+        && GST_EVENT_TYPE (event) > GST_EVENT_CAPS
+        && GST_EVENT_TYPE (event) != GST_EVENT_FLUSH_STOP
+        && GST_EVENT_TYPE (event) != GST_EVENT_EOS) {
+      ret = TRUE;
+      pixbuf->pending_events = g_list_prepend (pixbuf->pending_events, event);
+    } else {
+      ret = gst_pad_event_default (pad, parent, event);
+    }
   } else {
     gst_event_unref (event);
   }
@@ -460,9 +492,7 @@ gst_gdk_pixbuf_dec_chain (GstPad * pad, GstObject * parent, GstBuffer * buf)
           &error))
     goto error;
 
-  /* packetised mode? *//* FIXME: shouln't this be fps_d != 0, since 0/1
-   * might be packetised mode but variable framerate */
-  if (filter->in_fps_n != 0) {
+  if (filter->packetized == TRUE) {
     gdk_pixbuf_loader_close (filter->pixbuf_loader, NULL);
     ret = gst_gdk_pixbuf_dec_flush (filter);
     g_object_unref (filter->pixbuf_loader);
@@ -515,6 +545,13 @@ gst_gdk_pixbuf_dec_change_state (GstElement * element,
       if (dec->pool) {
         gst_buffer_pool_set_active (dec->pool, FALSE);
         gst_object_replace ((GstObject **) & dec->pool, NULL);
+      }
+      g_list_free_full (dec->pending_events, (GDestroyNotify) gst_event_unref);
+      dec->pending_events = NULL;
+      if (dec->pixbuf_loader != NULL) {
+        gdk_pixbuf_loader_close (dec->pixbuf_loader, NULL);
+        g_object_unref (G_OBJECT (dec->pixbuf_loader));
+        dec->pixbuf_loader = NULL;
       }
       break;
     default:

@@ -15,8 +15,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  *
  */
 
@@ -24,23 +24,6 @@
 #include <vpx/vpx_codec.h>
 
 G_BEGIN_DECLS
-
-/* Some compatibility defines for older libvpx versions */
-#ifndef VPX_IMG_FMT_I420
-#define VPX_IMG_FMT_I420 IMG_FMT_I420
-#endif
-
-#ifndef VPX_PLANE_Y
-#define VPX_PLANE_Y PLANE_Y
-#endif
-
-#ifndef VPX_PLANE_U
-#define VPX_PLANE_U PLANE_U
-#endif
-
-#ifndef VPX_PLANE_V
-#define VPX_PLANE_V PLANE_V
-#endif
 
 const char * gst_vpx_error_name (vpx_codec_err_t status);
 

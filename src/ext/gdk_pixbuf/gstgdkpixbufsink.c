@@ -13,13 +13,12 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
  * SECTION:element-gdkpixbufsink
- * @Since: 0.10.8
  *
  * This sink element takes RGB or RGBA images as input and wraps them into
  * #GdkPixbuf objects, for easy saving to file via the
@@ -150,8 +149,8 @@ gst_gdk_pixbuf_sink_class_init (GstGdkPixbufSinkClass * klass)
       "Sink/Video", "Output images as GdkPixbuf objects in bus messages",
       "Tim-Philipp Müller <tim centricular net>");
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&pixbufsink_sink_factory));
+  gst_element_class_add_static_pad_template (element_class,
+      &pixbufsink_sink_factory);
 
   gobject_class->set_property = gst_gdk_pixbuf_sink_set_property;
   gobject_class->get_property = gst_gdk_pixbuf_sink_get_property;
@@ -160,8 +159,6 @@ gst_gdk_pixbuf_sink_class_init (GstGdkPixbufSinkClass * klass)
    * GstGdkPixbuf:post-messages:
    *
    * Post messages on the bus containing pixbufs.
-   *
-   * Since: 0.10.17
    */
   g_object_class_install_property (gobject_class, PROP_POST_MESSAGES,
       g_param_spec_boolean ("post-messages", "Post Messages",
@@ -232,7 +229,7 @@ gst_gdk_pixbuf_sink_set_caps (GstBaseSink * basesink, GstCaps * caps)
   GstGdkPixbufSink *sink = GST_GDK_PIXBUF_SINK (basesink);
   GstVideoInfo info;
   GstVideoFormat fmt;
-  gint w, h, s, par_n, par_d;
+  gint w, h, par_n, par_d;
 
   GST_LOG_OBJECT (sink, "caps: %" GST_PTR_FORMAT, caps);
 
@@ -244,12 +241,17 @@ gst_gdk_pixbuf_sink_set_caps (GstBaseSink * basesink, GstCaps * caps)
   fmt = GST_VIDEO_INFO_FORMAT (&info);
   w = GST_VIDEO_INFO_WIDTH (&info);
   h = GST_VIDEO_INFO_HEIGHT (&info);
-  s = GST_VIDEO_INFO_COMP_PSTRIDE (&info, 0);
   par_n = GST_VIDEO_INFO_PAR_N (&info);
   par_d = GST_VIDEO_INFO_PAR_N (&info);
 
-  g_assert ((fmt == GST_VIDEO_FORMAT_RGB && s == 3) ||
-      (fmt == GST_VIDEO_FORMAT_RGBA && s == 4));
+#ifndef G_DISABLE_ASSERT
+  {
+    gint s;
+    s = GST_VIDEO_INFO_COMP_PSTRIDE (&info, 0);
+    g_assert ((fmt == GST_VIDEO_FORMAT_RGB && s == 3) ||
+        (fmt == GST_VIDEO_FORMAT_RGBA && s == 4));
+  }
+#endif
 
   GST_VIDEO_SINK_WIDTH (sink) = w;
   GST_VIDEO_SINK_HEIGHT (sink) = h;
@@ -339,6 +341,16 @@ gst_gdk_pixbuf_sink_handle_buffer (GstBaseSink * basesink, GstBuffer * buf,
   if (do_post) {
     GstStructure *s;
     GstMessage *msg;
+    GstFormat format;
+    GstClockTime timestamp;
+    GstClockTime running_time, stream_time;
+
+    GstSegment *segment = &basesink->segment;
+    format = segment->format;
+
+    timestamp = GST_BUFFER_PTS (buf);
+    running_time = gst_segment_to_running_time (segment, format, timestamp);
+    stream_time = gst_segment_to_stream_time (segment, format, timestamp);
 
     /* it's okay to keep using pixbuf here, we can be sure no one is going to
      * unref or change sink->last_pixbuf before we return from this function.
@@ -346,7 +358,9 @@ gst_gdk_pixbuf_sink_handle_buffer (GstBaseSink * basesink, GstBuffer * buf,
     s = gst_structure_new (msg_name,
         "pixbuf", GDK_TYPE_PIXBUF, pixbuf,
         "pixel-aspect-ratio", GST_TYPE_FRACTION, sink->par_n, sink->par_d,
-        NULL);
+        "timestamp", G_TYPE_UINT64, timestamp,
+        "stream-time", G_TYPE_UINT64, stream_time,
+        "running-time", G_TYPE_UINT64, running_time, NULL);
 
     msg = gst_message_new_element (GST_OBJECT_CAST (sink), s);
     gst_element_post_message (GST_ELEMENT_CAST (sink), msg);

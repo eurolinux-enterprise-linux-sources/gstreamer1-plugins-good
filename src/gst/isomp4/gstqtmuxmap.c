@@ -14,8 +14,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 /*
  * Unless otherwise indicated, Source Code is licensed under MIT license.
@@ -43,18 +43,16 @@
 
 #include "gstqtmuxmap.h"
 #include "fourcc.h"
-#include "ftypcc.h"
 
 /* static info related to various format */
 
 #define COMMON_VIDEO_CAPS \
-  "width = (int) [ 16, 4096 ], " \
-  "height = (int) [ 16, 4096 ], " \
-  "framerate = (fraction) [ 0, MAX ]"
+  "width = (int) [ 16, MAX ], " \
+  "height = (int) [ 16, MAX ]"
 
 #define COMMON_VIDEO_CAPS_NO_FRAMERATE \
-  "width = (int) [ 16, 4096 ], " \
-  "height = (int) [ 16, 4096 ] "
+  "width = (int) [ 16, MAX ], " \
+  "height = (int) [ 16, MAX ] "
 
 #define H263_CAPS \
   "video/x-h263, " \
@@ -75,6 +73,10 @@
   "divxversion = (int) 5, "\
   COMMON_VIDEO_CAPS
 
+#define PRORES_CAPS \
+  "video/x-prores, variant = (string) {standard, lt, hq, proxy}, " \
+  COMMON_VIDEO_CAPS
+
 #define SVQ_CAPS \
   "video/x-svq, " \
   "svqversion = (int) 3, " \
@@ -86,22 +88,13 @@
 
 #define PCM_CAPS \
   "audio/x-raw, " \
-  "format = (string) { S8, U8 }, " \
-  "layout = (string) interleaved, " \
-  COMMON_AUDIO_CAPS (2, MAX) "; " \
-  "audio/x-raw, " \
-  "format = (string) { S16LE, S16BE }, " \
+  "format = (string) { S16LE, S16BE, S8, U8 }, " \
   "layout = (string) interleaved, " \
   COMMON_AUDIO_CAPS (2, MAX)
 
 #define PCM_CAPS_FULL \
-  PCM_CAPS "; " \
   "audio/x-raw, " \
-  "format = (string) { S24LE, S24BE }, " \
-  "layout = (string) interleaved, " \
-  COMMON_AUDIO_CAPS (2, MAX) "; " \
-  "audio/x-raw, " \
-  "format = (string) { S32LE, S32BE }, " \
+  "format = (string) { S32LE, S32BE, S24LE, S24BE, S16LE, S16BE, S8, U8 }, " \
   "layout = (string) interleaved, " \
   COMMON_AUDIO_CAPS (2, MAX)
 
@@ -111,11 +104,21 @@
   "layer = (int) 3, " \
   COMMON_AUDIO_CAPS (2, MAX)
 
+#define MP123_CAPS \
+  "audio/mpeg, " \
+  "mpegversion = (int) 1, " \
+  "layer = (int) [1, 3], " \
+  COMMON_AUDIO_CAPS (2, MAX)
+
 #define AAC_CAPS \
   "audio/mpeg, " \
   "mpegversion = (int) 4, " \
   "stream-format = (string) raw, " \
   COMMON_AUDIO_CAPS (8, MAX)
+
+#define AC3_CAPS \
+  "audio/x-ac3, " \
+  COMMON_AUDIO_CAPS (6, MAX)
 
 #define AMR_CAPS \
   "audio/AMR, " \
@@ -135,6 +138,16 @@
   "audio/x-alac, " \
   COMMON_AUDIO_CAPS(2, MAX)
 
+#define OPUS_CAPS \
+  "audio/x-opus, " \
+  "channel-mapping-family = (int) [0, 255], " \
+  COMMON_AUDIO_CAPS(8, MAX)
+
+
+#define TEXT_UTF8 \
+  "text/x-raw, " \
+  "format=(string)utf8"
+
 /* FIXME 0.11 - take a look at bugs #580005 and #340375 */
 GstQTMuxFormatProp gst_qt_mux_format_list[] = {
   /* original QuickTime format; see Apple site (e.g. qtff.pdf) */
@@ -147,9 +160,10 @@ GstQTMuxFormatProp gst_qt_mux_format_list[] = {
         GST_STATIC_CAPS ("video/quicktime, variant = (string) apple; "
             "video/quicktime"),
         GST_STATIC_CAPS ("video/x-raw, "
-            "format = (string) { RGB, UYVY }, "
+            "format = (string) { RGB, UYVY, v210 }, "
             COMMON_VIDEO_CAPS "; "
             MPEG4V_CAPS "; "
+            PRORES_CAPS "; "
             H263_CAPS "; "
             H264_CAPS "; "
             SVQ_CAPS "; "
@@ -168,8 +182,8 @@ GstQTMuxFormatProp gst_qt_mux_format_list[] = {
             ADPCM_CAPS " ; "
             "audio/x-alaw, " COMMON_AUDIO_CAPS (2, MAX) "; "
             "audio/x-mulaw, " COMMON_AUDIO_CAPS (2, MAX) "; "
-            AMR_CAPS " ; " ALAC_CAPS)
-      }
+            AMR_CAPS " ; " ALAC_CAPS),
+      GST_STATIC_CAPS (TEXT_UTF8)}
   ,
   /* ISO 14496-14: mp42 as ISO base media extension
    * (supersedes original ISO 144996-1 mp41) */
@@ -182,8 +196,9 @@ GstQTMuxFormatProp gst_qt_mux_format_list[] = {
         GST_STATIC_CAPS ("video/quicktime, variant = (string) iso"),
         GST_STATIC_CAPS (MPEG4V_CAPS "; " H264_CAPS ";"
             "video/x-mp4-part," COMMON_VIDEO_CAPS),
-        GST_STATIC_CAPS (MP3_CAPS "; " AAC_CAPS " ; " ALAC_CAPS)
-      }
+        GST_STATIC_CAPS (MP123_CAPS "; "
+            AAC_CAPS " ; " AC3_CAPS " ; " ALAC_CAPS " ; " OPUS_CAPS),
+      GST_STATIC_CAPS (TEXT_UTF8)}
   ,
   /* Microsoft Smooth Streaming fmp4/isml */
   /* TODO add WMV/WMA support */
@@ -195,8 +210,8 @@ GstQTMuxFormatProp gst_qt_mux_format_list[] = {
         "GstISMLMux",
         GST_STATIC_CAPS ("video/quicktime, variant = (string) iso-fragmented"),
         GST_STATIC_CAPS (MPEG4V_CAPS "; " H264_CAPS),
-        GST_STATIC_CAPS (MP3_CAPS "; " AAC_CAPS)
-      }
+        GST_STATIC_CAPS (MP3_CAPS "; " AAC_CAPS),
+      GST_STATIC_CAPS_NONE}
   ,
   /* 3GPP Technical Specification 26.244 V7.3.0
    * (extended in 3GPP2 File Formats for Multimedia Services) */
@@ -208,8 +223,8 @@ GstQTMuxFormatProp gst_qt_mux_format_list[] = {
         "Gst3GPPMux",
         GST_STATIC_CAPS ("video/quicktime, variant = (string) 3gpp"),
         GST_STATIC_CAPS (H263_CAPS "; " MPEG4V_CAPS "; " H264_CAPS),
-        GST_STATIC_CAPS (AMR_CAPS "; " MP3_CAPS "; " AAC_CAPS)
-      }
+        GST_STATIC_CAPS (AMR_CAPS "; " MP3_CAPS "; " AAC_CAPS "; " AC3_CAPS),
+      GST_STATIC_CAPS (TEXT_UTF8)}
   ,
   /* ISO 15444-3: Motion-JPEG-2000 (also ISO base media extension) */
   {
@@ -221,8 +236,8 @@ GstQTMuxFormatProp gst_qt_mux_format_list[] = {
         GST_STATIC_CAPS ("video/mj2"),
         GST_STATIC_CAPS ("image/x-j2c, " COMMON_VIDEO_CAPS "; "
             "image/x-jpc, " COMMON_VIDEO_CAPS),
-        GST_STATIC_CAPS (PCM_CAPS)
-      }
+        GST_STATIC_CAPS (PCM_CAPS),
+      GST_STATIC_CAPS_NONE}
   ,
   {
         GST_QT_MUX_FORMAT_NONE,
@@ -282,14 +297,15 @@ gst_qt_mux_map_format_to_header (GstQTMuxFormat format, GstBuffer ** _prefix,
     guint32 * _major, guint32 * _version, GList ** _compatible, AtomMOOV * moov,
     GstClockTime longest_chunk, gboolean faststart)
 {
-  static guint32 qt_brands[] = { 0 };
-  static guint32 mp4_brands[] = { FOURCC_mp41, FOURCC_isom, FOURCC_iso2, 0 };
-  static guint32 isml_brands[] = { FOURCC_iso2, 0 };
-  static guint32 gpp_brands[] = { FOURCC_isom, FOURCC_iso2, 0 };
-  static guint32 mjp2_brands[] = { FOURCC_isom, FOURCC_iso2, 0 };
-  static guint8 mjp2_prefix[] =
+  static const guint32 qt_brands[] = { 0 };
+  static const guint32 mp4_brands[] =
+      { FOURCC_mp41, FOURCC_isom, FOURCC_iso2, 0 };
+  static const guint32 isml_brands[] = { FOURCC_iso2, 0 };
+  static const guint32 gpp_brands[] = { FOURCC_isom, FOURCC_iso2, 0 };
+  static const guint32 mjp2_brands[] = { FOURCC_isom, FOURCC_iso2, 0 };
+  static const guint8 mjp2_prefix[] =
       { 0, 0, 0, 12, 'j', 'P', ' ', ' ', 0x0D, 0x0A, 0x87, 0x0A };
-  guint32 *comp = NULL;
+  const guint32 *comp = NULL;
   guint32 major = 0, version = 0;
   GstBuffer *prefix = NULL;
   GList *result = NULL;

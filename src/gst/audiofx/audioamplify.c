@@ -15,8 +15,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
@@ -29,8 +29,8 @@
  * <title>Example launch line</title>
  * |[
  * gst-launch-1.0 audiotestsrc wave=saw ! audioamplify amplification=1.5 ! alsasink
- * gst-launch-1.0 filesrc location="melo1.ogg" ! oggdemux ! vorbisdec ! audioconvert ! audioamplify amplification=1.5 method=wrap-negative ! alsasink
- * gst-launch-1.0 audiotestsrc wave=saw ! audioconvert ! audioamplify amplification=1.5 method=wrap-positive ! audioconvert ! alsasink
+ * gst-launch-1.0 filesrc location="melo1.ogg" ! oggdemux ! vorbisdec ! audioconvert ! audioamplify amplification=1.5 clipping-method=wrap-negative ! alsasink
+ * gst-launch-1.0 audiotestsrc wave=saw ! audioconvert ! audioamplify amplification=1.5 clipping-method=wrap-positive ! audioconvert ! alsasink
  * ]|
  * </refsect2>
  */

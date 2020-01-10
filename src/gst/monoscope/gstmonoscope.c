@@ -15,8 +15,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
@@ -47,18 +47,20 @@
 GST_DEBUG_CATEGORY_STATIC (monoscope_debug);
 #define GST_CAT_DEFAULT monoscope_debug
 
+#if G_BYTE_ORDER == G_BIG_ENDIAN
+#define RGB_ORDER "xRGB"
+#else
+#define RGB_ORDER "BGRx"
+#endif
+
 static GstStaticPadTemplate src_template = GST_STATIC_PAD_TEMPLATE ("src",
     GST_PAD_SRC,
     GST_PAD_ALWAYS,
-#if G_BYTE_ORDER == G_BIG_ENDIAN
     GST_STATIC_CAPS ("video/x-raw, "
-        "format = (string) xRGB, "
-        "width = 256, " "height = 128, " "framerate = " GST_VIDEO_FPS_RANGE)
-#else
-    GST_STATIC_CAPS ("video/x-raw, "
-        "format = (string) BGRx, "
-        "width = 256, " "height = 128, " "framerate = " GST_VIDEO_FPS_RANGE)
-#endif
+        "format = (string) " RGB_ORDER ", "
+        "width = " G_STRINGIFY (scope_width) ", "
+        "height = " G_STRINGIFY (scope_height) ", "
+        "framerate = " GST_VIDEO_FPS_RANGE)
     );
 
 static GstStaticPadTemplate sink_template = GST_STATIC_PAD_TEMPLATE ("sink",
@@ -102,10 +104,8 @@ gst_monoscope_class_init (GstMonoscopeClass * klass)
   gstelement_class->change_state =
       GST_DEBUG_FUNCPTR (gst_monoscope_change_state);
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&src_template));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&sink_template));
+  gst_element_class_add_static_pad_template (gstelement_class, &src_template);
+  gst_element_class_add_static_pad_template (gstelement_class, &sink_template);
   gst_element_class_set_static_metadata (gstelement_class, "Monoscope",
       "Visualization",
       "Displays a highly stabilised waveform of audio input",
@@ -133,8 +133,8 @@ gst_monoscope_init (GstMonoscope * monoscope)
   monoscope->bps = sizeof (gint16);
 
   /* reset the initial video state */
-  monoscope->width = 256;
-  monoscope->height = 128;
+  monoscope->width = scope_width;
+  monoscope->height = scope_height;
   monoscope->fps_num = 25;      /* desired frame rate */
   monoscope->fps_denom = 1;
   monoscope->visstate = NULL;
@@ -349,7 +349,8 @@ gst_monoscope_chain (GstPad * pad, GstObject * parent, GstBuffer * inbuf)
   if (GST_BUFFER_TIMESTAMP (inbuf) != GST_CLOCK_TIME_NONE)
     monoscope->next_ts = GST_BUFFER_TIMESTAMP (inbuf);
 
-  GST_LOG_OBJECT (monoscope, "in buffer has %d samples, ts=%" GST_TIME_FORMAT,
+  GST_LOG_OBJECT (monoscope,
+      "in buffer has %" G_GSIZE_FORMAT " samples, ts=%" GST_TIME_FORMAT,
       gst_buffer_get_size (inbuf) / monoscope->bps,
       GST_TIME_ARGS (GST_BUFFER_TIMESTAMP (inbuf)));
 
@@ -397,13 +398,12 @@ gst_monoscope_chain (GstPad * pad, GstObject * parent, GstBuffer * inbuf)
 
     samples = (gint16 *) gst_adapter_map (monoscope->adapter, bytesperframe);
 
-    if (monoscope->spf < 512) {
-      gint16 in_data[512], i;
+    if (monoscope->spf < convolver_big) {
+      gint16 in_data[convolver_big], i;
+      gdouble scale = (gdouble) monoscope->spf / (gdouble) convolver_big;
 
-      for (i = 0; i < 512; ++i) {
-        gdouble off;
-
-        off = ((gdouble) i * (gdouble) monoscope->spf) / 512.0;
+      for (i = 0; i < convolver_big; ++i) {
+        gdouble off = (gdouble) i * scale;
         in_data[i] = samples[MIN ((guint) off, monoscope->spf)];
       }
       pixels = monoscope_update (monoscope->visstate, in_data);

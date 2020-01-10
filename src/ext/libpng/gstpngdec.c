@@ -2,6 +2,9 @@
  * Copyright (C) <1999> Erik Walthinsen <omega@cse.ogi.edu>
  * Copyright (C) 2012 Collabora Ltd.
  *	Author : Edward Hervey <edward@collabora.com>
+ * Copyright (C) 2013 Collabora Ltd.
+ *	Author : Sebastian Dröge <sebastian.droege@collabora.co.uk>
+ *	         Olivier Crete <olivier.crete@collabora.com>
  *
  * This library is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -10,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  *
  */
 /**
@@ -29,6 +32,7 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <gst/base/gstbytereader.h>
 #include <gst/video/video.h>
 #include <gst/video/gstvideometa.h>
 #include <gst/video/gstvideopool.h>
@@ -38,18 +42,22 @@ GST_DEBUG_CATEGORY_STATIC (pngdec_debug);
 #define GST_CAT_DEFAULT pngdec_debug
 
 static gboolean gst_pngdec_libpng_init (GstPngDec * pngdec);
-static gboolean gst_pngdec_reset (GstVideoDecoder * decoder, gboolean hard);
 
 static GstFlowReturn gst_pngdec_caps_create_and_set (GstPngDec * pngdec);
 
 static gboolean gst_pngdec_start (GstVideoDecoder * decoder);
 static gboolean gst_pngdec_stop (GstVideoDecoder * decoder);
+static gboolean gst_pngdec_flush (GstVideoDecoder * decoder);
 static gboolean gst_pngdec_set_format (GstVideoDecoder * Decoder,
     GstVideoCodecState * state);
+static GstFlowReturn gst_pngdec_parse (GstVideoDecoder * decoder,
+    GstVideoCodecFrame * frame, GstAdapter * adapter, gboolean at_eos);
 static GstFlowReturn gst_pngdec_handle_frame (GstVideoDecoder * decoder,
     GstVideoCodecFrame * frame);
 static gboolean gst_pngdec_decide_allocation (GstVideoDecoder * decoder,
     GstQuery * query);
+static gboolean gst_pngdec_sink_event (GstVideoDecoder * bdec,
+    GstEvent * event);
 
 #define parent_class gst_pngdec_parent_class
 G_DEFINE_TYPE (GstPngDec, gst_pngdec, GST_TYPE_VIDEO_DECODER);
@@ -75,21 +83,22 @@ gst_pngdec_class_init (GstPngDecClass * klass)
   GstElementClass *element_class = (GstElementClass *) klass;
   GstVideoDecoderClass *vdec_class = (GstVideoDecoderClass *) klass;
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_pngdec_src_pad_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_pngdec_sink_pad_template));
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_pngdec_src_pad_template);
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_pngdec_sink_pad_template);
   gst_element_class_set_static_metadata (element_class, "PNG image decoder",
-      "Codec/Decoder/Image",
-      "Decode a png video frame to a raw image",
+      "Codec/Decoder/Image", "Decode a png video frame to a raw image",
       "Wim Taymans <wim@fluendo.com>");
 
   vdec_class->start = gst_pngdec_start;
   vdec_class->stop = gst_pngdec_stop;
-  vdec_class->reset = gst_pngdec_reset;
+  vdec_class->flush = gst_pngdec_flush;
   vdec_class->set_format = gst_pngdec_set_format;
+  vdec_class->parse = gst_pngdec_parse;
   vdec_class->handle_frame = gst_pngdec_handle_frame;
   vdec_class->decide_allocation = gst_pngdec_decide_allocation;
+  vdec_class->sink_event = gst_pngdec_sink_event;
 
   GST_DEBUG_CATEGORY_INIT (pngdec_debug, "pngdec", 0, "PNG image decoder");
 }
@@ -104,6 +113,11 @@ gst_pngdec_init (GstPngDec * pngdec)
   pngdec->color_type = -1;
 
   pngdec->image_ready = FALSE;
+  pngdec->read_data = 0;
+
+  gst_video_decoder_set_use_default_pad_acceptcaps (GST_VIDEO_DECODER_CAST
+      (pngdec), TRUE);
+  GST_PAD_SET_ACCEPT_TEMPLATE (GST_VIDEO_DECODER_SINK_PAD (pngdec));
 }
 
 static void
@@ -122,7 +136,7 @@ static void
 user_info_callback (png_structp png_ptr, png_infop info)
 {
   GstPngDec *pngdec = NULL;
-  GstFlowReturn ret = GST_FLOW_OK;
+  GstFlowReturn ret;
 
   GST_LOG ("info ready");
 
@@ -166,15 +180,12 @@ user_endrow_callback (png_structp png_ptr, png_bytep new_row,
 
   pngdec = GST_PNGDEC (png_get_io_ptr (png_ptr));
 
-  /* FIXME: implement interlaced pictures */
-
   /* If buffer_out doesn't exist, it means buffer_alloc failed, which 
    * will already have set the return code */
-  if (GST_IS_BUFFER (pngdec->current_frame->output_buffer)) {
+  if (new_row && GST_IS_BUFFER (pngdec->current_frame->output_buffer)) {
     GstVideoFrame frame;
     GstBuffer *buffer = pngdec->current_frame->output_buffer;
     size_t offset;
-    gint width;
     guint8 *data;
 
     if (!gst_video_frame_map (&frame, &pngdec->output_state->info, buffer,
@@ -185,13 +196,14 @@ user_endrow_callback (png_structp png_ptr, png_bytep new_row,
 
     data = GST_VIDEO_FRAME_COMP_DATA (&frame, 0);
     offset = row_num * GST_VIDEO_FRAME_COMP_STRIDE (&frame, 0);
-    GST_LOG ("got row %u, copying in buffer %p at offset %" G_GSIZE_FORMAT,
-        (guint) row_num, pngdec->current_frame->output_buffer, offset);
-    width = GST_ROUND_UP_4 (png_get_rowbytes (pngdec->png, pngdec->info));
-    memcpy (data + offset, new_row, width);
+    GST_LOG ("got row %u at pass %d, copying in buffer %p at offset %"
+        G_GSIZE_FORMAT, (guint) row_num, pass,
+        pngdec->current_frame->output_buffer, offset);
+    png_progressive_combine_row (pngdec->png, data + offset, new_row);
     gst_video_frame_unmap (&frame);
     pngdec->ret = GST_FLOW_OK;
-  }
+  } else
+    pngdec->ret = GST_FLOW_OK;
 }
 
 static void
@@ -272,6 +284,8 @@ gst_pngdec_caps_create_and_set (GstPngDec * pngdec)
     GST_LOG_OBJECT (pngdec, "converting palette png to RGB");
     png_set_palette_to_rgb (pngdec->png);
   }
+
+  png_set_interlace_handling (pngdec->png);
 
   /* Update the info structure */
   png_read_update_info (pngdec->png, pngdec->info);
@@ -369,16 +383,11 @@ gst_pngdec_handle_frame (GstVideoDecoder * decoder, GstVideoCodecFrame * frame)
       pngdec->current_frame_map.data, pngdec->current_frame_map.size);
 
   if (pngdec->image_ready) {
-    if (1) {
-      /* Reset ourselves for the next frame */
-      gst_pngdec_reset (decoder, TRUE);
-      GST_LOG_OBJECT (pngdec, "setting up callbacks for next frame");
-      png_set_progressive_read_fn (pngdec->png, pngdec,
-          user_info_callback, user_endrow_callback, user_end_callback);
-    } else {
-      GST_LOG_OBJECT (pngdec, "sending EOS");
-      pngdec->ret = GST_FLOW_EOS;
-    }
+    /* Reset ourselves for the next frame */
+    gst_pngdec_flush (decoder);
+    GST_LOG_OBJECT (pngdec, "setting up callbacks for next frame");
+    png_set_progressive_read_fn (pngdec->png, pngdec,
+        user_info_callback, user_endrow_callback, user_end_callback);
     pngdec->image_ready = FALSE;
   } else {
     /* An error happened and we have to unmap */
@@ -390,6 +399,106 @@ gst_pngdec_handle_frame (GstVideoDecoder * decoder, GstVideoCodecFrame * frame)
 beach:
 
   return ret;
+}
+
+/* Based on pngparse */
+#define PNG_SIGNATURE G_GUINT64_CONSTANT (0x89504E470D0A1A0A)
+
+static GstFlowReturn
+gst_pngdec_parse (GstVideoDecoder * decoder, GstVideoCodecFrame * frame,
+    GstAdapter * adapter, gboolean at_eos)
+{
+  gsize toadd = 0;
+  GstByteReader reader;
+  gconstpointer data;
+  guint64 signature;
+  gsize size;
+  GstPngDec *pngdec = (GstPngDec *) decoder;
+
+  GST_VIDEO_CODEC_FRAME_SET_SYNC_POINT (frame);
+
+  /* FIXME : The overhead of using scan_uint32 is massive */
+
+  size = gst_adapter_available (adapter);
+  GST_DEBUG ("Parsing PNG image data (%" G_GSIZE_FORMAT " bytes)", size);
+
+  if (size < 8)
+    goto need_more_data;
+
+  data = gst_adapter_map (adapter, size);
+  gst_byte_reader_init (&reader, data, size);
+
+  if (pngdec->read_data == 0) {
+    if (!gst_byte_reader_peek_uint64_be (&reader, &signature))
+      goto need_more_data;
+
+    if (signature != PNG_SIGNATURE) {
+      for (;;) {
+        guint offset;
+
+        offset = gst_byte_reader_masked_scan_uint32 (&reader, 0xffffffff,
+            0x89504E47, 0, gst_byte_reader_get_remaining (&reader));
+
+        if (offset == -1) {
+          gst_adapter_flush (adapter,
+              gst_byte_reader_get_remaining (&reader) - 4);
+          goto need_more_data;
+        }
+
+        if (!gst_byte_reader_skip (&reader, offset))
+          goto need_more_data;
+
+        if (!gst_byte_reader_peek_uint64_be (&reader, &signature))
+          goto need_more_data;
+
+        if (signature == PNG_SIGNATURE) {
+          /* We're skipping, go out, we'll be back */
+          gst_adapter_flush (adapter, gst_byte_reader_get_pos (&reader));
+          goto need_more_data;
+        }
+        if (!gst_byte_reader_skip (&reader, 4))
+          goto need_more_data;
+      }
+    }
+    pngdec->read_data = 8;
+  }
+
+  if (!gst_byte_reader_skip (&reader, pngdec->read_data))
+    goto need_more_data;
+
+  for (;;) {
+    guint32 length;
+    guint32 code;
+
+    if (!gst_byte_reader_get_uint32_be (&reader, &length))
+      goto need_more_data;
+    if (!gst_byte_reader_get_uint32_le (&reader, &code))
+      goto need_more_data;
+
+    if (!gst_byte_reader_skip (&reader, length + 4))
+      goto need_more_data;
+
+    if (code == GST_MAKE_FOURCC ('I', 'E', 'N', 'D')) {
+      /* Have complete frame */
+      toadd = gst_byte_reader_get_pos (&reader);
+      GST_DEBUG_OBJECT (decoder, "Have complete frame of size %" G_GSIZE_FORMAT,
+          toadd);
+      pngdec->read_data = 0;
+      goto have_full_frame;
+    } else
+      pngdec->read_data += length + 12;
+  }
+
+  g_assert_not_reached ();
+  return GST_FLOW_ERROR;
+
+need_more_data:
+  return GST_VIDEO_DECODER_FLOW_NEED_DATA;
+
+have_full_frame:
+  if (toadd)
+    gst_video_decoder_add_to_frame (decoder, toadd);
+  return gst_video_decoder_have_frame (decoder);
 }
 
 static gboolean
@@ -416,6 +525,25 @@ gst_pngdec_decide_allocation (GstVideoDecoder * bdec, GstQuery * query)
   gst_object_unref (pool);
 
   return TRUE;
+}
+
+static gboolean
+gst_pngdec_sink_event (GstVideoDecoder * bdec, GstEvent * event)
+{
+  const GstSegment *segment;
+
+  if (GST_EVENT_TYPE (event) != GST_EVENT_SEGMENT)
+    goto done;
+
+  gst_event_parse_segment (event, &segment);
+
+  if (segment->format == GST_FORMAT_TIME)
+    gst_video_decoder_set_packetized (bdec, TRUE);
+  else
+    gst_video_decoder_set_packetized (bdec, FALSE);
+
+done:
+  return GST_VIDEO_DECODER_CLASS (parent_class)->sink_event (bdec, event);
 }
 
 static gboolean
@@ -490,6 +618,7 @@ gst_pngdec_libpng_clear (GstPngDec * pngdec)
   }
 
   pngdec->color_type = -1;
+  pngdec->read_data = 0;
 }
 
 static gboolean
@@ -497,6 +626,7 @@ gst_pngdec_start (GstVideoDecoder * decoder)
 {
   GstPngDec *pngdec = (GstPngDec *) decoder;
 
+  gst_video_decoder_set_packetized (GST_VIDEO_DECODER (pngdec), FALSE);
   gst_pngdec_libpng_init (pngdec);
 
   return TRUE;
@@ -523,7 +653,7 @@ gst_pngdec_stop (GstVideoDecoder * decoder)
 
 /* Clean up the libpng structures */
 static gboolean
-gst_pngdec_reset (GstVideoDecoder * decoder, gboolean hard)
+gst_pngdec_flush (GstVideoDecoder * decoder)
 {
   gst_pngdec_libpng_clear ((GstPngDec *) decoder);
   gst_pngdec_libpng_init ((GstPngDec *) decoder);

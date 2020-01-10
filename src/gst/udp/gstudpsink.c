@@ -15,8 +15,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 /**
  * SECTION:element-udpsink
@@ -125,10 +125,17 @@ gst_udpsink_finalize (GstUDPSink * udpsink)
 static gboolean
 gst_udpsink_set_uri (GstUDPSink * sink, const gchar * uri, GError ** error)
 {
+  gchar *host;
+  guint16 port;
+
   gst_multiudpsink_remove (GST_MULTIUDPSINK (sink), sink->host, sink->port);
 
-  if (!gst_udp_parse_uri (uri, &sink->host, &sink->port))
+  if (!gst_udp_parse_uri (uri, &host, &port))
     goto wrong_uri;
+
+  g_free (sink->host);
+  sink->host = host;
+  sink->port = port;
 
   g_free (sink->uri);
   sink->uri = g_strdup (uri);

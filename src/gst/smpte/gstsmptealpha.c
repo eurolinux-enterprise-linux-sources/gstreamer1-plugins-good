@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
@@ -94,8 +94,7 @@ enum
   PROP_BORDER,
   PROP_DEPTH,
   PROP_POSITION,
-  PROP_INVERT,
-  PROP_LAST,
+  PROP_INVERT
 };
 
 #define AYUV_SIZE(w,h)     ((w) * (h) * 4)
@@ -191,8 +190,6 @@ gst_smpte_alpha_class_init (GstSMPTEAlphaClass * klass)
    * GstSMPTEAlpha:invert:
    *
    * Set to TRUE to invert the transition mask (ie. flip it horizontally).
-   *
-   * Since: 0.10.23
    */
   g_object_class_install_property (G_OBJECT_CLASS (klass), PROP_INVERT,
       g_param_spec_boolean ("invert", "Invert",
@@ -208,10 +205,10 @@ gst_smpte_alpha_class_init (GstSMPTEAlphaClass * klass)
   vfilter_class->transform_frame =
       GST_DEBUG_FUNCPTR (gst_smpte_alpha_transform_frame);
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_smpte_alpha_sink_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_smpte_alpha_src_template));
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_smpte_alpha_sink_template);
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_smpte_alpha_src_template);
   gst_element_class_set_static_metadata (element_class, "SMPTE transitions",
       "Filter/Editor/Video",
       "Apply the standard SMPTE transitions as alpha on video images",
@@ -618,22 +615,20 @@ gst_smpte_alpha_set_info (GstVideoFilter * vfilter, GstCaps * incaps,
 {
   GstSMPTEAlpha *smpte = GST_SMPTE_ALPHA (vfilter);
   gboolean ret;
-  gint width, height;
 
   smpte->process = NULL;
-
   smpte->in_format = GST_VIDEO_INFO_FORMAT (in_info);
   smpte->out_format = GST_VIDEO_INFO_FORMAT (out_info);
-  smpte->width = width = GST_VIDEO_INFO_WIDTH (out_info);
-  smpte->height = height = GST_VIDEO_INFO_HEIGHT (out_info);
 
   /* try to update the mask now, this will also adjust the width/height on
    * success */
   GST_OBJECT_LOCK (smpte);
   ret =
       gst_smpte_alpha_update_mask (smpte, smpte->type, smpte->invert,
-      smpte->depth, width, height);
+      smpte->depth, GST_VIDEO_INFO_WIDTH (out_info),
+      GST_VIDEO_INFO_HEIGHT (out_info));
   GST_OBJECT_UNLOCK (smpte);
+
   if (!ret)
     goto mask_failed;
 

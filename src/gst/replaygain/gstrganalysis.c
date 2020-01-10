@@ -39,9 +39,9 @@
  * their output since they generally save metadata in the file header.
  * Therefore, it is often necessary that applications read the results in a bus
  * event handler for the tag message.  Obtaining the values this way is always
- * needed for <link linkend="GstRgAnalysis--num-tracks">album processing</link>
- * since the album gain and peak values need to be associated with all tracks of
- * an album, not just the last one.
+ * needed for album processing (see #GstRgAnalysis:num-tracks property) since
+ * the album gain and peak values need to be associated with all tracks of an
+ * album, not just the last one.
  * 
  * <refsect2>
  * <title>Example launch lines</title>
@@ -267,10 +267,8 @@ gst_rg_analysis_class_init (GstRgAnalysisClass * klass)
   trans_class->stop = GST_DEBUG_FUNCPTR (gst_rg_analysis_stop);
   trans_class->passthrough_on_same_caps = TRUE;
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&src_factory));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&sink_factory));
+  gst_element_class_add_static_pad_template (element_class, &src_factory);
+  gst_element_class_add_static_pad_template (element_class, &sink_factory);
   gst_element_class_set_static_metadata (element_class, "ReplayGain analysis",
       "Filter/Analyzer/Audio",
       "Perform the ReplayGain analysis",
@@ -532,6 +530,7 @@ gst_rg_analysis_stop (GstBaseTransform * base)
   return TRUE;
 }
 
+/* FIXME: handle global vs. stream-tags? */
 static void
 gst_rg_analysis_handle_tags (GstRgAnalysis * filter,
     const GstTagList * tag_list)
@@ -632,9 +631,10 @@ gst_rg_analysis_handle_eos (GstRgAnalysis * filter)
       GST_LOG_OBJECT (filter, "posting tag list with results");
       gst_tag_list_add (tag_list, GST_TAG_MERGE_APPEND,
           GST_TAG_REFERENCE_LEVEL, filter->reference_level, NULL);
-      /* This steals our reference to the list: */
-      gst_pad_push_event (GST_BASE_TRANSFORM_SRC_PAD (GST_BASE_TRANSFORM
-              (filter)), gst_event_new_tag (gst_tag_list_ref (tag_list)));
+      /* This takes ownership of our reference to the list */
+      gst_pad_push_event (GST_BASE_TRANSFORM_SRC_PAD (filter),
+          gst_event_new_tag (tag_list));
+      tag_list = NULL;
     }
   }
 
@@ -653,6 +653,7 @@ gst_rg_analysis_handle_eos (GstRgAnalysis * filter)
     g_object_notify (G_OBJECT (filter), "num-tracks");
 }
 
+/* FIXME: return tag list (lists?) based on input tags.. */
 static gboolean
 gst_rg_analysis_track_result (GstRgAnalysis * filter, GstTagList ** tag_list)
 {

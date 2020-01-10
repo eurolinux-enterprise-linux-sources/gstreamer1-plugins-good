@@ -14,8 +14,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 /*
  * Unless otherwise indicated, Source Code is licensed under MIT license.
@@ -48,10 +48,8 @@
 
 G_BEGIN_DECLS
 
-#include <gst/rtsp/gstrtspconnection.h>
-#include <gst/rtsp/gstrtspmessage.h>
-#include <gst/rtsp/gstrtspurl.h>
-#include <gst/rtsp/gstrtsprange.h>
+#include <gst/rtsp/rtsp.h>
+#include <gio/gio.h>
 
 #include "gstrtspext.h"
 
@@ -87,6 +85,7 @@ struct _GstRTSPConnInfo {
   gchar              *url_str;
   GstRTSPConnection  *connection;
   gboolean            connected;
+  gboolean            flushing;
 };
 
 typedef struct _GstRTSPStream GstRTSPStream;
@@ -100,13 +99,14 @@ struct _GstRTSPStream {
   GstPad       *srcpad;
   GstFlowReturn last_ret;
   gboolean      added;
-  gboolean      disabled;
+  gboolean      setup;
+  gboolean      skipped;
   gboolean      eos;
   gboolean      discont;
+  gboolean      need_caps;
 
   /* for interleaved mode */
   guint8        channel[2];
-  GstCaps      *caps;
   GstPad       *channelpad[2];
 
   /* our udp sources */
@@ -123,20 +123,30 @@ struct _GstRTSPStream {
   GstElement   *fakesrc;
 
   /* state */
-  gint          pt;
   guint         port;
   gboolean      container;
+  gboolean      is_real;
+  guint8        default_pt;
+  GstRTSPProfile profile;
+  GArray       *ptmap;
   /* original control url */
   gchar        *control_url;
   guint32       ssrc;
   guint32       seqbase;
   guint64       timebase;
+  GstElement   *srtpdec;
+  GstCaps      *srtcpparams;
+  GstElement   *srtpenc;
+  guint32       send_ssrc;
 
   /* per stream connection */
   GstRTSPConnInfo  conninfo;
 
   /* session */
   GObject      *session;
+
+  /* srtp key management */
+  GstMIKEYMessage *mikey;
 
   /* bandwidth */
   guint         as_bandwidth;
@@ -147,6 +157,8 @@ struct _GstRTSPStream {
   gchar        *destination;
   gboolean      is_multicast;
   guint         ttl;
+
+  GstStructure     *rtx_pt_map;
 };
 
 /**
@@ -174,7 +186,7 @@ struct _GstRTSPSrc {
   gboolean         need_range;
   gboolean         skip;
   gint             free_channel;
-  GstEvent        *start_segment;
+  gboolean         need_segment;
   GstClockTime     base_time;
 
   /* UDP mode loop */
@@ -188,7 +200,6 @@ struct _GstRTSPSrc {
 
   GstSDPMessage   *sdp;
   gboolean         from_sdp;
-  gint             numstreams;
   GList           *streams;
   GstStructure    *props;
   gboolean         need_activate;
@@ -208,8 +219,10 @@ struct _GstRTSPSrc {
   gboolean          do_rtsp_keep_alive;
   gchar            *proxy_host;
   guint             proxy_port;
-  gchar            *proxy_user;
-  gchar            *proxy_passwd;
+  gchar            *proxy_user;        /* from url or property */
+  gchar            *proxy_passwd;      /* from url or property */
+  gchar            *prop_proxy_id;     /* set via property */
+  gchar            *prop_proxy_pw;     /* set via property */
   guint             rtp_blocksize;
   gchar            *user_id;
   gchar            *user_pw;
@@ -218,6 +231,19 @@ struct _GstRTSPSrc {
   gint              udp_buffer_size;
   gboolean          short_header;
   guint             probation;
+  gboolean          udp_reconnect;
+  gchar            *multi_iface;
+  gboolean          ntp_sync;
+  gboolean          use_pipeline_clock;
+  GstStructure     *sdes;
+  GTlsCertificateFlags tls_validation_flags;
+  GTlsDatabase     *tls_database;
+  GTlsInteraction  *tls_interaction;
+  gboolean          do_retransmission;
+  gint              ntp_time_source;
+  gchar            *user_agent;
+  GstClockTime      max_rtcp_rtp_time_diff;
+  gboolean          rfc7273_sync;
 
   /* state */
   GstRTSPState       state;
@@ -229,6 +255,7 @@ struct _GstRTSPSrc {
   GstRTSPTimeRange  *range;
   gchar             *control;
   guint              next_port_num;
+  GstClock          *provided_clock;
 
   /* supported methods */
   gint               methods;
@@ -240,6 +267,7 @@ struct _GstRTSPSrc {
   GstElement      *manager;
   gulong           manager_sig_id;
   gulong           manager_ptmap_id;
+  gboolean         use_buffering;
 
   GstRTSPConnInfo  conninfo;
 

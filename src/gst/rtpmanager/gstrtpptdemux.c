@@ -19,14 +19,14 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
- * SECTION:element-gstrtpptdemux
+ * SECTION:element-rtpptdemux
  *
- * gstrtpptdemux acts as a demuxer for RTP packets based on the payload type of
+ * rtpptdemux acts as a demuxer for RTP packets based on the payload type of
  * the packets. Its main purpose is to allow an application to easily receive
  * and decode an RTP stream with multiple payload types.
  * 
@@ -35,19 +35,17 @@
  * the RTP stream changes, the #GstRtpPtDemux::payload-type-change signal will be
  * emitted.
  * 
- * The element will try to set complete and unique application/x-rtp caps on the
- * outgoing buffers and pads based on the result of the
- * #GstRtpPtDemux::request-pt-map signal.
+ * The element will try to set complete and unique application/x-rtp caps
+ * on the output pads based on the result of the #GstRtpPtDemux::request-pt-map
+ * signal.
  * 
  * <refsect2>
  * <title>Example pipelines</title>
  * |[
- * gst-launch-1.0 udpsrc caps="application/x-rtp" ! gstrtpptdemux ! fakesink
+ * gst-launch-1.0 udpsrc caps="application/x-rtp" ! rtpptdemux ! fakesink
  * ]| Takes an RTP stream and send the RTP packets with the first detected
  * payload type to fakesink, discarding the other payload types.
  * </refsect2>
- *
- * Last reviewed on 2007-05-28 (0.10.5)
  */
 
 /*
@@ -76,7 +74,6 @@
 #include <gst/gst.h>
 #include <gst/rtp/gstrtpbuffer.h>
 
-#include "gstrtpbin-marshal.h"
 #include "gstrtpptdemux.h"
 
 /* generic templates */
@@ -160,8 +157,7 @@ gst_rtp_pt_demux_class_init (GstRtpPtDemuxClass * klass)
   gst_rtp_pt_demux_signals[SIGNAL_REQUEST_PT_MAP] =
       g_signal_new ("request-pt-map", G_TYPE_FROM_CLASS (klass),
       G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET (GstRtpPtDemuxClass, request_pt_map),
-      NULL, NULL, gst_rtp_bin_marshal_BOXED__UINT, GST_TYPE_CAPS, 1,
-      G_TYPE_UINT);
+      NULL, NULL, g_cclosure_marshal_generic, GST_TYPE_CAPS, 1, G_TYPE_UINT);
 
   /**
    * GstRtpPtDemux::new-payload-type:
@@ -174,8 +170,8 @@ gst_rtp_pt_demux_class_init (GstRtpPtDemuxClass * klass)
   gst_rtp_pt_demux_signals[SIGNAL_NEW_PAYLOAD_TYPE] =
       g_signal_new ("new-payload-type", G_TYPE_FROM_CLASS (klass),
       G_SIGNAL_RUN_LAST, G_STRUCT_OFFSET (GstRtpPtDemuxClass, new_payload_type),
-      NULL, NULL, gst_rtp_bin_marshal_VOID__UINT_OBJECT, G_TYPE_NONE, 2,
-      G_TYPE_UINT, GST_TYPE_PAD);
+      NULL, NULL, g_cclosure_marshal_generic, G_TYPE_NONE, 2, G_TYPE_UINT,
+      GST_TYPE_PAD);
 
   /**
    * GstRtpPtDemux::payload-type-change:
@@ -210,10 +206,10 @@ gst_rtp_pt_demux_class_init (GstRtpPtDemuxClass * klass)
 
   klass->clear_pt_map = GST_DEBUG_FUNCPTR (gst_rtp_pt_demux_clear_pt_map);
 
-  gst_element_class_add_pad_template (gstelement_klass,
-      gst_static_pad_template_get (&rtp_pt_demux_sink_template));
-  gst_element_class_add_pad_template (gstelement_klass,
-      gst_static_pad_template_get (&rtp_pt_demux_src_template));
+  gst_element_class_add_static_pad_template (gstelement_klass,
+      &rtp_pt_demux_sink_template);
+  gst_element_class_add_static_pad_template (gstelement_klass,
+      &rtp_pt_demux_src_template);
 
   gst_element_class_set_static_metadata (gstelement_klass, "RTP Demux",
       "Demux/Network/RTP",
@@ -337,7 +333,9 @@ forward_sticky_events (GstPad * pad, GstEvent ** event, gpointer user_data)
 {
   GstPad *srcpad = GST_PAD_CAST (user_data);
 
-  gst_pad_push_event (srcpad, gst_event_ref (*event));
+  /* Stream start and caps have already been pushed */
+  if (GST_EVENT_TYPE (*event) >= GST_EVENT_SEGMENT)
+    gst_pad_push_event (srcpad, gst_event_ref (*event));
 
   return TRUE;
 }
@@ -394,15 +392,20 @@ gst_rtp_pt_demux_chain (GstPad * pad, GstObject * parent, GstBuffer * buf)
 
     gst_pad_set_active (srcpad, TRUE);
 
-    /* First sticky events on sink pad are forwarded to the new src pad */
-    gst_pad_sticky_events_foreach (rtpdemux->sink, forward_sticky_events,
-        srcpad);
+
+    /* First push the stream-start event, it must always come first */
+    gst_pad_push_event (srcpad,
+        gst_pad_get_sticky_event (rtpdemux->sink, GST_EVENT_STREAM_START, 0));
 
     /* Then caps event is sent */
     caps = gst_caps_make_writable (caps);
     gst_caps_set_simple (caps, "payload", G_TYPE_INT, pt, NULL);
     gst_pad_set_caps (srcpad, caps);
     gst_caps_unref (caps);
+
+    /* First sticky events on sink pad are forwarded to the new src pad */
+    gst_pad_sticky_events_foreach (rtpdemux->sink, forward_sticky_events,
+        srcpad);
 
     gst_element_add_pad (GST_ELEMENT_CAST (rtpdemux), srcpad);
 
@@ -445,8 +448,8 @@ gst_rtp_pt_demux_chain (GstPad * pad, GstObject * parent, GstBuffer * buf)
   /* ERRORS */
 invalid_buffer:
   {
-    /* this is fatal and should be filtered earlier */
-    GST_ELEMENT_ERROR (rtpdemux, STREAM, DECODE, (NULL),
+    /* this should not be fatal */
+    GST_ELEMENT_WARNING (rtpdemux, STREAM, DEMUX, (NULL),
         ("Dropping invalid RTP payload"));
     gst_buffer_unref (buf);
     return GST_FLOW_ERROR;

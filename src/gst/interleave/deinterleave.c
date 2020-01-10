@@ -19,8 +19,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /* TODO: 
@@ -134,6 +134,8 @@ gst_deinterleave_change_state (GstElement * element, GstStateChange transition);
 
 static gboolean gst_deinterleave_sink_event (GstPad * pad, GstObject * parent,
     GstEvent * event);
+static gboolean gst_deinterleave_sink_query (GstPad * pad, GstObject * parent,
+    GstQuery * query);
 
 static gboolean gst_deinterleave_src_query (GstPad * pad, GstObject * parent,
     GstQuery * query);
@@ -173,10 +175,8 @@ gst_deinterleave_class_init (GstDeinterleaveClass * klass)
       "Andy Wingo <wingo at pobox.com>, " "Iain <iain@prettypeople.org>, "
       "Sebastian Dröge <slomo@circular-chaos.org>");
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&sink_template));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&src_template));
+  gst_element_class_add_static_pad_template (gstelement_class, &sink_template);
+  gst_element_class_add_static_pad_template (gstelement_class, &src_template);
 
   gstelement_class->change_state = gst_deinterleave_change_state;
 
@@ -212,24 +212,47 @@ gst_deinterleave_init (GstDeinterleave * self)
       GST_DEBUG_FUNCPTR (gst_deinterleave_chain));
   gst_pad_set_event_function (self->sink,
       GST_DEBUG_FUNCPTR (gst_deinterleave_sink_event));
+  gst_pad_set_query_function (self->sink,
+      GST_DEBUG_FUNCPTR (gst_deinterleave_sink_query));
   gst_element_add_pad (GST_ELEMENT (self), self->sink);
+}
+
+typedef struct
+{
+  GstCaps *caps;
+  GstPad *pad;
+} CopyStickyEventsData;
+
+static gboolean
+copy_sticky_events (GstPad * pad, GstEvent ** event, gpointer user_data)
+{
+  CopyStickyEventsData *data = user_data;
+
+  if (GST_EVENT_TYPE (*event) >= GST_EVENT_CAPS && data->caps) {
+    gst_pad_set_caps (data->pad, data->caps);
+    data->caps = NULL;
+  }
+
+  if (GST_EVENT_TYPE (*event) != GST_EVENT_CAPS)
+    gst_pad_push_event (data->pad, gst_event_ref (*event));
+
+  return TRUE;
 }
 
 static void
 gst_deinterleave_add_new_pads (GstDeinterleave * self, GstCaps * caps)
 {
   GstPad *pad;
-
   guint i;
 
   for (i = 0; i < GST_AUDIO_INFO_CHANNELS (&self->audio_info); i++) {
     gchar *name = g_strdup_printf ("src_%u", i);
-
     GstCaps *srccaps;
     GstAudioInfo info;
     GstAudioFormat format = GST_AUDIO_INFO_FORMAT (&self->audio_info);
     gint rate = GST_AUDIO_INFO_RATE (&self->audio_info);
     GstAudioChannelPosition position = GST_AUDIO_CHANNEL_POSITION_MONO;
+    CopyStickyEventsData data;
 
     /* Set channel position if we know it */
     if (self->keep_positions)
@@ -247,7 +270,12 @@ gst_deinterleave_add_new_pads (GstDeinterleave * self, GstCaps * caps)
     gst_pad_set_query_function (pad,
         GST_DEBUG_FUNCPTR (gst_deinterleave_src_query));
     gst_pad_set_active (pad, TRUE);
-    gst_pad_set_caps (pad, srccaps);
+
+    data.pad = pad;
+    data.caps = srccaps;
+    gst_pad_sticky_events_foreach (self->sink, copy_sticky_events, &data);
+    if (data.caps)
+      gst_pad_set_caps (pad, data.caps);
     gst_element_add_pad (GST_ELEMENT (self), pad);
     self->srcpads = g_list_prepend (self->srcpads, gst_object_ref (pad));
 
@@ -258,18 +286,22 @@ gst_deinterleave_add_new_pads (GstDeinterleave * self, GstCaps * caps)
   self->srcpads = g_list_reverse (self->srcpads);
 }
 
-static void
+static gboolean
 gst_deinterleave_set_pads_caps (GstDeinterleave * self, GstCaps * caps)
 {
   GList *l;
   gint i;
+  gboolean ret = TRUE;
 
   for (l = self->srcpads, i = 0; l; l = l->next, i++) {
     GstPad *pad = GST_PAD (l->data);
-
     GstCaps *srccaps;
     GstAudioInfo info;
-    gst_audio_info_from_caps (&info, caps);
+
+    if (!gst_audio_info_from_caps (&info, caps)) {
+      ret = FALSE;
+      continue;
+    }
     if (self->keep_positions)
       GST_AUDIO_INFO_POSITION (&info, 0) =
           GST_AUDIO_INFO_POSITION (&self->audio_info, i);
@@ -279,6 +311,7 @@ gst_deinterleave_set_pads_caps (GstDeinterleave * self, GstCaps * caps)
     gst_pad_set_caps (pad, srccaps);
     gst_caps_unref (srccaps);
   }
+  return ret;
 }
 
 static void
@@ -326,6 +359,56 @@ gst_deinterleave_set_process_function (GstDeinterleave * self)
 }
 
 static gboolean
+gst_deinterleave_check_caps_change (GstDeinterleave * self,
+    GstAudioInfo * old_info, GstAudioInfo * new_info)
+{
+  gint i;
+  gboolean same_layout = TRUE;
+  gboolean was_unpositioned;
+  gboolean is_unpositioned = GST_AUDIO_INFO_IS_UNPOSITIONED (new_info);
+  gint new_channels = GST_AUDIO_INFO_CHANNELS (new_info);
+  gint old_channels;
+
+  was_unpositioned = GST_AUDIO_INFO_IS_UNPOSITIONED (old_info);
+  old_channels = GST_AUDIO_INFO_CHANNELS (old_info);
+
+  /* We allow caps changes as long as the number of channels doesn't change
+   * and the channel positions stay the same. _getcaps() should've cared
+   * for this already but better be safe.
+   */
+  if (new_channels != old_channels)
+    goto cannot_change_caps;
+
+  /* Now check the channel positions. If we had no channel positions
+   * and get them or the other way around things have changed.
+   * If we had channel positions and get different ones things have
+   * changed too of course
+   */
+  if ((!was_unpositioned && is_unpositioned) || (was_unpositioned
+          && !is_unpositioned))
+    goto cannot_change_caps;
+
+  if (!is_unpositioned) {
+    if (GST_AUDIO_INFO_CHANNELS (old_info) !=
+        GST_AUDIO_INFO_CHANNELS (new_info))
+      goto cannot_change_caps;
+    for (i = 0; i < GST_AUDIO_INFO_CHANNELS (old_info); i++) {
+      if (new_info->position[i] != old_info->position[i]) {
+        same_layout = FALSE;
+        break;
+      }
+    }
+    if (!same_layout)
+      goto cannot_change_caps;
+  }
+
+  return TRUE;
+
+cannot_change_caps:
+  return FALSE;
+}
+
+static gboolean
 gst_deinterleave_sink_setcaps (GstDeinterleave * self, GstCaps * caps)
 {
   GstCaps *srccaps;
@@ -340,50 +423,17 @@ gst_deinterleave_sink_setcaps (GstDeinterleave * self, GstCaps * caps)
     goto unsupported_caps;
 
   if (self->sinkcaps && !gst_caps_is_equal (caps, self->sinkcaps)) {
-    gint i;
-    gboolean same_layout = TRUE;
-    gboolean was_unpositioned;
-    gboolean is_unpositioned =
-        GST_AUDIO_INFO_IS_UNPOSITIONED (&self->audio_info);
-    gint new_channels = GST_AUDIO_INFO_CHANNELS (&self->audio_info);
-    gint old_channels;
     GstAudioInfo old_info;
 
     gst_audio_info_init (&old_info);
-    gst_audio_info_from_caps (&old_info, self->sinkcaps);
-    was_unpositioned = GST_AUDIO_INFO_IS_UNPOSITIONED (&old_info);
-    old_channels = GST_AUDIO_INFO_CHANNELS (&old_info);
+    if (!gst_audio_info_from_caps (&old_info, self->sinkcaps))
+      goto info_from_caps_failed;
 
-    /* We allow caps changes as long as the number of channels doesn't change
-     * and the channel positions stay the same. _getcaps() should've cared
-     * for this already but better be safe.
-     */
-    if (new_channels != old_channels ||
-        !gst_deinterleave_set_process_function (self))
-      goto cannot_change_caps;
-
-    /* Now check the channel positions. If we had no channel positions
-     * and get them or the other way around things have changed.
-     * If we had channel positions and get different ones things have
-     * changed too of course
-     */
-    if ((!was_unpositioned && is_unpositioned) || (was_unpositioned
-            && !is_unpositioned))
-      goto cannot_change_caps;
-
-    if (!is_unpositioned) {
-      if (GST_AUDIO_INFO_CHANNELS (&old_info) !=
-          GST_AUDIO_INFO_CHANNELS (&self->audio_info))
+    if (gst_deinterleave_check_caps_change (self, &old_info, &self->audio_info)) {
+      if (!gst_deinterleave_set_process_function (self))
         goto cannot_change_caps;
-      for (i = 0; i < GST_AUDIO_INFO_CHANNELS (&old_info); i++) {
-        if (self->audio_info.position[i] != old_info.position[i]) {
-          same_layout = FALSE;
-          break;
-        }
-      }
-      if (!same_layout)
-        goto cannot_change_caps;
-    }
+    } else
+      goto cannot_change_caps;
 
   }
 
@@ -398,7 +448,8 @@ gst_deinterleave_sink_setcaps (GstDeinterleave * self, GstCaps * caps)
   /* If we already have pads, update the caps otherwise
    * add new pads */
   if (self->srcpads) {
-    gst_deinterleave_set_pads_caps (self, srccaps);
+    if (!gst_deinterleave_set_pads_caps (self, srccaps))
+      goto set_caps_failed;
   } else {
     gst_deinterleave_add_new_pads (self, srccaps);
   }
@@ -424,13 +475,23 @@ invalid_caps:
     GST_ERROR_OBJECT (self, "invalid caps");
     return FALSE;
   }
+set_caps_failed:
+  {
+    GST_ERROR_OBJECT (self, "set_caps failed");
+    gst_caps_unref (srccaps);
+    return FALSE;
+  }
+info_from_caps_failed:
+  {
+    GST_ERROR_OBJECT (self, "coud not get info from caps");
+    return FALSE;
+  }
 }
 
 static void
 __remove_channels (GstCaps * caps)
 {
   GstStructure *s;
-
   gint i, size;
 
   size = gst_caps_get_size (caps);
@@ -445,7 +506,6 @@ static void
 __set_channels (GstCaps * caps, gint channels)
 {
   GstStructure *s;
-
   gint i, size;
 
   size = gst_caps_get_size (caps);
@@ -458,17 +518,57 @@ __set_channels (GstCaps * caps, gint channels)
   }
 }
 
-static GstCaps *
-gst_deinterleave_sink_getcaps (GstPad * pad, GstObject * parent,
-    GstCaps * filter)
+static gboolean
+gst_deinterleave_sink_acceptcaps (GstPad * pad, GstObject * parent,
+    GstCaps * caps)
 {
   GstDeinterleave *self = GST_DEINTERLEAVE (parent);
+  GstCaps *templ_caps = gst_pad_get_pad_template_caps (pad);
+  gboolean ret;
 
+  ret = gst_caps_can_intersect (templ_caps, caps);
+  gst_caps_unref (templ_caps);
+  if (ret && self->sinkcaps) {
+    GstAudioInfo new_info;
+
+    gst_audio_info_init (&new_info);
+    if (!gst_audio_info_from_caps (&new_info, caps))
+      goto info_from_caps_failed;
+    ret =
+        gst_deinterleave_check_caps_change (self, &self->audio_info, &new_info);
+  }
+
+  return ret;
+
+info_from_caps_failed:
+  {
+    GST_ERROR_OBJECT (self, "coud not get info from caps");
+    return FALSE;
+  }
+}
+
+static GstCaps *
+gst_deinterleave_getcaps (GstPad * pad, GstObject * parent, GstCaps * filter)
+{
+  GstDeinterleave *self = GST_DEINTERLEAVE (parent);
   GstCaps *ret;
+  GstIterator *it;
+  GstIteratorResult res;
+  GValue v = G_VALUE_INIT;
 
-  GList *l;
+  if (pad != self->sink) {
+    ret = gst_pad_get_current_caps (pad);
+    if (ret) {
+      if (filter) {
+        GstCaps *tmp =
+            gst_caps_intersect_full (filter, ret, GST_CAPS_INTERSECT_FIRST);
+        gst_caps_unref (ret);
+        ret = tmp;
+      }
+      return ret;
+    }
+  }
 
-  GST_OBJECT_LOCK (self);
   /* Intersect all of our pad template caps with the peer caps of the pad
    * to get all formats that are possible up- and downstream.
    *
@@ -477,52 +577,82 @@ gst_deinterleave_sink_getcaps (GstPad * pad, GstObject * parent,
    * will be detected here already
    */
   ret = gst_caps_new_any ();
-  for (l = GST_ELEMENT (self)->pads; l != NULL; l = l->next) {
-    GstPad *ourpad = GST_PAD (l->data);
+  it = gst_element_iterate_pads (GST_ELEMENT_CAST (self));
 
-    GstCaps *peercaps = NULL, *ourcaps;
+  do {
+    res = gst_iterator_next (it, &v);
+    switch (res) {
+      case GST_ITERATOR_OK:{
+        GstPad *ourpad = GST_PAD (g_value_get_object (&v));
+        GstCaps *peercaps = NULL, *ourcaps;
+        GstCaps *templ_caps = gst_pad_get_pad_template_caps (ourpad);
 
-    ourcaps = gst_caps_copy (gst_pad_get_pad_template_caps (ourpad));
+        ourcaps = gst_caps_copy (templ_caps);
+        gst_caps_unref (templ_caps);
 
-    if (pad == ourpad) {
-      if (GST_PAD_DIRECTION (pad) == GST_PAD_SINK)
-        __set_channels (ourcaps, GST_AUDIO_INFO_CHANNELS (&self->audio_info));
-      else
-        __set_channels (ourcaps, 1);
-    } else {
-      __remove_channels (ourcaps);
-      /* Only ask for peer caps for other pads than pad
-       * as otherwise gst_pad_peer_get_caps() might call
-       * back into this function and deadlock
-       */
-      peercaps = gst_pad_peer_query_caps (ourpad, NULL);
-      peercaps = gst_caps_make_writable (peercaps);
+        if (pad == ourpad) {
+          if (GST_PAD_DIRECTION (pad) == GST_PAD_SINK)
+            __set_channels (ourcaps,
+                GST_AUDIO_INFO_CHANNELS (&self->audio_info));
+          else
+            __set_channels (ourcaps, 1);
+        } else {
+          __remove_channels (ourcaps);
+          /* Only ask for peer caps for other pads than pad
+           * as otherwise gst_pad_peer_get_caps() might call
+           * back into this function and deadlock
+           */
+          peercaps = gst_pad_peer_query_caps (ourpad, NULL);
+          peercaps = gst_caps_make_writable (peercaps);
+        }
+
+        /* If the peer exists and has caps add them to the intersection,
+         * otherwise assume that the peer accepts everything */
+        if (peercaps) {
+          GstCaps *intersection;
+          GstCaps *oldret = ret;
+
+          __remove_channels (peercaps);
+
+          intersection = gst_caps_intersect (peercaps, ourcaps);
+
+          ret = gst_caps_intersect (ret, intersection);
+          gst_caps_unref (intersection);
+          gst_caps_unref (peercaps);
+          gst_caps_unref (oldret);
+        } else {
+          GstCaps *oldret = ret;
+
+          ret = gst_caps_intersect (ret, ourcaps);
+          gst_caps_unref (oldret);
+        }
+        gst_caps_unref (ourcaps);
+        g_value_reset (&v);
+        break;
+      }
+      case GST_ITERATOR_DONE:
+        break;
+      case GST_ITERATOR_ERROR:
+        gst_caps_unref (ret);
+        ret = gst_caps_new_empty ();
+        break;
+      case GST_ITERATOR_RESYNC:
+        gst_caps_unref (ret);
+        ret = gst_caps_new_any ();
+        gst_iterator_resync (it);
+        break;
     }
+  } while (res != GST_ITERATOR_DONE && res != GST_ITERATOR_ERROR);
+  g_value_unset (&v);
+  gst_iterator_free (it);
 
-    /* If the peer exists and has caps add them to the intersection,
-     * otherwise assume that the peer accepts everything */
-    if (peercaps) {
-      GstCaps *intersection;
+  if (filter) {
+    GstCaps *aux;
 
-      GstCaps *oldret = ret;
-
-      __remove_channels (peercaps);
-
-      intersection = gst_caps_intersect (peercaps, ourcaps);
-
-      ret = gst_caps_intersect (ret, intersection);
-      gst_caps_unref (intersection);
-      gst_caps_unref (peercaps);
-      gst_caps_unref (oldret);
-    } else {
-      GstCaps *oldret = ret;
-
-      ret = gst_caps_intersect (ret, ourcaps);
-      gst_caps_unref (oldret);
-    }
-    gst_caps_unref (ourcaps);
+    aux = gst_caps_intersect_full (filter, ret, GST_CAPS_INTERSECT_FIRST);
+    gst_caps_unref (ret);
+    ret = aux;
   }
-  GST_OBJECT_UNLOCK (self);
 
   GST_DEBUG_OBJECT (pad, "Intersected caps to %" GST_PTR_FORMAT, ret);
 
@@ -533,7 +663,6 @@ static gboolean
 gst_deinterleave_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
 {
   GstDeinterleave *self = GST_DEINTERLEAVE (parent);
-
   gboolean ret;
 
   GST_DEBUG ("Got %s event on pad %s:%s", GST_EVENT_TYPE_NAME (event),
@@ -560,13 +689,14 @@ gst_deinterleave_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
     }
 
     default:
-      if (self->srcpads) {
-        ret = gst_pad_event_default (pad, parent, event);
-      } else {
+      if (!self->srcpads && !GST_EVENT_IS_STICKY (event)) {
+        /* Sticky events are copied when creating a new pad */
         GST_OBJECT_LOCK (self);
         self->pending_events = g_list_append (self->pending_events, event);
         GST_OBJECT_UNLOCK (self);
         ret = TRUE;
+      } else {
+        ret = gst_pad_event_default (pad, parent, event);
       }
       break;
   }
@@ -575,17 +705,50 @@ gst_deinterleave_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
 }
 
 static gboolean
+gst_deinterleave_sink_query (GstPad * pad, GstObject * parent, GstQuery * query)
+{
+  gboolean res;
+
+  switch (GST_QUERY_TYPE (query)) {
+    case GST_QUERY_CAPS:{
+      GstCaps *filter;
+      GstCaps *caps;
+
+      gst_query_parse_caps (query, &filter);
+      caps = gst_deinterleave_getcaps (pad, parent, filter);
+      gst_query_set_caps_result (query, caps);
+      gst_caps_unref (caps);
+      res = TRUE;
+      break;
+    }
+    case GST_QUERY_ACCEPT_CAPS:{
+      GstCaps *caps;
+      gboolean ret;
+
+      gst_query_parse_accept_caps (query, &caps);
+      ret = gst_deinterleave_sink_acceptcaps (pad, parent, caps);
+      gst_query_set_accept_caps_result (query, ret);
+      res = TRUE;
+      break;
+    }
+    default:
+      res = gst_pad_query_default (pad, parent, query);
+      break;
+  }
+
+  return res;
+}
+
+static gboolean
 gst_deinterleave_src_query (GstPad * pad, GstObject * parent, GstQuery * query)
 {
   GstDeinterleave *self = GST_DEINTERLEAVE (parent);
-
   gboolean res;
 
   res = gst_pad_query_default (pad, parent, query);
 
   if (res && GST_QUERY_TYPE (query) == GST_QUERY_DURATION) {
     GstFormat format;
-
     gint64 dur;
 
     gst_query_parse_duration (query, &format, &dur);
@@ -598,7 +761,6 @@ gst_deinterleave_src_query (GstPad * pad, GstObject * parent, GstQuery * query)
           dur / GST_AUDIO_INFO_CHANNELS (&self->audio_info));
   } else if (res && GST_QUERY_TYPE (query) == GST_QUERY_POSITION) {
     GstFormat format;
-
     gint64 pos;
 
     gst_query_parse_position (query, &format, &pos);
@@ -613,7 +775,7 @@ gst_deinterleave_src_query (GstPad * pad, GstObject * parent, GstQuery * query)
     GstCaps *filter, *caps;
 
     gst_query_parse_caps (query, &filter);
-    caps = gst_deinterleave_sink_getcaps (pad, parent, filter);
+    caps = gst_deinterleave_getcaps (pad, parent, filter);
     gst_query_set_caps_result (query, caps);
     gst_caps_unref (caps);
   }
@@ -657,49 +819,39 @@ static GstFlowReturn
 gst_deinterleave_process (GstDeinterleave * self, GstBuffer * buf)
 {
   GstFlowReturn ret = GST_FLOW_OK;
-
   guint channels = GST_AUDIO_INFO_CHANNELS (&self->audio_info);
-
   guint pads_pushed = 0, buffers_allocated = 0;
-
   guint nframes =
       gst_buffer_get_size (buf) / channels /
       (GST_AUDIO_INFO_WIDTH (&self->audio_info) / 8);
-
   guint bufsize = nframes * (GST_AUDIO_INFO_WIDTH (&self->audio_info) / 8);
-
   guint i;
-
   GList *srcs;
-
   GstBuffer **buffers_out = g_new0 (GstBuffer *, channels);
-
   guint8 *in, *out;
-
   GstMapInfo read_info;
-  gst_buffer_map (buf, &read_info, GST_MAP_READ);
+  GList *pending_events, *l;
 
   /* Send any pending events to all src pads */
   GST_OBJECT_LOCK (self);
-  if (self->pending_events) {
-    GList *events;
+  pending_events = self->pending_events;
+  self->pending_events = NULL;
+  GST_OBJECT_UNLOCK (self);
 
+  if (pending_events) {
     GstEvent *event;
 
     GST_DEBUG_OBJECT (self, "Sending pending events to all src pads");
-
-    for (events = self->pending_events; events != NULL; events = events->next) {
-      event = GST_EVENT (events->data);
-
+    for (l = pending_events; l; l = l->next) {
+      event = l->data;
       for (srcs = self->srcpads; srcs != NULL; srcs = srcs->next)
         gst_pad_push_event (GST_PAD (srcs->data), gst_event_ref (event));
       gst_event_unref (event);
     }
-
-    g_list_free (self->pending_events);
-    self->pending_events = NULL;
+    g_list_free (pending_events);
   }
-  GST_OBJECT_UNLOCK (self);
+
+  gst_buffer_map (buf, &read_info, GST_MAP_READ);
 
   /* Allocate buffers */
   for (srcs = self->srcpads, i = 0; srcs; srcs = srcs->next, i++) {
@@ -709,7 +861,8 @@ gst_deinterleave_process (GstDeinterleave * self, GstBuffer * buf)
      * here is an unliked pad */
     if (!buffers_out[i])
       goto alloc_buffer_failed;
-    else if (buffers_out[i] && gst_buffer_get_size (buffers_out[i]) != bufsize)
+    else if (buffers_out[i]
+        && gst_buffer_get_size (buffers_out[i]) != bufsize)
       goto alloc_buffer_bad_size;
 
     if (buffers_out[i]) {
@@ -732,16 +885,12 @@ gst_deinterleave_process (GstDeinterleave * self, GstBuffer * buf)
     GstPad *pad = (GstPad *) srcs->data;
     GstMapInfo write_info;
 
-
     in = (guint8 *) read_info.data;
     in += i * (GST_AUDIO_INFO_WIDTH (&self->audio_info) / 8);
     if (buffers_out[i]) {
       gst_buffer_map (buffers_out[i], &write_info, GST_MAP_WRITE);
-
       out = (guint8 *) write_info.data;
-
       self->func (out, in, channels, nframes);
-
       gst_buffer_unmap (buffers_out[i], &write_info);
 
       ret = gst_pad_push (pad, buffers_out[i]);
@@ -801,7 +950,6 @@ static GstFlowReturn
 gst_deinterleave_chain (GstPad * pad, GstObject * parent, GstBuffer * buffer)
 {
   GstDeinterleave *self = GST_DEINTERLEAVE (parent);
-
   GstFlowReturn ret;
 
   g_return_val_if_fail (self->func != NULL, GST_FLOW_NOT_NEGOTIATED);

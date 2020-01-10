@@ -16,8 +16,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /* FIXME 0.11: suppress warnings for deprecated API such as GValueArray
@@ -58,7 +58,7 @@ bus_handler (GstBus * bus, GstMessage * message, gpointer data)
 }
 
 /*
- * gst-launch \
+ * gst-launch-1.0 \
  * audiotestsrc freq=440 num-buffers=100 ! interleave name=i ! audioconvert ! wavenc ! filesink location=/tmp/mc.wav \
  * audiotestsrc freq=880 num-buffers=100 ! i.
  * ...
@@ -110,8 +110,8 @@ make_n_channel_wav (const gint channels, const GValueArray * arr)
   for (i = 0; i < channels; i++) {
     audiotestsrc[i] = gst_element_factory_make ("audiotestsrc", NULL);
     fail_unless (audiotestsrc[i] != NULL);
-    g_object_set (G_OBJECT (audiotestsrc[i]), "wave", 0, "freq", 440.0 * i,
-        "num-buffers", 100, NULL);
+    g_object_set (G_OBJECT (audiotestsrc[i]), "wave", 0, "freq",
+        440.0 * (i + 1), "num-buffers", 100, NULL);
     gst_bin_add (GST_BIN (pipeline), audiotestsrc[i]);
     fail_unless (gst_element_link (audiotestsrc[i], interleave));
   }

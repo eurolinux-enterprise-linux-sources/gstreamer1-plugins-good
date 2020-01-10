@@ -15,8 +15,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
@@ -100,6 +100,8 @@ static FLAC__StreamDecoderWriteStatus
 gst_flac_dec_write_stream (const FLAC__StreamDecoder * decoder,
     const FLAC__Frame * frame,
     const FLAC__int32 * const buffer[], void *client_data);
+static gboolean
+gst_flac_dec_handle_decoder_error (GstFlacDec * dec, gboolean msg);
 static void gst_flac_dec_metadata_cb (const FLAC__StreamDecoder *
     decoder, const FLAC__StreamMetadata * metadata, void *client_data);
 static void gst_flac_dec_error_cb (const FLAC__StreamDecoder *
@@ -115,9 +117,9 @@ static GstFlowReturn gst_flac_dec_handle_frame (GstAudioDecoder * audio_dec,
 G_DEFINE_TYPE (GstFlacDec, gst_flac_dec, GST_TYPE_AUDIO_DECODER);
 
 #if G_BYTE_ORDER == G_LITTLE_ENDIAN
-#define FORMATS "{ S8LE, S16LE, S24_32LE, S32LE } "
+#define FORMATS "{ S8, S16LE, S24_32LE, S32LE } "
 #else
-#define FORMATS "{ S8BE, S16BE, S24_32BE, S32BE } "
+#define FORMATS "{ S8, S16BE, S24_32BE, S32BE } "
 #endif
 
 #define GST_FLAC_DEC_SRC_CAPS                             \
@@ -162,10 +164,10 @@ gst_flac_dec_class_init (GstFlacDecClass * klass)
   audiodecoder_class->handle_frame =
       GST_DEBUG_FUNCPTR (gst_flac_dec_handle_frame);
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&flac_dec_src_factory));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&flac_dec_sink_factory));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &flac_dec_src_factory);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &flac_dec_sink_factory);
 
   gst_element_class_set_static_metadata (gstelement_class, "FLAC audio decoder",
       "Codec/Decoder/Audio", "Decodes FLAC lossless audio streams",
@@ -176,7 +178,10 @@ gst_flac_dec_class_init (GstFlacDecClass * klass)
 static void
 gst_flac_dec_init (GstFlacDec * flacdec)
 {
-  /* nothing to do here */
+  gst_audio_decoder_set_needs_format (GST_AUDIO_DECODER (flacdec), TRUE);
+  gst_audio_decoder_set_use_default_pad_acceptcaps (GST_AUDIO_DECODER_CAST
+      (flacdec), TRUE);
+  GST_PAD_SET_ACCEPT_TEMPLATE (GST_AUDIO_DECODER_SINK_PAD (flacdec));
 }
 
 static gboolean
@@ -275,6 +280,14 @@ gst_flac_dec_set_format (GstAudioDecoder * dec, GstCaps * caps)
   GST_DEBUG_OBJECT (dec, "Processing headers and metadata");
   if (!FLAC__stream_decoder_process_until_end_of_metadata (flacdec->decoder)) {
     GST_WARNING_OBJECT (dec, "process_until_end_of_metadata failed");
+    if (FLAC__stream_decoder_get_state (flacdec->decoder) ==
+        FLAC__STREAM_DECODER_ABORTED) {
+      GST_WARNING_OBJECT (flacdec, "Read callback caused internal abort");
+      /* allow recovery */
+      gst_adapter_clear (flacdec->adapter);
+      FLAC__stream_decoder_flush (flacdec->decoder);
+      gst_flac_dec_handle_decoder_error (flacdec, TRUE);
+    }
   }
   GST_INFO_OBJECT (dec, "headers and metadata are now processed");
   return TRUE;
@@ -317,7 +330,7 @@ static const guint8 crc8_table[256] = {
 };
 
 static guint8
-gst_flac_calculate_crc8 (guint8 * data, guint length)
+gst_flac_calculate_crc8 (const guint8 * data, guint length)
 {
   guint8 crc = 0;
 
@@ -332,14 +345,15 @@ gst_flac_calculate_crc8 (guint8 * data, guint length)
 /* FIXME: for our purposes it's probably enough to just check for the sync
  * marker - we just want to know if it's a header frame or not */
 static gboolean
-gst_flac_dec_scan_got_frame (GstFlacDec * flacdec, guint8 * data, guint size,
-    gint64 * last_sample_num)
+gst_flac_dec_scan_got_frame (GstFlacDec * flacdec, const guint8 * data,
+    guint size)
 {
   guint headerlen;
   guint sr_from_end = 0;        /* can be 0, 8 or 16 */
   guint bs_from_end = 0;        /* can be 0, 8 or 16 */
   guint32 val = 0;
   guint8 bs, sr, ca, ss, pb;
+  gboolean vbs;
 
   if (size < 10)
     return FALSE;
@@ -347,11 +361,8 @@ gst_flac_dec_scan_got_frame (GstFlacDec * flacdec, guint8 * data, guint size,
   /* sync */
   if (data[0] != 0xFF || (data[1] & 0xFC) != 0xF8)
     return FALSE;
-  if (data[1] & 1) {
-    GST_WARNING_OBJECT (flacdec, "Variable block size FLAC unsupported");
-    return FALSE;
-  }
 
+  vbs = ! !(data[1] & 1);       /* variable blocksize */
   bs = (data[2] & 0xF0) >> 4;   /* blocksize marker   */
   sr = (data[2] & 0x0F);        /* samplerate marker  */
   ca = (data[3] & 0xF0) >> 4;   /* channel assignment */
@@ -359,7 +370,8 @@ gst_flac_dec_scan_got_frame (GstFlacDec * flacdec, guint8 * data, guint size,
   pb = (data[3] & 0x01);        /* padding bit        */
 
   GST_LOG_OBJECT (flacdec,
-      "got sync, bs=%x,sr=%x,ca=%x,ss=%x,pb=%x", bs, sr, ca, ss, pb);
+      "got sync, vbs=%d,bs=%x,sr=%x,ca=%x,ss=%x,pb=%x", vbs, bs, sr, ca, ss,
+      pb);
 
   if (bs == 0 || sr == 0x0F || ca >= 0x0B || ss == 0x03 || ss == 0x07) {
     return FALSE;
@@ -406,36 +418,6 @@ gst_flac_dec_scan_got_frame (GstFlacDec * flacdec, guint8 * data, guint size,
     return FALSE;
   }
 
-  if (!last_sample_num)
-    return TRUE;
-
-  /* FIXME: This is can be 36 bit if variable block size is used,
-   * fortunately not encoder supports this yet and we check for that
-   * above.
-   */
-  val = (guint32) g_utf8_get_char_validated ((gchar *) data + 4, -1);
-
-  if (val == (guint32) - 1 || val == (guint32) - 2) {
-    GST_LOG_OBJECT (flacdec, "failed to read sample/frame");
-    return FALSE;
-  }
-
-  if (flacdec->min_blocksize == flacdec->max_blocksize) {
-    *last_sample_num = (val + 1) * flacdec->min_blocksize;
-  } else {
-    *last_sample_num = 0;       /* FIXME: + length of last block in samples */
-  }
-
-  /* FIXME: only valid for fixed block size streams */
-  GST_DEBUG_OBJECT (flacdec, "frame number: %" G_GINT64_FORMAT,
-      *last_sample_num);
-
-  if (flacdec->info.rate > 0 && *last_sample_num != 0) {
-    GST_DEBUG_OBJECT (flacdec, "last sample %" G_GINT64_FORMAT " = %"
-        GST_TIME_FORMAT, *last_sample_num,
-        GST_TIME_ARGS (*last_sample_num * GST_SECOND / flacdec->info.rate));
-  }
-
   return TRUE;
 }
 
@@ -464,13 +446,14 @@ gst_flac_dec_metadata_cb (const FLAC__StreamDecoder * decoder,
     const FLAC__StreamMetadata * metadata, void *client_data)
 {
   GstFlacDec *flacdec = GST_FLAC_DEC (client_data);
+  GstAudioChannelPosition position[8];
 
   GST_LOG_OBJECT (flacdec, "metadata type: %d", metadata->type);
 
   switch (metadata->type) {
     case FLAC__METADATA_TYPE_STREAMINFO:{
       gint64 samples;
-      guint depth, width, gdepth;
+      guint depth, width, gdepth, channels;
 
       samples = metadata->data.stream_info.total_samples;
 
@@ -489,20 +472,18 @@ gst_flac_dec_metadata_cb (const FLAC__StreamDecoder * decoder,
         gdepth = width = 32;
       }
 
+      channels = metadata->data.stream_info.channels;
+      memcpy (position, channel_positions[channels - 1], sizeof (position));
+      gst_audio_channel_positions_to_valid_order (position, channels);
+      /* Note: we create the inverse reordering map here */
+      gst_audio_get_channel_reorder_map (channels,
+          position, channel_positions[channels - 1],
+          flacdec->channel_reorder_map);
+
       gst_audio_info_set_format (&flacdec->info,
           gst_audio_format_build_integer (TRUE, G_BYTE_ORDER, width, gdepth),
           metadata->data.stream_info.sample_rate,
-          metadata->data.stream_info.channels, NULL);
-
-      memcpy (flacdec->info.position,
-          channel_positions[flacdec->info.channels - 1],
-          sizeof (GstAudioChannelPosition) * flacdec->info.channels);
-      gst_audio_channel_positions_to_valid_order (flacdec->info.position,
-          flacdec->info.channels);
-      /* Note: we create the inverse reordering map here */
-      gst_audio_get_channel_reorder_map (flacdec->info.channels,
-          flacdec->info.position, channel_positions[flacdec->info.channels - 1],
-          flacdec->channel_reorder_map);
+          metadata->data.stream_info.channels, position);
 
       GST_DEBUG_OBJECT (flacdec, "blocksize: min=%u, max=%u",
           flacdec->min_blocksize, flacdec->max_blocksize);
@@ -586,6 +567,7 @@ gst_flac_dec_write (GstFlacDec * flacdec, const FLAC__Frame * frame,
   guint j, i;
   GstMapInfo map;
   gboolean caps_changed;
+  GstAudioChannelPosition chanpos[8];
 
   GST_LOG_OBJECT (flacdec, "samples in frame header: %d", samples);
 
@@ -642,15 +624,14 @@ gst_flac_dec_write (GstFlacDec * flacdec, const FLAC__Frame * frame,
     GST_DEBUG_OBJECT (flacdec, "Negotiating %d Hz @ %d channels", sample_rate,
         channels);
 
+    memcpy (chanpos, channel_positions[flacdec->info.channels - 1],
+        sizeof (chanpos));
+    gst_audio_channel_positions_to_valid_order (chanpos,
+        flacdec->info.channels);
     gst_audio_info_set_format (&flacdec->info,
         gst_audio_format_build_integer (TRUE, G_BYTE_ORDER, width, gdepth),
-        sample_rate, channels, NULL);
+        sample_rate, channels, chanpos);
 
-    memcpy (flacdec->info.position,
-        channel_positions[flacdec->info.channels - 1],
-        sizeof (GstAudioChannelPosition) * flacdec->info.channels);
-    gst_audio_channel_positions_to_valid_order (flacdec->info.position,
-        flacdec->info.channels);
     /* Note: we create the inverse reordering map here */
     gst_audio_get_channel_reorder_map (flacdec->info.channels,
         flacdec->info.position, channel_positions[flacdec->info.channels - 1],
@@ -670,18 +651,10 @@ gst_flac_dec_write (GstFlacDec * flacdec, const FLAC__Frame * frame,
     gint8 *outbuffer = (gint8 *) map.data;
     gint *reorder_map = flacdec->channel_reorder_map;
 
-    if (gdepth != depth) {
-      for (i = 0; i < samples; i++) {
-        for (j = 0; j < channels; j++) {
-          *outbuffer++ =
-              (gint8) (buffer[reorder_map[j]][i] << (gdepth - depth));
-        }
-      }
-    } else {
-      for (i = 0; i < samples; i++) {
-        for (j = 0; j < channels; j++) {
-          *outbuffer++ = (gint8) buffer[reorder_map[j]][i];
-        }
+    g_assert (gdepth == 8 && depth == 8);
+    for (i = 0; i < samples; i++) {
+      for (j = 0; j < channels; j++) {
+        *outbuffer++ = (gint8) buffer[reorder_map[j]][i];
       }
     }
   } else if (width == 16) {
@@ -796,8 +769,7 @@ gst_flac_dec_handle_frame (GstAudioDecoder * audio_dec, GstBuffer * buf)
 
     /* check if this is a flac audio frame (rather than a header or junk) */
     gst_buffer_map (buf, &map, GST_MAP_READ);
-    got_audio_frame =
-        gst_flac_dec_scan_got_frame (dec, map.data, map.size, NULL);
+    got_audio_frame = gst_flac_dec_scan_got_frame (dec, map.data, map.size);
     gst_buffer_unmap (buf, &map);
 
     if (!got_audio_frame) {
@@ -822,6 +794,14 @@ gst_flac_dec_handle_frame (GstAudioDecoder * audio_dec, GstBuffer * buf)
 
   if (!FLAC__stream_decoder_process_single (dec->decoder)) {
     GST_INFO_OBJECT (dec, "process_single failed");
+    if (FLAC__stream_decoder_get_state (dec->decoder) ==
+        FLAC__STREAM_DECODER_ABORTED) {
+      GST_WARNING_OBJECT (dec, "Read callback caused internal abort");
+      /* allow recovery */
+      gst_adapter_clear (dec->adapter);
+      FLAC__stream_decoder_flush (dec->decoder);
+      gst_flac_dec_handle_decoder_error (dec, TRUE);
+    }
   }
 
   return dec->last_flow;

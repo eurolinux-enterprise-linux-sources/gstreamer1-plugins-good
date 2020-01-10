@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 
@@ -61,7 +61,6 @@ struct _GstDVDec {
   gboolean       PAL;
   gboolean       interlaced;
   gboolean       wide;
-  gint           frame_len;
 
   /* input caps */
   gboolean       sink_negotiated;
@@ -74,7 +73,6 @@ struct _GstDVDec {
   gboolean       need_par;
 
   /* negotiated output */
-  dv_color_space_t space;
   gint           bpp;
   gboolean       src_negotiated;
   
@@ -83,6 +81,7 @@ struct _GstDVDec {
 
   GstBufferPool *pool;
   GstSegment     segment;
+  gboolean       need_segment;
 };
 
 struct _GstDVDecClass {

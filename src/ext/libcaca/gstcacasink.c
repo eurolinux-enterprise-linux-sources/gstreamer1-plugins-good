@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 /**
  * SECTION:element-cacasink
@@ -71,7 +71,8 @@ enum
 static GstStaticPadTemplate sink_template = GST_STATIC_PAD_TEMPLATE ("sink",
     GST_PAD_SINK,
     GST_PAD_ALWAYS,
-    GST_STATIC_CAPS (GST_VIDEO_CAPS_MAKE ("{ RGB, RGBx, RGB16, RGB15 }"))
+    GST_STATIC_CAPS (GST_VIDEO_CAPS_MAKE
+        ("{ RGB, BGR, RGBx, xRGB, BGRx, xBGR, RGB16, RGB15 }"))
     );
 
 static gboolean gst_cacasink_setcaps (GstBaseSink * pad, GstCaps * caps);
@@ -151,8 +152,7 @@ gst_cacasink_class_init (GstCACASinkClass * klass)
   gst_element_class_set_static_metadata (gstelement_class,
       "A colored ASCII art video sink", "Sink/Video",
       "A colored ASCII art videosink", "Zeeshan Ali <zak147@yahoo.com>");
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&sink_template));
+  gst_element_class_add_static_pad_template (gstelement_class, &sink_template);
 
   gstbasesink_class->set_caps = GST_DEBUG_FUNCPTR (gst_cacasink_setcaps);
   gstbasesink_class->get_times = GST_DEBUG_FUNCPTR (gst_cacasink_get_times);
@@ -180,19 +180,17 @@ gst_cacasink_setcaps (GstBaseSink * basesink, GstCaps * caps)
   if (!gst_video_info_from_caps (&info, caps))
     goto caps_error;
 
-
   switch (GST_VIDEO_INFO_FORMAT (&info)) {
     case GST_VIDEO_FORMAT_RGB:
-      bpp = 24;
-      red_mask = 0xff0000;
-      green_mask = 0x00ff00;
-      blue_mask = 0x0000ff;
-      break;
+    case GST_VIDEO_FORMAT_BGR:
     case GST_VIDEO_FORMAT_RGBx:
-      bpp = 32;
-      red_mask = 0xff000000;
-      green_mask = 0x00ff0000;
-      blue_mask = 0x0000ff00;
+    case GST_VIDEO_FORMAT_xRGB:
+    case GST_VIDEO_FORMAT_BGRx:
+    case GST_VIDEO_FORMAT_xBGR:
+      bpp = 8 * info.finfo->pixel_stride[0];
+      red_mask = 0xff << (8 * info.finfo->poffset[GST_VIDEO_COMP_R]);
+      green_mask = 0xff << (8 * info.finfo->poffset[GST_VIDEO_COMP_G]);
+      blue_mask = 0xff << (8 * info.finfo->poffset[GST_VIDEO_COMP_B]);
       break;
     case GST_VIDEO_FORMAT_RGB16:
       bpp = 16;

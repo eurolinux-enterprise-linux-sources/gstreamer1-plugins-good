@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -22,12 +22,14 @@
 #endif
 
 #include <gst/rtp/gstrtpbuffer.h>
+#include <gst/video/video.h>
 
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "gstrtpjpegdepay.h"
+#include "gstrtputils.h"
 
 GST_DEBUG_CATEGORY_STATIC (rtpjpegdepay_debug);
 #define GST_CAT_DEFAULT (rtpjpegdepay_debug)
@@ -45,7 +47,6 @@ static GstStaticPadTemplate gst_rtp_jpeg_depay_sink_template =
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS ("application/x-rtp, "
         "media = (string) \"video\", "
-        "payload = (int) " GST_RTP_PAYLOAD_DYNAMIC_STRING ", "
         "clock-rate = (int) 90000, " "encoding-name = (string) \"JPEG\"; "
         /* optional SDP attributes */
         /*
@@ -78,7 +79,7 @@ static GstStateChangeReturn gst_rtp_jpeg_depay_change_state (GstElement *
 static gboolean gst_rtp_jpeg_depay_setcaps (GstRTPBaseDepayload * depayload,
     GstCaps * caps);
 static GstBuffer *gst_rtp_jpeg_depay_process (GstRTPBaseDepayload * depayload,
-    GstBuffer * buf);
+    GstRTPBuffer * rtp);
 
 static void
 gst_rtp_jpeg_depay_class_init (GstRtpJPEGDepayClass * klass)
@@ -93,10 +94,10 @@ gst_rtp_jpeg_depay_class_init (GstRtpJPEGDepayClass * klass)
 
   gobject_class->finalize = gst_rtp_jpeg_depay_finalize;
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_jpeg_depay_src_template));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_jpeg_depay_sink_template));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_jpeg_depay_src_template);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_jpeg_depay_sink_template);
 
   gst_element_class_set_static_metadata (gstelement_class,
       "RTP JPEG depayloader", "Codec/Depayloader/Network/RTP",
@@ -106,7 +107,7 @@ gst_rtp_jpeg_depay_class_init (GstRtpJPEGDepayClass * klass)
   gstelement_class->change_state = gst_rtp_jpeg_depay_change_state;
 
   gstrtpbasedepayload_class->set_caps = gst_rtp_jpeg_depay_setcaps;
-  gstrtpbasedepayload_class->process = gst_rtp_jpeg_depay_process;
+  gstrtpbasedepayload_class->process_rtp_packet = gst_rtp_jpeg_depay_process;
 
   GST_DEBUG_CATEGORY_INIT (rtpjpegdepay_debug, "rtpjpegdepay", 0,
       "JPEG Video RTP Depayloader");
@@ -488,7 +489,7 @@ gst_rtp_jpeg_depay_setcaps (GstRTPBaseDepayload * depayload, GstCaps * caps)
 }
 
 static GstBuffer *
-gst_rtp_jpeg_depay_process (GstRTPBaseDepayload * depayload, GstBuffer * buf)
+gst_rtp_jpeg_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
 {
   GstRtpJPEGDepay *rtpjpegdepay;
   GstBuffer *outbuf;
@@ -499,22 +500,21 @@ gst_rtp_jpeg_depay_process (GstRTPBaseDepayload * depayload, GstBuffer * buf)
   guint type, width, height;
   guint16 dri, precision, length;
   guint8 *qtable;
-  GstRTPBuffer rtp = { NULL };
 
   rtpjpegdepay = GST_RTP_JPEG_DEPAY (depayload);
 
-  if (GST_BUFFER_IS_DISCONT (buf)) {
+  if (GST_BUFFER_IS_DISCONT (rtp->buffer)) {
+    GST_DEBUG_OBJECT (depayload, "DISCONT, reset adapter");
     gst_adapter_clear (rtpjpegdepay->adapter);
     rtpjpegdepay->discont = TRUE;
   }
 
-  gst_rtp_buffer_map (buf, GST_MAP_READ, &rtp);
-  payload_len = gst_rtp_buffer_get_payload_len (&rtp);
+  payload_len = gst_rtp_buffer_get_payload_len (rtp);
 
   if (payload_len < 8)
     goto empty_packet;
 
-  payload = gst_rtp_buffer_get_payload (&rtp);
+  payload = gst_rtp_buffer_get_payload (rtp);
   header_len = 0;
 
   /*  0                   1                   2                   3
@@ -530,6 +530,13 @@ gst_rtp_jpeg_depay_process (GstRTPBaseDepayload * depayload, GstBuffer * buf)
   Q = payload[5];
   width = payload[6] * 8;
   height = payload[7] * 8;
+
+  /* saw a packet with fragment offset > 0 and we don't already have data queued
+   * up (most importantly, we don't have a header for this data) -- drop it
+   * XXX: maybe we can check if the jpeg is progressive and salvage the data?
+   * XXX: not implemented yet because jpegenc can't create progressive jpegs */
+  if (frag_offset > 0 && gst_adapter_available (rtpjpegdepay->adapter) == 0)
+    goto no_header_packet;
 
   /* allow frame dimensions > 2040, passed in SDP session or media attributes
    * from gstrtspsrc.c (gst_rtspsrc_sdp_attributes_to_caps), or in caps */
@@ -654,6 +661,12 @@ gst_rtp_jpeg_depay_process (GstRTPBaseDepayload * depayload, GstBuffer * buf)
           goto no_qtable;
       }
     }
+
+    /* I think we can get here with a NULL qtable, so make sure we don't
+       go dereferencing it in MakeHeaders if we do */
+    if (!qtable)
+      goto no_qtable;
+
     /* max header length, should be big enough */
     outbuf = gst_buffer_new_and_alloc (1000);
     gst_buffer_map (outbuf, &map, GST_MAP_WRITE);
@@ -668,11 +681,11 @@ gst_rtp_jpeg_depay_process (GstRTPBaseDepayload * depayload, GstBuffer * buf)
 
   /* take JPEG data, push in the adapter */
   GST_DEBUG_OBJECT (rtpjpegdepay, "pushing data at offset %d", header_len);
-  outbuf = gst_rtp_buffer_get_payload_subbuffer (&rtp, header_len, -1);
+  outbuf = gst_rtp_buffer_get_payload_subbuffer (rtp, header_len, -1);
   gst_adapter_push (rtpjpegdepay->adapter, outbuf);
   outbuf = NULL;
 
-  if (gst_rtp_buffer_get_marker (&rtp)) {
+  if (gst_rtp_buffer_get_marker (rtp)) {
     guint avail;
     guint8 end[2];
     GstMapInfo map;
@@ -708,10 +721,11 @@ gst_rtp_jpeg_depay_process (GstRTPBaseDepayload * depayload, GstBuffer * buf)
       rtpjpegdepay->discont = FALSE;
     }
 
+    gst_rtp_drop_meta (GST_ELEMENT_CAST (rtpjpegdepay), outbuf,
+        g_quark_from_static_string (GST_META_TAG_VIDEO_STR));
+
     GST_DEBUG_OBJECT (rtpjpegdepay, "returning %u bytes", avail);
   }
-
-  gst_rtp_buffer_unmap (&rtp);
 
   return outbuf;
 
@@ -720,20 +734,17 @@ empty_packet:
   {
     GST_ELEMENT_WARNING (rtpjpegdepay, STREAM, DECODE,
         ("Empty Payload."), (NULL));
-    gst_rtp_buffer_unmap (&rtp);
     return NULL;
   }
 invalid_dimension:
   {
     GST_ELEMENT_WARNING (rtpjpegdepay, STREAM, FORMAT,
         ("Invalid Dimension %dx%d.", width, height), (NULL));
-    gst_rtp_buffer_unmap (&rtp);
     return NULL;
   }
 no_qtable:
   {
     GST_WARNING_OBJECT (rtpjpegdepay, "no qtable");
-    gst_rtp_buffer_unmap (&rtp);
     return NULL;
   }
 invalid_packet:
@@ -741,7 +752,12 @@ invalid_packet:
     GST_WARNING_OBJECT (rtpjpegdepay, "invalid packet");
     gst_adapter_flush (rtpjpegdepay->adapter,
         gst_adapter_available (rtpjpegdepay->adapter));
-    gst_rtp_buffer_unmap (&rtp);
+    return NULL;
+  }
+no_header_packet:
+  {
+    GST_WARNING_OBJECT (rtpjpegdepay,
+        "discarding data packets received when we have no header");
     return NULL;
   }
 }

@@ -36,12 +36,12 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
- * SECTION:element-quarktv
+ * SECTION:element-revtv
  *
  * RevTV acts like a video waveform monitor for each line of video
  * processed. This creates a pseudo 3D effect based on the brightness
@@ -230,10 +230,10 @@ gst_revtv_class_init (GstRevTVClass * klass)
       "A video waveform monitor for each line of video processed",
       "Wim Taymans <wim.taymans@gmail.be>");
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_revtv_sink_template));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_revtv_src_template));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_revtv_sink_template);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_revtv_src_template);
 
   vfilter_class->transform_frame =
       GST_DEBUG_FUNCPTR (gst_revtv_transform_frame);

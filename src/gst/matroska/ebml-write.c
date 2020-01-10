@@ -16,8 +16,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -215,7 +215,8 @@ gst_ebml_writer_send_segment_event (GstEbmlWrite * ebml, guint64 new_pos)
 
   GST_INFO ("seeking to %" G_GUINT64_FORMAT, new_pos);
 
-  gst_segment_init (&segment, GST_FORMAT_BYTES);
+  gst_segment_init (&segment,
+      ebml->streamable ? GST_FORMAT_TIME : GST_FORMAT_BYTES);
   segment.start = new_pos;
   segment.stop = -1;
   segment.position = 0;
@@ -255,9 +256,13 @@ gst_ebml_write_flush_cache (GstEbmlWrite * ebml, gboolean is_keyframe,
     if (GST_BUFFER_OFFSET (buffer) != ebml->last_pos) {
       gst_ebml_writer_send_segment_event (ebml, GST_BUFFER_OFFSET (buffer));
       GST_BUFFER_FLAG_SET (buffer, GST_BUFFER_FLAG_DISCONT);
+    } else {
+      GST_BUFFER_FLAG_UNSET (buffer, GST_BUFFER_FLAG_DISCONT);
     }
     if (ebml->writing_streamheader) {
       GST_BUFFER_FLAG_SET (buffer, GST_BUFFER_FLAG_HEADER);
+    } else {
+      GST_BUFFER_FLAG_UNSET (buffer, GST_BUFFER_FLAG_HEADER);
     }
     if (!is_keyframe) {
       GST_BUFFER_FLAG_SET (buffer, GST_BUFFER_FLAG_DELTA_UNIT);
@@ -349,7 +354,7 @@ gst_ebml_write_element_size (guint8 ** data_inout, guint64 size)
 
   if (size != GST_EBML_SIZE_UNKNOWN) {
     /* how many bytes? - use mask-1 because an all-1 bitset is not allowed */
-    while ((size >> ((bytes - 1) * 8)) >= (mask - 1) && bytes <= 8) {
+    while (bytes <= 8 && (size >> ((bytes - 1) * 8)) >= (mask - 1)) {
       mask >>= 1;
       bytes++;
     }
@@ -427,7 +432,10 @@ gst_ebml_write_element_push (GstEbmlWrite * ebml, GstBuffer * buf,
       gst_buffer_map (buf, &map, GST_MAP_READ);
       buf_data = map.data;
     }
-    if (!gst_byte_writer_put_data (ebml->streamheader, buf_data, data_size))
+    if (!buf_data)
+      GST_WARNING ("Failed to map buffer");
+    else if (!gst_byte_writer_put_data (ebml->streamheader, buf_data,
+            data_size))
       GST_WARNING ("Error writing data to streamheader");
   }
   if (ebml->cache) {
@@ -435,7 +443,9 @@ gst_ebml_write_element_push (GstEbmlWrite * ebml, GstBuffer * buf,
       gst_buffer_map (buf, &map, GST_MAP_READ);
       buf_data = map.data;
     }
-    if (!gst_byte_writer_put_data (ebml->cache, buf_data, data_size))
+    if (!buf_data)
+      GST_WARNING ("Failed to map buffer");
+    else if (!gst_byte_writer_put_data (ebml->cache, buf_data, data_size))
       GST_WARNING ("Error writing data to cache");
     if (map.data)
       gst_buffer_unmap (buf, &map);
@@ -452,12 +462,16 @@ gst_ebml_write_element_push (GstEbmlWrite * ebml, GstBuffer * buf,
     GST_BUFFER_OFFSET_END (buf) = ebml->pos;
     if (ebml->writing_streamheader) {
       GST_BUFFER_FLAG_SET (buf, GST_BUFFER_FLAG_HEADER);
+    } else {
+      GST_BUFFER_FLAG_UNSET (buf, GST_BUFFER_FLAG_HEADER);
     }
     GST_BUFFER_FLAG_SET (buf, GST_BUFFER_FLAG_DELTA_UNIT);
 
     if (GST_BUFFER_OFFSET (buf) != ebml->last_pos) {
       gst_ebml_writer_send_segment_event (ebml, GST_BUFFER_OFFSET (buf));
       GST_BUFFER_FLAG_SET (buf, GST_BUFFER_FLAG_DISCONT);
+    } else {
+      GST_BUFFER_FLAG_UNSET (buf, GST_BUFFER_FLAG_DISCONT);
     }
     ebml->last_pos = ebml->pos;
     ebml->last_write_result = gst_pad_push (ebml->srcpad, buf);
@@ -525,7 +539,7 @@ gst_ebml_write_get_uint_size (guint64 num)
   guint size = 1;
 
   /* get size */
-  while (num >= (G_GINT64_CONSTANT (1) << (size * 8)) && size < 8) {
+  while (size < 8 && num >= (G_GINT64_CONSTANT (1) << (size * 8))) {
     size++;
   }
 
@@ -614,9 +628,9 @@ gst_ebml_write_sint (GstEbmlWrite * ebml, guint32 id, gint64 num)
   if (num >= 0) {
     unum = num;
   } else {
-    unum = 0x80 << (size - 1);
+    unum = ((guint64) 0x80) << ((size - 1) * 8);
     unum += num;
-    unum |= 0x80 << (size - 1);
+    unum |= ((guint64) 0x80) << ((size - 1) * 8);
   }
 
   /* write */

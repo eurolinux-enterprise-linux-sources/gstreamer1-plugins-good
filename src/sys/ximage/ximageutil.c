@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -36,6 +36,24 @@ gst_meta_ximage_api_get_type (void)
   return type;
 }
 
+static gboolean
+gst_meta_ximage_init (GstMeta * meta, gpointer params, GstBuffer * buffer)
+{
+  GstMetaXImage *emeta = (GstMetaXImage *) meta;
+
+  emeta->parent = NULL;
+  emeta->ximage = NULL;
+#ifdef HAVE_XSHM
+  emeta->SHMInfo.shmaddr = ((void *) -1);
+  emeta->SHMInfo.shmid = -1;
+  emeta->SHMInfo.readOnly = TRUE;
+#endif
+  emeta->width = emeta->height = emeta->size = 0;
+  emeta->return_func = NULL;
+
+  return TRUE;
+}
+
 const GstMetaInfo *
 gst_meta_ximage_get_info (void)
 {
@@ -44,7 +62,7 @@ gst_meta_ximage_get_info (void)
   if (g_once_init_enter (&meta_ximage_info)) {
     const GstMetaInfo *meta =
         gst_meta_register (gst_meta_ximage_api_get_type (), "GstMetaXImageSrc",
-        sizeof (GstMetaXImage), (GstMetaInitFunction) NULL,
+        sizeof (GstMetaXImage), (GstMetaInitFunction) gst_meta_ximage_init,
         (GstMetaFreeFunction) NULL, (GstMetaTransformFunction) NULL);
     g_once_init_leave (&meta_ximage_info, meta);
   }
@@ -175,18 +193,17 @@ ximageutil_xcontext_get (GstElement * parent, const gchar * display_name)
     return NULL;
   }
   xcontext->screen = DefaultScreenOfDisplay (xcontext->disp);
-  xcontext->screen_num = DefaultScreen (xcontext->disp);
-  xcontext->visual = DefaultVisual (xcontext->disp, xcontext->screen_num);
-  xcontext->root = DefaultRootWindow (xcontext->disp);
-  xcontext->white = XWhitePixel (xcontext->disp, xcontext->screen_num);
-  xcontext->black = XBlackPixel (xcontext->disp, xcontext->screen_num);
+  xcontext->visual = DefaultVisualOfScreen (xcontext->screen);
+  xcontext->root = RootWindowOfScreen (xcontext->screen);
+  xcontext->white = WhitePixelOfScreen (xcontext->screen);
+  xcontext->black = BlackPixelOfScreen (xcontext->screen);
   xcontext->depth = DefaultDepthOfScreen (xcontext->screen);
 
-  xcontext->width = DisplayWidth (xcontext->disp, xcontext->screen_num);
-  xcontext->height = DisplayHeight (xcontext->disp, xcontext->screen_num);
+  xcontext->width = WidthOfScreen (xcontext->screen);
+  xcontext->height = HeightOfScreen (xcontext->screen);
 
-  xcontext->widthmm = DisplayWidthMM (xcontext->disp, xcontext->screen_num);
-  xcontext->heightmm = DisplayHeightMM (xcontext->disp, xcontext->screen_num);
+  xcontext->widthmm = WidthMMOfScreen (xcontext->screen);
+  xcontext->heightmm = HeightMMOfScreen (xcontext->screen);
 
   xcontext->caps = NULL;
 
@@ -314,13 +331,12 @@ ximageutil_calculate_pixel_aspect_ratio (GstXContext * xcontext)
   GST_DEBUG ("set xcontext PAR to %d/%d\n", xcontext->par_n, xcontext->par_d);
 }
 
-static void
+static gboolean
 gst_ximagesrc_buffer_dispose (GstBuffer * ximage)
 {
   GstElement *parent;
   GstMetaXImage *meta;
-
-  g_return_if_fail (ximage != NULL);
+  gboolean ret = TRUE;
 
   meta = GST_META_XIMAGE_GET (ximage);
 
@@ -331,10 +347,10 @@ gst_ximagesrc_buffer_dispose (GstBuffer * ximage)
   }
 
   if (meta->return_func)
-    meta->return_func (parent, ximage);
+    ret = meta->return_func (parent, ximage);
 
 beach:
-  return;
+  return ret;
 }
 
 void

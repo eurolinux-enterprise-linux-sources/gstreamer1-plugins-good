@@ -17,8 +17,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifndef __V4L2_CALLS_H__
@@ -29,8 +29,10 @@
 #ifdef HAVE_LIBV4L2
 #  include <libv4l2.h>
 #else
+#  include "ext/videodev2.h"
 #  include <sys/ioctl.h>
-#  include <linux/videodev2.h>
+#  include <sys/mman.h>
+#  include <unistd.h>
 #  define v4l2_fd_open(fd, flags) (fd)
 #  define v4l2_close    close
 #  define v4l2_dup      dup
@@ -91,6 +93,7 @@
 
 /* open/close the device */
 gboolean	gst_v4l2_open			(GstV4l2Object *v4l2object);
+gboolean	gst_v4l2_dup			(GstV4l2Object *v4l2object, GstV4l2Object *other);
 gboolean	gst_v4l2_close			(GstV4l2Object *v4l2object);
 
 /* norm/input/output */
@@ -125,6 +128,9 @@ gboolean	gst_v4l2_get_attribute		(GstV4l2Object *v4l2object,
 gboolean	gst_v4l2_set_attribute		(GstV4l2Object *v4l2object,
 						 int             attribute,
 						 const int       value);
+
+gboolean	gst_v4l2_set_controls		(GstV4l2Object * v4l2object,
+						 GstStructure * controls);
 
 gboolean        gst_v4l2_get_capabilities       (GstV4l2Object * v4l2object);
 

@@ -14,8 +14,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
@@ -94,10 +94,8 @@ gst_id3v2_mux_class_init (GstId3v2MuxClass * klass)
   GST_TAG_MUX_CLASS (klass)->render_end_tag =
       GST_DEBUG_FUNCPTR (gst_id3v2_mux_render_end_tag);
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&sink_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&src_template));
+  gst_element_class_add_static_pad_template (element_class, &sink_template);
+  gst_element_class_add_static_pad_template (element_class, &src_template);
 
   gst_element_class_set_static_metadata (element_class,
       "TagLib-based ID3v2 Muxer", "Formatter/Metadata",
@@ -427,8 +425,14 @@ add_image_tag (ID3v2::Tag * id3v2tag, const GstTagList * list,
       mime_type = gst_structure_get_name (s);
       if (mime_type != NULL) {
         ID3v2::AttachedPictureFrame * frame;
-        const gchar *desc;
+        const gchar *desc = NULL;
         GstMapInfo map;
+        const GstStructure *info_struct;
+
+        info_struct = gst_sample_get_info (sample);
+        if (!info_struct
+            || !gst_structure_has_name (info_struct, "GstTagImageInfo"))
+          info_struct = NULL;
 
         if (strcmp (mime_type, "text/uri-list") == 0)
           mime_type = "-->";
@@ -447,14 +451,28 @@ add_image_tag (ID3v2::Tag * id3v2tag, const GstTagList * list,
 
         gst_buffer_unmap (image, &map);
 
-        desc = gst_structure_get_string (s, "image-description");
+        if (info_struct)
+          desc = gst_structure_get_string (info_struct, "image-description");
+
         frame->setDescription ((desc) ? desc : "");
 
-        /* FIXME set image type properly from caps */
         if (strcmp (tag, GST_TAG_PREVIEW_IMAGE) == 0) {
           frame->setType (ID3v2::AttachedPictureFrame::FileIcon);
         } else {
-          frame->setType (ID3v2::AttachedPictureFrame::Other);
+          int image_type = ID3v2::AttachedPictureFrame::Other;
+
+          if (info_struct) {
+            if (gst_structure_get (info_struct, "image-type",
+                    GST_TYPE_TAG_IMAGE_TYPE, &image_type, NULL)) {
+              if (image_type > 0 && image_type <= 18) {
+                image_type += 2;
+              } else {
+                image_type = ID3v2::AttachedPictureFrame::Other;
+              }
+            }
+          }
+
+          frame->setType ((TagLib::ID3v2::AttachedPictureFrame::Type) image_type);
         }
       }
     } else {

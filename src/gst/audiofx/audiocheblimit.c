@@ -14,8 +14,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /* 
@@ -46,12 +46,12 @@
  * be at most this value. A lower ripple value will allow a faster rolloff.
  *
  * As a special case, a Chebyshev type 1 filter with no ripple is a Butterworth filter.
- * </para>
+ *
  * <note><para>
  * Be warned that a too large number of poles can produce noise. The most poles are possible with
  * a cutoff frequency at a quarter of the sampling rate.
  * </para></note>
- * <para>
+ *
  * <refsect2>
  * <title>Example launch line</title>
  * |[

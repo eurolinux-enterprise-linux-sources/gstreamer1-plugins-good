@@ -14,8 +14,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  *
  */
 /**
@@ -29,10 +29,11 @@
 #endif
 #include <string.h>
 #include <gst/gst.h>
-#include "gstpngenc.h"
 #include <gst/video/video.h>
 #include <gst/video/gstvideometa.h>
 #include <zlib.h>
+
+#include "gstpngenc.h"
 
 GST_DEBUG_CATEGORY_STATIC (pngenc_debug);
 #define GST_CAT_DEFAULT pngenc_debug
@@ -127,10 +128,10 @@ gst_pngenc_class_init (GstPngEncClass * klass)
           DEFAULT_COMPRESSION_LEVEL,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
-  gst_element_class_add_pad_template
-      (element_class, gst_static_pad_template_get (&pngenc_sink_template));
-  gst_element_class_add_pad_template
-      (element_class, gst_static_pad_template_get (&pngenc_src_template));
+  gst_element_class_add_static_pad_template
+      (element_class, &pngenc_sink_template);
+  gst_element_class_add_static_pad_template
+      (element_class, &pngenc_src_template);
   gst_element_class_set_static_metadata (element_class, "PNG image encoder",
       "Codec/Encoder/Image",
       "Encode a video frame to a .png image",
@@ -198,6 +199,8 @@ done:
 static void
 gst_pngenc_init (GstPngEnc * pngenc)
 {
+  GST_PAD_SET_ACCEPT_TEMPLATE (GST_VIDEO_ENCODER_SINK_PAD (pngenc));
+
   /* init settings */
   pngenc->png_struct_ptr = NULL;
   pngenc->png_info_ptr = NULL;
@@ -323,6 +326,7 @@ gst_pngenc_handle_frame (GstVideoEncoder * encoder, GstVideoCodecFrame * frame)
   png_write_end (pngenc->png_struct_ptr, NULL);
 
   g_free (row_pointers);
+  gst_video_frame_unmap (&vframe);
 
   png_destroy_info_struct (pngenc->png_struct_ptr, &pngenc->png_info_ptr);
   png_destroy_write_struct (&pngenc->png_struct_ptr, (png_infopp) NULL);

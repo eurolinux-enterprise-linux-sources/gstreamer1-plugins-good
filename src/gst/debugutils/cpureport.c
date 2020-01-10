@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -31,7 +31,7 @@
 
 enum
 {
-  ARG_0,
+  PROP_0,
 };
 
 GstStaticPadTemplate cpu_report_src_template = GST_STATIC_PAD_TEMPLATE ("src",
@@ -72,10 +72,10 @@ gst_cpu_report_class_init (GstCpuReportClass * g_class)
 
   gobject_class->finalize = gst_cpu_report_finalize;
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&cpu_report_sink_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&cpu_report_src_template));
+  gst_element_class_add_static_pad_template (element_class,
+      &cpu_report_sink_template);
+  gst_element_class_add_static_pad_template (element_class,
+      &cpu_report_src_template);
 
   gst_element_class_set_static_metadata (element_class, "CPU report",
       "Testing",

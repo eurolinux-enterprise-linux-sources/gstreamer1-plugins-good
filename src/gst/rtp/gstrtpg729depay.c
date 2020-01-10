@@ -12,8 +12,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -21,10 +21,12 @@
 #endif
 
 #include <gst/rtp/gstrtpbuffer.h>
+#include <gst/audio/audio.h>
 
 #include <stdlib.h>
 #include <string.h>
 #include "gstrtpg729depay.h"
+#include "gstrtputils.h"
 
 GST_DEBUG_CATEGORY_STATIC (rtpg729depay_debug);
 #define GST_CAT_DEFAULT (rtpg729depay_debug)
@@ -43,7 +45,7 @@ enum
 
 enum
 {
-  ARG_0
+  PROP_0
 };
 
 /* input is an RTP packet
@@ -55,7 +57,6 @@ static GstStaticPadTemplate gst_rtp_g729_depay_sink_template =
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS ("application/x-rtp, "
         "media = (string) \"audio\", "
-        "payload = (int) " GST_RTP_PAYLOAD_DYNAMIC_STRING ", "
         "clock-rate = (int) 8000, "
         "encoding-name = (string) \"G729\"; "
         "application/x-rtp, "
@@ -74,7 +75,7 @@ GST_STATIC_PAD_TEMPLATE ("src",
 static gboolean gst_rtp_g729_depay_setcaps (GstRTPBaseDepayload * depayload,
     GstCaps * caps);
 static GstBuffer *gst_rtp_g729_depay_process (GstRTPBaseDepayload * depayload,
-    GstBuffer * buf);
+    GstRTPBuffer * rtp);
 
 #define gst_rtp_g729_depay_parent_class parent_class
 G_DEFINE_TYPE (GstRtpG729Depay, gst_rtp_g729_depay,
@@ -92,17 +93,17 @@ gst_rtp_g729_depay_class_init (GstRtpG729DepayClass * klass)
   gstelement_class = (GstElementClass *) klass;
   gstrtpbasedepayload_class = (GstRTPBaseDepayloadClass *) klass;
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_g729_depay_src_template));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_g729_depay_sink_template));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_g729_depay_src_template);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_g729_depay_sink_template);
 
   gst_element_class_set_static_metadata (gstelement_class,
       "RTP G.729 depayloader", "Codec/Depayloader/Network/RTP",
       "Extracts G.729 audio from RTP packets (RFC 3551)",
       "Laurent Glayal <spglegle@yahoo.fr>");
 
-  gstrtpbasedepayload_class->process = gst_rtp_g729_depay_process;
+  gstrtpbasedepayload_class->process_rtp_packet = gst_rtp_g729_depay_process;
   gstrtpbasedepayload_class->set_caps = gst_rtp_g729_depay_setcaps;
 }
 
@@ -169,19 +170,16 @@ wrong_clock_rate:
 }
 
 static GstBuffer *
-gst_rtp_g729_depay_process (GstRTPBaseDepayload * depayload, GstBuffer * buf)
+gst_rtp_g729_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
 {
   GstRtpG729Depay *rtpg729depay;
   GstBuffer *outbuf = NULL;
   gint payload_len;
   gboolean marker;
-  GstRTPBuffer rtp = { NULL };
 
   rtpg729depay = GST_RTP_G729_DEPAY (depayload);
 
-  gst_rtp_buffer_map (buf, GST_MAP_READ, &rtp);
-
-  payload_len = gst_rtp_buffer_get_payload_len (&rtp);
+  payload_len = gst_rtp_buffer_get_payload_len (rtp);
 
   /* At least 2 bytes (CNG from G729 Annex B) */
   if (payload_len < 2) {
@@ -196,15 +194,16 @@ gst_rtp_g729_depay_process (GstRTPBaseDepayload * depayload, GstBuffer * buf)
     GST_LOG_OBJECT (rtpg729depay, "G729 payload contains CNG frame");
   }
 
-  outbuf = gst_rtp_buffer_get_payload_buffer (&rtp);
-  marker = gst_rtp_buffer_get_marker (&rtp);
-
-  gst_rtp_buffer_unmap (&rtp);
+  outbuf = gst_rtp_buffer_get_payload_buffer (rtp);
+  marker = gst_rtp_buffer_get_marker (rtp);
 
   if (marker) {
     /* marker bit starts talkspurt */
-    GST_BUFFER_FLAG_SET (outbuf, GST_BUFFER_FLAG_DISCONT);
+    GST_BUFFER_FLAG_SET (outbuf, GST_BUFFER_FLAG_RESYNC);
   }
+
+  gst_rtp_drop_meta (GST_ELEMENT_CAST (depayload), outbuf,
+      g_quark_from_static_string (GST_META_TAG_AUDIO_STR));
 
   GST_LOG_OBJECT (depayload, "pushing buffer of size %" G_GSIZE_FORMAT,
       gst_buffer_get_size (outbuf));

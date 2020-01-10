@@ -15,8 +15,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 /**
  * SECTION:element-multifilesrc
@@ -72,13 +72,13 @@ GST_DEBUG_CATEGORY_STATIC (gst_multi_file_src_debug);
 
 enum
 {
-  ARG_0,
-  ARG_LOCATION,
-  ARG_INDEX,
-  ARG_START_INDEX,
-  ARG_STOP_INDEX,
-  ARG_CAPS,
-  ARG_LOOP
+  PROP_0,
+  PROP_LOCATION,
+  PROP_INDEX,
+  PROP_START_INDEX,
+  PROP_STOP_INDEX,
+  PROP_CAPS,
+  PROP_LOOP
 };
 
 #define DEFAULT_LOCATION "%05d"
@@ -87,6 +87,50 @@ enum
 #define gst_multi_file_src_parent_class parent_class
 G_DEFINE_TYPE (GstMultiFileSrc, gst_multi_file_src, GST_TYPE_PUSH_SRC);
 
+
+static gboolean
+is_seekable (GstBaseSrc * src)
+{
+  GstMultiFileSrc *mfs = GST_MULTI_FILE_SRC (src);
+
+  if (mfs->fps_n != -1)
+    return TRUE;
+
+  return FALSE;
+}
+
+static gboolean
+do_seek (GstBaseSrc * bsrc, GstSegment * segment)
+{
+  gboolean reverse;
+  GstClockTime position;
+  GstMultiFileSrc *src;
+
+  src = GST_MULTI_FILE_SRC (bsrc);
+
+  segment->time = segment->start;
+  position = segment->position;
+  reverse = segment->rate < 0;
+
+  if (reverse) {
+    GST_FIXME_OBJECT (src, "Handle reverse playback");
+
+    return FALSE;
+  }
+
+  /* now move to the position indicated */
+  if (src->fps_n) {
+    src->index = gst_util_uint64_scale (position,
+        src->fps_n, src->fps_d * GST_SECOND);
+  } else {
+    src->index = 0;
+    GST_WARNING_OBJECT (src, "No FPS set, can not seek");
+
+    return FALSE;
+  }
+
+  return TRUE;
+}
 
 static void
 gst_multi_file_src_class_init (GstMultiFileSrcClass * klass)
@@ -99,35 +143,35 @@ gst_multi_file_src_class_init (GstMultiFileSrcClass * klass)
   gobject_class->set_property = gst_multi_file_src_set_property;
   gobject_class->get_property = gst_multi_file_src_get_property;
 
-  g_object_class_install_property (gobject_class, ARG_LOCATION,
+  g_object_class_install_property (gobject_class, PROP_LOCATION,
       g_param_spec_string ("location", "File Location",
           "Pattern to create file names of input files.  File names are "
           "created by calling sprintf() with the pattern and the current "
           "index.", DEFAULT_LOCATION,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
-  g_object_class_install_property (gobject_class, ARG_INDEX,
+  g_object_class_install_property (gobject_class, PROP_INDEX,
       g_param_spec_int ("index", "File Index",
           "Index to use with location property to create file names.  The "
           "index is incremented by one for each buffer read.",
           0, INT_MAX, DEFAULT_INDEX,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
-  g_object_class_install_property (gobject_class, ARG_START_INDEX,
+  g_object_class_install_property (gobject_class, PROP_START_INDEX,
       g_param_spec_int ("start-index", "Start Index",
           "Start value of index.  The initial value of index can be set "
           "either by setting index or start-index.  When the end of the loop "
           "is reached, the index will be set to the value start-index.",
           0, INT_MAX, DEFAULT_INDEX,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
-  g_object_class_install_property (gobject_class, ARG_STOP_INDEX,
-      g_param_spec_int ("stop-index", "Start Index",
+  g_object_class_install_property (gobject_class, PROP_STOP_INDEX,
+      g_param_spec_int ("stop-index", "Stop Index",
           "Stop value of index.  The special value -1 means no stop.",
           -1, INT_MAX, DEFAULT_INDEX,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
-  g_object_class_install_property (gobject_class, ARG_CAPS,
+  g_object_class_install_property (gobject_class, PROP_CAPS,
       g_param_spec_boxed ("caps", "Caps",
           "Caps describing the format of the data.",
           GST_TYPE_CAPS, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
-  g_object_class_install_property (gobject_class, ARG_LOOP,
+  g_object_class_install_property (gobject_class, PROP_LOOP,
       g_param_spec_boolean ("loop", "Loop",
           "Whether to repeat from the beginning when all files have been read.",
           FALSE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
@@ -136,17 +180,18 @@ gst_multi_file_src_class_init (GstMultiFileSrcClass * klass)
 
   gstbasesrc_class->get_caps = gst_multi_file_src_getcaps;
   gstbasesrc_class->query = gst_multi_file_src_query;
+  gstbasesrc_class->is_seekable = is_seekable;
+  gstbasesrc_class->do_seek = do_seek;
 
   gstpushsrc_class->create = gst_multi_file_src_create;
 
   GST_DEBUG_CATEGORY_INIT (gst_multi_file_src_debug, "multifilesrc", 0,
       "multifilesrc element");
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_multi_file_src_pad_template));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_multi_file_src_pad_template);
   gst_element_class_set_static_metadata (gstelement_class, "Multi-File Source",
-      "Source/File",
-      "Read a sequentially named set of files into buffers",
+      "Source/File", "Read a sequentially named set of files into buffers",
       "David Schleef <ds@schleef.org>");
 }
 
@@ -158,6 +203,8 @@ gst_multi_file_src_init (GstMultiFileSrc * multifilesrc)
   multifilesrc->stop_index = -1;
   multifilesrc->filename = g_strdup (DEFAULT_LOCATION);
   multifilesrc->successful_read = FALSE;
+  multifilesrc->fps_n = multifilesrc->fps_d = -1;
+
 }
 
 static void
@@ -211,7 +258,8 @@ gst_multi_file_src_query (GstBaseSrc * src, GstQuery * query)
       switch (format) {
         case GST_FORMAT_BUFFERS:
         case GST_FORMAT_DEFAULT:
-          gst_query_set_position (query, GST_FORMAT_BUFFERS, mfsrc->index);
+          gst_query_set_position (query, format,
+              mfsrc->index - mfsrc->start_index);
           res = TRUE;
           break;
         default:
@@ -247,20 +295,28 @@ gst_multi_file_src_set_property (GObject * object, guint prop_id,
   GstMultiFileSrc *src = GST_MULTI_FILE_SRC (object);
 
   switch (prop_id) {
-    case ARG_LOCATION:
+    case PROP_LOCATION:
       gst_multi_file_src_set_location (src, g_value_get_string (value));
       break;
-    case ARG_INDEX:
-      src->index = g_value_get_int (value);
+    case PROP_INDEX:
+      GST_OBJECT_LOCK (src);
+      /* index was really meant to be read-only, but for backwards-compatibility
+       * we set start_index to make it work as it used to */
+      if (!GST_OBJECT_FLAG_IS_SET (src, GST_BASE_SRC_FLAG_STARTED))
+        src->start_index = g_value_get_int (value);
+      else
+        src->index = g_value_get_int (value);
+      GST_OBJECT_UNLOCK (src);
       break;
-    case ARG_START_INDEX:
+    case PROP_START_INDEX:
       src->start_index = g_value_get_int (value);
       break;
-    case ARG_STOP_INDEX:
+    case PROP_STOP_INDEX:
       src->stop_index = g_value_get_int (value);
       break;
-    case ARG_CAPS:
+    case PROP_CAPS:
     {
+      GstStructure *st = NULL;
       const GstCaps *caps = gst_value_get_caps (value);
       GstCaps *new_caps;
 
@@ -271,9 +327,20 @@ gst_multi_file_src_set_property (GObject * object, guint prop_id,
       }
       gst_caps_replace (&src->caps, new_caps);
       gst_pad_set_caps (GST_BASE_SRC_PAD (src), new_caps);
+
+      if (new_caps && gst_caps_get_size (new_caps) == 1 &&
+          (st = gst_caps_get_structure (new_caps, 0))
+          && gst_structure_get_fraction (st, "framerate", &src->fps_n,
+              &src->fps_d)) {
+        GST_INFO_OBJECT (src, "Seting framerate to %d/%d", src->fps_n,
+            src->fps_d);
+      } else {
+        src->fps_n = -1;
+        src->fps_d = -1;
+      }
     }
       break;
-    case ARG_LOOP:
+    case PROP_LOOP:
       src->loop = g_value_get_boolean (value);
       break;
     default:
@@ -289,22 +356,22 @@ gst_multi_file_src_get_property (GObject * object, guint prop_id,
   GstMultiFileSrc *src = GST_MULTI_FILE_SRC (object);
 
   switch (prop_id) {
-    case ARG_LOCATION:
+    case PROP_LOCATION:
       g_value_set_string (value, src->filename);
       break;
-    case ARG_INDEX:
+    case PROP_INDEX:
       g_value_set_int (value, src->index);
       break;
-    case ARG_START_INDEX:
+    case PROP_START_INDEX:
       g_value_set_int (value, src->start_index);
       break;
-    case ARG_STOP_INDEX:
+    case PROP_STOP_INDEX:
       g_value_set_int (value, src->stop_index);
       break;
-    case ARG_CAPS:
+    case PROP_CAPS:
       gst_value_set_caps (value, src->caps);
       break;
-    case ARG_LOOP:
+    case PROP_LOOP:
       g_value_set_boolean (value, src->loop);
       break;
     default:
@@ -340,6 +407,15 @@ gst_multi_file_src_create (GstPushSrc * src, GstBuffer ** buffer)
   if (multifilesrc->index < multifilesrc->start_index) {
     multifilesrc->index = multifilesrc->start_index;
   }
+
+  if (multifilesrc->stop_index != -1 &&
+      multifilesrc->index > multifilesrc->stop_index) {
+    if (multifilesrc->loop)
+      multifilesrc->index = multifilesrc->start_index;
+    else
+      return GST_FLOW_EOS;
+  }
+
   filename = gst_multi_file_src_get_filename (multifilesrc);
 
   GST_DEBUG_OBJECT (multifilesrc, "reading from file \"%s\".", filename);
@@ -376,10 +452,6 @@ gst_multi_file_src_create (GstPushSrc * src, GstBuffer ** buffer)
 
   multifilesrc->successful_read = TRUE;
   multifilesrc->index++;
-  if (multifilesrc->stop_index != -1 &&
-      multifilesrc->index >= multifilesrc->stop_index) {
-    multifilesrc->index = multifilesrc->start_index;
-  }
 
   buf = gst_buffer_new ();
   gst_buffer_append_memory (buf,

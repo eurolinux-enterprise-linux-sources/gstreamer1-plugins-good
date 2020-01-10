@@ -15,16 +15,23 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  *
  */
 
 #ifndef __GST_VP8_DEC_H__
 #define __GST_VP8_DEC_H__
 
+#ifdef HAVE_CONFIG_H
+#include "config.h"
+#endif
+
+#ifdef HAVE_VP8_DECODER
+
 #include <gst/gst.h>
 #include <gst/video/gstvideodecoder.h>
+#include <gstvpxdec.h>
 
 /* FIXME: Undef HAVE_CONFIG_H because vpx_codec.h uses it,
  * which causes compilation failures */
@@ -53,32 +60,18 @@ typedef struct _GstVP8DecClass GstVP8DecClass;
 
 struct _GstVP8Dec
 {
-  GstVideoDecoder base_video_decoder;
-
-  /* < private > */
-  vpx_codec_ctx_t decoder;
-
-  /* state */
-  gboolean decoder_inited;
-
-  /* properties */
-  gboolean post_processing;
-  enum vp8_postproc_level post_processing_flags;
-  gint deblocking_level;
-  gint noise_level;
-  gint threads;
-
-  GstVideoCodecState *input_state;
-  GstVideoCodecState *output_state;
+  GstVPXDec base_vpx_decoder;
 };
 
 struct _GstVP8DecClass
 {
-  GstVideoDecoderClass base_video_decoder_class;
+  GstVPXDecClass base_vpx_class;
 };
 
 GType gst_vp8_dec_get_type (void);
 
 G_END_DECLS
+
+#endif
 
 #endif /* __GST_VP8_DEC_H__ */

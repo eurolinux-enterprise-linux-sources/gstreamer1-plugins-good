@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /* FIXME 0.11: suppress warnings for deprecated API such as GValueArray
@@ -108,7 +108,7 @@ print_stats (GstElement * rtpbin)
 
 /* build a pipeline equivalent to:
  *
- * gst-launch -v rtpbin name=rtpbin \
+ * gst-launch-1.0 -v rtpbin name=rtpbin \
  *    $AUDIO_SRC ! audioconvert ! audioresample ! $AUDIO_ENC ! $AUDIO_PAY ! rtpbin.send_rtp_sink_0  \
  *           rtpbin.send_rtp_src_0 ! udpsink port=5002 host=$DEST                      \
  *           rtpbin.send_rtcp_src_0 ! udpsink port=5003 host=$DEST sync=false async=false \
@@ -212,7 +212,7 @@ main (int argc, char *argv[])
   gst_element_set_state (pipeline, GST_STATE_PLAYING);
 
   /* print stats every second */
-  g_timeout_add (1000, (GSourceFunc) print_stats, rtpbin);
+  g_timeout_add_seconds (1, (GSourceFunc) print_stats, rtpbin);
 
   /* we need to run a GLib main loop to get the messages */
   loop = g_main_loop_new (NULL, FALSE);

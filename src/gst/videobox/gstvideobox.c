@@ -15,8 +15,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 /**
  * SECTION:element-videobox
@@ -1780,10 +1780,17 @@ fill_rgb32 (GstVideoBoxFill fill_type, guint b_alpha,
 
   b_alpha = CLAMP (b_alpha, 0, 255);
 
-  empty_pixel = GUINT32_FROM_LE ((b_alpha << (p[0] * 8)) |
-      (rgb_colors_R[fill_type] << (p[1] * 8)) |
-      (rgb_colors_G[fill_type] << (p[2] * 8)) |
-      (rgb_colors_B[fill_type] << (p[3] * 8)));
+  if (GST_VIDEO_FRAME_N_COMPONENTS (frame) == 4) {
+    empty_pixel = GUINT32_FROM_LE ((b_alpha << (p[0] * 8)) |
+        (rgb_colors_R[fill_type] << (p[1] * 8)) |
+        (rgb_colors_G[fill_type] << (p[2] * 8)) |
+        (rgb_colors_B[fill_type] << (p[3] * 8)));
+  } else {
+    empty_pixel = GUINT32_FROM_LE (
+        (rgb_colors_R[fill_type] << (p[1] * 8)) |
+        (rgb_colors_G[fill_type] << (p[2] * 8)) |
+        (rgb_colors_B[fill_type] << (p[3] * 8)));
+  }
 
   if (stride == width * 4) {
     video_box_orc_splat_u32 ((guint32 *) dest, empty_pixel, width * height);
@@ -1944,9 +1951,7 @@ copy_rgb32_ayuv (guint i_alpha, GstVideoFrame * dest_frame,
   gint r, g, b;
   guint8 *dest, *src;
 
-  dest = GST_VIDEO_FRAME_PLANE_DATA (dest_frame, 0);
   dest_stride = GST_VIDEO_FRAME_PLANE_STRIDE (dest_frame, 0);
-
   src_stride = GST_VIDEO_FRAME_PLANE_STRIDE (src_frame, 0);
   in_bpp = GST_VIDEO_FRAME_COMP_PSTRIDE (src_frame, 0);
   packed_in = (in_bpp < 4);
@@ -2052,9 +2057,7 @@ copy_ayuv_rgb32 (guint i_alpha, GstVideoFrame * dest_frame,
   gint r, g, b;
   guint8 *src, *dest;
 
-  src = GST_VIDEO_FRAME_PLANE_DATA (src_frame, 0);
   src_stride = GST_VIDEO_FRAME_PLANE_STRIDE (src_frame, 0);
-
   dest_stride = GST_VIDEO_FRAME_PLANE_STRIDE (dest_frame, 0);
   out_bpp = GST_VIDEO_FRAME_COMP_PSTRIDE (dest_frame, 0);
   packed_out = (out_bpp < 4);
@@ -2501,13 +2504,11 @@ gst_video_box_class_init (GstVideoBoxClass * klass)
           "Alpha value of the border", 0.0, 1.0, DEFAULT_BORDER_ALPHA,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | GST_PARAM_CONTROLLABLE));
   /**
-   * GstVideoBox:autocrop
+   * GstVideoBox:autocrop:
    *
    * If set to %TRUE videobox will automatically crop/pad the input
    * video to be centered in the output.
-   *
-   * Since: 0.10.16
-   **/
+   */
   g_object_class_install_property (G_OBJECT_CLASS (klass), PROP_AUTOCROP,
       g_param_spec_boolean ("autocrop", "Auto crop",
           "Auto crop", FALSE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
@@ -2527,10 +2528,10 @@ gst_video_box_class_init (GstVideoBoxClass * klass)
       "Resizes a video by adding borders or cropping",
       "Wim Taymans <wim@fluendo.com>");
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_video_box_sink_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_video_box_src_template));
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_video_box_sink_template);
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_video_box_src_template);
 }
 
 static void
@@ -2745,7 +2746,7 @@ gst_video_box_transform_dimension_value (const GValue * src_val,
 
     min = gst_video_box_transform_dimension (min, delta);
     max = gst_video_box_transform_dimension (max, delta);
-    if (min > max) {
+    if (min >= max) {
       ret = FALSE;
       g_value_unset (dest_val);
     } else {
@@ -2864,22 +2865,27 @@ gst_video_box_transform_caps (GstBaseTransform * trans,
       for (j = 0; j < gst_value_list_get_size (fval); j++) {
         lval = gst_value_list_get_value (fval, j);
         if ((str = g_value_get_string (lval))) {
-          if (strstr (str, "RGB") || strstr (str, "BGR") ||
-              strcmp (str, "AYUV") == 0)
-            seen_rgb = TRUE;
-          else if (strcmp (str, "I420") == 0 || strcmp (str, "YV12") == 0 ||
-              strcmp (str, "AYUV") == 0)
+          if (strcmp (str, "AYUV") == 0) {
             seen_yuv = TRUE;
+            seen_rgb = TRUE;
+            break;
+          } else if (strstr (str, "RGB") || strstr (str, "BGR")) {
+            seen_rgb = TRUE;
+          } else if (strcmp (str, "I420") == 0 || strcmp (str, "YV12") == 0) {
+            seen_yuv = TRUE;
+          }
         }
       }
     } else if (fval && G_VALUE_HOLDS_STRING (fval)) {
       if ((str = g_value_get_string (fval))) {
-        if (strstr (str, "RGB") || strstr (str, "BGR") ||
-            strcmp (str, "AYUV") == 0)
-          seen_rgb = TRUE;
-        else if (strcmp (str, "I420") == 0 || strcmp (str, "YV12") == 0 ||
-            strcmp (str, "AYUV") == 0)
+        if (strcmp (str, "AYUV") == 0) {
           seen_yuv = TRUE;
+          seen_rgb = TRUE;
+        } else if (strstr (str, "RGB") || strstr (str, "BGR")) {
+          seen_rgb = TRUE;
+        } else if (strcmp (str, "I420") == 0 || strcmp (str, "YV12") == 0) {
+          seen_yuv = TRUE;
+        }
       }
     }
 

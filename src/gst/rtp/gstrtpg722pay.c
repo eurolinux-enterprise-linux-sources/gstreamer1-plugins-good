@@ -13,8 +13,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -40,13 +40,18 @@ GST_STATIC_PAD_TEMPLATE ("sink",
     );
 
 static GstStaticPadTemplate gst_rtp_g722_pay_src_template =
-GST_STATIC_PAD_TEMPLATE ("src",
+    GST_STATIC_PAD_TEMPLATE ("src",
     GST_PAD_SRC,
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS ("application/x-rtp, "
         "media = (string) \"audio\", "
         "encoding-name = (string) \"G722\", "
         "payload = (int) " GST_RTP_PAYLOAD_G722_STRING ", "
+        "clock-rate = (int) 8000; "
+        "application/x-rtp, "
+        "media = (string) \"audio\", "
+        "encoding-name = (string) \"G722\", "
+        "payload = (int) " GST_RTP_PAYLOAD_DYNAMIC_STRING ", "
         "clock-rate = (int) 8000")
     );
 
@@ -71,10 +76,10 @@ gst_rtp_g722_pay_class_init (GstRtpG722PayClass * klass)
   gstelement_class = (GstElementClass *) klass;
   gstrtpbasepayload_class = (GstRTPBasePayloadClass *) klass;
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_g722_pay_src_template));
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&gst_rtp_g722_pay_sink_template));
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_g722_pay_src_template);
+  gst_element_class_add_static_pad_template (gstelement_class,
+      &gst_rtp_g722_pay_sink_template);
 
   gst_element_class_set_static_metadata (gstelement_class,
       "RTP audio payloader", "Codec/Payloader/Network/RTP",
@@ -91,6 +96,8 @@ gst_rtp_g722_pay_init (GstRtpG722Pay * rtpg722pay)
   GstRTPBaseAudioPayload *rtpbaseaudiopayload;
 
   rtpbaseaudiopayload = GST_RTP_BASE_AUDIO_PAYLOAD (rtpg722pay);
+
+  GST_RTP_BASE_PAYLOAD (rtpg722pay)->pt = GST_RTP_PAYLOAD_G722;
 
   /* tell rtpbaseaudiopayload that this is a sample based codec */
   gst_rtp_base_audio_payload_set_sample_based (rtpbaseaudiopayload);
@@ -136,8 +143,8 @@ gst_rtp_g722_pay_setcaps (GstRTPBasePayload * basepayload, GstCaps * caps)
    * RFC 3551 although the sampling rate is 16000 Hz */
   clock_rate = 8000;
 
-  gst_rtp_base_payload_set_options (basepayload, "audio", TRUE, "G722",
-      clock_rate);
+  gst_rtp_base_payload_set_options (basepayload, "audio",
+      basepayload->pt != GST_RTP_PAYLOAD_G722, "G722", clock_rate);
   params = g_strdup_printf ("%d", channels);
 
 #if 0
@@ -206,6 +213,17 @@ gst_rtp_g722_pay_getcaps (GstRTPBasePayload * rtppayload, GstPad * pad,
     }
     gst_caps_unref (otherpadcaps);
   }
+
+  if (filter) {
+    GstCaps *tmp;
+
+    GST_DEBUG_OBJECT (rtppayload, "Intersect %" GST_PTR_FORMAT " and filter %"
+        GST_PTR_FORMAT, caps, filter);
+    tmp = gst_caps_intersect_full (filter, caps, GST_CAPS_INTERSECT_FIRST);
+    gst_caps_unref (caps);
+    caps = tmp;
+  }
+
   return caps;
 }
 

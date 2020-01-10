@@ -17,7 +17,7 @@
  *
  * This plugin reads data from a remote location specified by a URI.
  * Supported protocols are 'http', 'https'.
- * 
+ *
  * An HTTP proxy must be specified by its URL.
  * If the "http_proxy" environment variable is set, its value is used.
  * If built with libsoup's GNOME integration features, the GNOME proxy
@@ -77,12 +77,9 @@
 #endif
 #include <gst/gstelement.h>
 #include <gst/gst-i18n-plugin.h>
-#ifdef HAVE_LIBSOUP_GNOME
-#include <libsoup/soup-gnome.h>
-#else
 #include <libsoup/soup.h>
-#endif
 #include "gstsouphttpsrc.h"
+#include "gstsouputils.h"
 
 #include <gst/tag/tag.h>
 
@@ -109,21 +106,52 @@ enum
   PROP_COOKIES,
   PROP_IRADIO_MODE,
   PROP_TIMEOUT,
-  PROP_EXTRA_HEADERS
+  PROP_EXTRA_HEADERS,
+  PROP_SOUP_LOG_LEVEL,
+  PROP_COMPRESS,
+  PROP_KEEP_ALIVE,
+  PROP_SSL_STRICT,
+  PROP_SSL_CA_FILE,
+  PROP_SSL_USE_SYSTEM_CA_FILE,
+  PROP_TLS_DATABASE,
+  PROP_RETRIES,
+  PROP_METHOD,
+  PROP_TLS_INTERACTION,
 };
 
 #define DEFAULT_USER_AGENT           "GStreamer souphttpsrc "
 #define DEFAULT_IRADIO_MODE          TRUE
+#define DEFAULT_SOUP_LOG_LEVEL       SOUP_LOGGER_LOG_HEADERS
+#define DEFAULT_COMPRESS             FALSE
+#define DEFAULT_KEEP_ALIVE           FALSE
+#define DEFAULT_SSL_STRICT           TRUE
+#define DEFAULT_SSL_CA_FILE          NULL
+#define DEFAULT_SSL_USE_SYSTEM_CA_FILE TRUE
+#define DEFAULT_TLS_DATABASE         NULL
+#define DEFAULT_TLS_INTERACTION      NULL
+#define DEFAULT_TIMEOUT              15
+#define DEFAULT_RETRIES              3
+#define DEFAULT_SOUP_METHOD          NULL
+
+#define GROW_BLOCKSIZE_LIMIT 1
+#define GROW_BLOCKSIZE_COUNT 1
+#define GROW_BLOCKSIZE_FACTOR 2
+#define REDUCE_BLOCKSIZE_LIMIT 0.20
+#define REDUCE_BLOCKSIZE_COUNT 2
+#define REDUCE_BLOCKSIZE_FACTOR 0.5
 
 static void gst_soup_http_src_uri_handler_init (gpointer g_iface,
     gpointer iface_data);
 static void gst_soup_http_src_finalize (GObject * gobject);
+static void gst_soup_http_src_dispose (GObject * gobject);
 
 static void gst_soup_http_src_set_property (GObject * object, guint prop_id,
     const GValue * value, GParamSpec * pspec);
 static void gst_soup_http_src_get_property (GObject * object, guint prop_id,
     GValue * value, GParamSpec * pspec);
 
+static GstStateChangeReturn gst_soup_http_src_change_state (GstElement *
+    element, GstStateChange transition);
 static GstFlowReturn gst_soup_http_src_create (GstPushSrc * psrc,
     GstBuffer ** outbuf);
 static gboolean gst_soup_http_src_start (GstBaseSrc * bsrc);
@@ -140,29 +168,17 @@ static gboolean gst_soup_http_src_set_location (GstSoupHTTPSrc * src,
 static gboolean gst_soup_http_src_set_proxy (GstSoupHTTPSrc * src,
     const gchar * uri);
 static char *gst_soup_http_src_unicodify (const char *str);
-static gboolean gst_soup_http_src_build_message (GstSoupHTTPSrc * src);
+static gboolean gst_soup_http_src_build_message (GstSoupHTTPSrc * src,
+    const gchar * method);
 static void gst_soup_http_src_cancel_message (GstSoupHTTPSrc * src);
-static void gst_soup_http_src_queue_message (GstSoupHTTPSrc * src);
 static gboolean gst_soup_http_src_add_range_header (GstSoupHTTPSrc * src,
-    guint64 offset);
-static void gst_soup_http_src_session_unpause_message (GstSoupHTTPSrc * src);
-static void gst_soup_http_src_session_pause_message (GstSoupHTTPSrc * src);
+    guint64 offset, guint64 stop_offset);
+static gboolean gst_soup_http_src_session_open (GstSoupHTTPSrc * src);
 static void gst_soup_http_src_session_close (GstSoupHTTPSrc * src);
 static void gst_soup_http_src_parse_status (SoupMessage * msg,
     GstSoupHTTPSrc * src);
-static void gst_soup_http_src_chunk_free (gpointer gstbuf);
-static SoupBuffer *gst_soup_http_src_chunk_allocator (SoupMessage * msg,
-    gsize max_len, gpointer user_data);
-static void gst_soup_http_src_got_chunk_cb (SoupMessage * msg,
-    SoupBuffer * chunk, GstSoupHTTPSrc * src);
-static void gst_soup_http_src_response_cb (SoupSession * session,
-    SoupMessage * msg, GstSoupHTTPSrc * src);
-static void gst_soup_http_src_got_headers_cb (SoupMessage * msg,
-    GstSoupHTTPSrc * src);
-static void gst_soup_http_src_got_body_cb (SoupMessage * msg,
-    GstSoupHTTPSrc * src);
-static void gst_soup_http_src_finished_cb (SoupMessage * msg,
-    GstSoupHTTPSrc * src);
+static void gst_soup_http_src_got_headers (GstSoupHTTPSrc * src,
+    SoupMessage * msg);
 static void gst_soup_http_src_authenticate_cb (SoupSession * session,
     SoupMessage * msg, SoupAuth * auth, gboolean retrying,
     GstSoupHTTPSrc * src);
@@ -188,6 +204,7 @@ gst_soup_http_src_class_init (GstSoupHTTPSrcClass * klass)
   gobject_class->set_property = gst_soup_http_src_set_property;
   gobject_class->get_property = gst_soup_http_src_get_property;
   gobject_class->finalize = gst_soup_http_src_finalize;
+  gobject_class->dispose = gst_soup_http_src_dispose;
 
   g_object_class_install_property (gobject_class,
       PROP_LOCATION,
@@ -235,7 +252,7 @@ gst_soup_http_src_class_init (GstSoupHTTPSrcClass * klass)
   g_object_class_install_property (gobject_class, PROP_TIMEOUT,
       g_param_spec_uint ("timeout", "timeout",
           "Value in seconds to timeout a blocking I/O (0 = No timeout).", 0,
-          3600, 0, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+          3600, DEFAULT_TIMEOUT, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_EXTRA_HEADERS,
       g_param_spec_boxed ("extra-headers", "Extra Headers",
           "Extra headers to append to the HTTP request",
@@ -246,13 +263,156 @@ gst_soup_http_src_class_init (GstSoupHTTPSrcClass * klass)
           "metadata interleaved with the actual stream data)",
           DEFAULT_IRADIO_MODE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&srctemplate));
+ /**
+   * GstSoupHTTPSrc::http-log-level:
+   *
+   * If set and > 0, captures and dumps HTTP session data as
+   * log messages if log level >= GST_LEVEL_TRACE
+   *
+   * Since: 1.4
+   */
+  g_object_class_install_property (gobject_class, PROP_SOUP_LOG_LEVEL,
+      g_param_spec_enum ("http-log-level", "HTTP log level",
+          "Set log level for soup's HTTP session log",
+          SOUP_TYPE_LOGGER_LOG_LEVEL, DEFAULT_SOUP_LOG_LEVEL,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+ /**
+   * GstSoupHTTPSrc::compress:
+   *
+   * If set to %TRUE, souphttpsrc will automatically handle gzip
+   * and deflate Content-Encodings. This does not make much difference
+   * and causes more load for normal media files, but makes a real
+   * difference in size for plaintext files.
+   *
+   * Since: 1.4
+   */
+  g_object_class_install_property (gobject_class, PROP_COMPRESS,
+      g_param_spec_boolean ("compress", "Compress",
+          "Allow compressed content encodings",
+          DEFAULT_COMPRESS, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+ /**
+   * GstSoupHTTPSrc::keep-alive:
+   *
+   * If set to %TRUE, souphttpsrc will keep alive connections when being
+   * set to READY state and only will close connections when connecting
+   * to a different server or when going to NULL state..
+   *
+   * Since: 1.4
+   */
+  g_object_class_install_property (gobject_class, PROP_KEEP_ALIVE,
+      g_param_spec_boolean ("keep-alive", "keep-alive",
+          "Use HTTP persistent connections", DEFAULT_KEEP_ALIVE,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+ /**
+   * GstSoupHTTPSrc::ssl-strict:
+   *
+   * If set to %TRUE, souphttpsrc will reject all SSL certificates that
+   * are considered invalid.
+   *
+   * Since: 1.4
+   */
+  g_object_class_install_property (gobject_class, PROP_SSL_STRICT,
+      g_param_spec_boolean ("ssl-strict", "SSL Strict",
+          "Strict SSL certificate checking", DEFAULT_SSL_STRICT,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+ /**
+   * GstSoupHTTPSrc::ssl-ca-file:
+   *
+   * A SSL anchor CA file that should be used for checking certificates
+   * instead of the system CA file.
+   *
+   * If this property is non-%NULL, #GstSoupHTTPSrc::ssl-use-system-ca-file
+   * value will be ignored.
+   *
+   * Deprecated: Use #GstSoupHTTPSrc::tls-database property instead.
+   * Since: 1.4
+   */
+  g_object_class_install_property (gobject_class, PROP_SSL_CA_FILE,
+      g_param_spec_string ("ssl-ca-file", "SSL CA File",
+          "Location of a SSL anchor CA file to use", DEFAULT_SSL_CA_FILE,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+ /**
+   * GstSoupHTTPSrc::ssl-use-system-ca-file:
+   *
+   * If set to %TRUE, souphttpsrc will use the system's CA file for
+   * checking certificates, unless #GstSoupHTTPSrc::ssl-ca-file or
+   * #GstSoupHTTPSrc::tls-database are non-%NULL.
+   *
+   * Since: 1.4
+   */
+  g_object_class_install_property (gobject_class, PROP_SSL_USE_SYSTEM_CA_FILE,
+      g_param_spec_boolean ("ssl-use-system-ca-file", "Use System CA File",
+          "Use system CA file", DEFAULT_SSL_USE_SYSTEM_CA_FILE,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+  /**
+   * GstSoupHTTPSrc::tls-database:
+   *
+   * TLS database with anchor certificate authorities used to validate
+   * the server certificate.
+   *
+   * If this property is non-%NULL, #GstSoupHTTPSrc::ssl-use-system-ca-file
+   * and #GstSoupHTTPSrc::ssl-ca-file values will be ignored.
+   *
+   * Since: 1.6
+   */
+  g_object_class_install_property (gobject_class, PROP_TLS_DATABASE,
+      g_param_spec_object ("tls-database", "TLS database",
+          "TLS database with anchor certificate authorities used to validate the server certificate",
+          G_TYPE_TLS_DATABASE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+  /**
+   * GstSoupHTTPSrc::tls-interaction:
+   *
+   * A #GTlsInteraction object to be used when the connection or certificate
+   * database need to interact with the user. This will be used to prompt the
+   * user for passwords or certificate where necessary.
+   *
+   * Since: 1.8
+   */
+  g_object_class_install_property (gobject_class, PROP_TLS_INTERACTION,
+      g_param_spec_object ("tls-interaction", "TLS interaction",
+          "A GTlsInteraction object to be used when the connection or certificate database need to interact with the user.",
+          G_TYPE_TLS_INTERACTION, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+ /**
+   * GstSoupHTTPSrc::retries:
+   *
+   * Maximum number of retries until giving up.
+   *
+   * Since: 1.4
+   */
+  g_object_class_install_property (gobject_class, PROP_RETRIES,
+      g_param_spec_int ("retries", "Retries",
+          "Maximum number of retries until giving up (-1=infinite)", -1,
+          G_MAXINT, DEFAULT_RETRIES,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+ /**
+   * GstSoupHTTPSrc::method
+   *
+   * The HTTP method to use when making a request
+   *
+   * Since: 1.6
+   */
+  g_object_class_install_property (gobject_class, PROP_METHOD,
+      g_param_spec_string ("method", "HTTP method",
+          "The HTTP method to use (GET, HEAD, OPTIONS, etc)",
+          DEFAULT_SOUP_METHOD, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+  gst_element_class_add_static_pad_template (gstelement_class, &srctemplate);
 
   gst_element_class_set_static_metadata (gstelement_class, "HTTP client source",
       "Source/Network",
       "Receive data as a client over the network via HTTP using SOUP",
       "Wouter Cloetens <wouter@mind.be>");
+  gstelement_class->change_state =
+      GST_DEBUG_FUNCPTR (gst_soup_http_src_change_state);
 
   gstbasesrc_class->start = GST_DEBUG_FUNCPTR (gst_soup_http_src_start);
   gstbasesrc_class->stop = GST_DEBUG_FUNCPTR (gst_soup_http_src_stop);
@@ -274,13 +434,25 @@ gst_soup_http_src_class_init (GstSoupHTTPSrcClass * klass)
 static void
 gst_soup_http_src_reset (GstSoupHTTPSrc * src)
 {
-  src->interrupted = FALSE;
-  src->retry = FALSE;
+  src->retry_count = 0;
   src->have_size = FALSE;
+  src->got_headers = FALSE;
   src->seekable = FALSE;
   src->read_position = 0;
   src->request_position = 0;
+  src->stop_position = -1;
   src->content_size = 0;
+  src->have_body = FALSE;
+
+  src->reduce_blocksize_count = 0;
+  src->increase_blocksize_count = 0;
+
+  src->ret = GST_FLOW_OK;
+  g_cancellable_reset (src->cancellable);
+  if (src->input_stream) {
+    g_object_unref (src->input_stream);
+    src->input_stream = NULL;
+  }
 
   gst_caps_replace (&src->src_caps, NULL);
   g_free (src->iradio_name);
@@ -296,7 +468,11 @@ gst_soup_http_src_init (GstSoupHTTPSrc * src)
 {
   const gchar *proxy;
 
+  g_mutex_init (&src->mutex);
+  g_cond_init (&src->have_headers_cond);
+  src->cancellable = g_cancellable_new ();
   src->location = NULL;
+  src->redirection_uri = NULL;
   src->automatic_redirect = TRUE;
   src->user_agent = g_strdup (DEFAULT_USER_AGENT);
   src->user_id = NULL;
@@ -305,18 +481,39 @@ gst_soup_http_src_init (GstSoupHTTPSrc * src)
   src->proxy_pw = NULL;
   src->cookies = NULL;
   src->iradio_mode = DEFAULT_IRADIO_MODE;
-  src->loop = NULL;
-  src->context = NULL;
   src->session = NULL;
   src->msg = NULL;
+  src->timeout = DEFAULT_TIMEOUT;
+  src->log_level = DEFAULT_SOUP_LOG_LEVEL;
+  src->ssl_strict = DEFAULT_SSL_STRICT;
+  src->ssl_use_system_ca_file = DEFAULT_SSL_USE_SYSTEM_CA_FILE;
+  src->tls_database = DEFAULT_TLS_DATABASE;
+  src->tls_interaction = DEFAULT_TLS_INTERACTION;
+  src->max_retries = DEFAULT_RETRIES;
+  src->method = DEFAULT_SOUP_METHOD;
+  src->minimum_blocksize = gst_base_src_get_blocksize (GST_BASE_SRC_CAST (src));
   proxy = g_getenv ("http_proxy");
-  if (proxy && !gst_soup_http_src_set_proxy (src, proxy)) {
+  if (!gst_soup_http_src_set_proxy (src, proxy)) {
     GST_WARNING_OBJECT (src,
         "The proxy in the http_proxy env var (\"%s\") cannot be parsed.",
         proxy);
   }
 
+  gst_base_src_set_automatic_eos (GST_BASE_SRC (src), FALSE);
+
   gst_soup_http_src_reset (src);
+}
+
+static void
+gst_soup_http_src_dispose (GObject * gobject)
+{
+  GstSoupHTTPSrc *src = GST_SOUP_HTTP_SRC (gobject);
+
+  GST_DEBUG_OBJECT (src, "dispose");
+
+  gst_soup_http_src_session_close (src);
+
+  G_OBJECT_CLASS (parent_class)->dispose (gobject);
 }
 
 static void
@@ -326,7 +523,11 @@ gst_soup_http_src_finalize (GObject * gobject)
 
   GST_DEBUG_OBJECT (src, "finalize");
 
+  g_mutex_clear (&src->mutex);
+  g_cond_clear (&src->have_headers_cond);
+  g_object_unref (src->cancellable);
   g_free (src->location);
+  g_free (src->redirection_uri);
   g_free (src->user_agent);
   if (src->proxy != NULL) {
     soup_uri_free (src->proxy);
@@ -336,6 +537,20 @@ gst_soup_http_src_finalize (GObject * gobject)
   g_free (src->proxy_id);
   g_free (src->proxy_pw);
   g_strfreev (src->cookies);
+
+  if (src->extra_headers) {
+    gst_structure_free (src->extra_headers);
+    src->extra_headers = NULL;
+  }
+
+  g_free (src->ssl_ca_file);
+
+  if (src->tls_database)
+    g_object_unref (src->tls_database);
+  g_free (src->method);
+
+  if (src->tls_interaction)
+    g_object_unref (src->tls_interaction);
 
   G_OBJECT_CLASS (parent_class)->finalize (gobject);
 }
@@ -364,8 +579,7 @@ gst_soup_http_src_set_property (GObject * object, guint prop_id,
       break;
     }
     case PROP_USER_AGENT:
-      if (src->user_agent)
-        g_free (src->user_agent);
+      g_free (src->user_agent);
       src->user_agent = g_value_dup_string (value);
       break;
     case PROP_IRADIO_MODE:
@@ -379,11 +593,6 @@ gst_soup_http_src_set_property (GObject * object, guint prop_id,
       const gchar *proxy;
 
       proxy = g_value_get_string (value);
-
-      if (proxy == NULL) {
-        GST_WARNING ("proxy property cannot be NULL");
-        goto done;
-      }
       if (!gst_soup_http_src_set_proxy (src, proxy)) {
         GST_WARNING ("badly formatted proxy URI");
         goto done;
@@ -398,23 +607,19 @@ gst_soup_http_src_set_property (GObject * object, guint prop_id,
       gst_base_src_set_live (GST_BASE_SRC (src), g_value_get_boolean (value));
       break;
     case PROP_USER_ID:
-      if (src->user_id)
-        g_free (src->user_id);
+      g_free (src->user_id);
       src->user_id = g_value_dup_string (value);
       break;
     case PROP_USER_PW:
-      if (src->user_pw)
-        g_free (src->user_pw);
+      g_free (src->user_pw);
       src->user_pw = g_value_dup_string (value);
       break;
     case PROP_PROXY_ID:
-      if (src->proxy_id)
-        g_free (src->proxy_id);
+      g_free (src->proxy_id);
       src->proxy_id = g_value_dup_string (value);
       break;
     case PROP_PROXY_PW:
-      if (src->proxy_pw)
-        g_free (src->proxy_pw);
+      g_free (src->proxy_pw);
       src->proxy_pw = g_value_dup_string (value);
       break;
     case PROP_TIMEOUT:
@@ -429,6 +634,40 @@ gst_soup_http_src_set_property (GObject * object, guint prop_id,
       src->extra_headers = s ? gst_structure_copy (s) : NULL;
       break;
     }
+    case PROP_SOUP_LOG_LEVEL:
+      src->log_level = g_value_get_enum (value);
+      break;
+    case PROP_COMPRESS:
+      src->compress = g_value_get_boolean (value);
+      break;
+    case PROP_KEEP_ALIVE:
+      src->keep_alive = g_value_get_boolean (value);
+      break;
+    case PROP_SSL_STRICT:
+      src->ssl_strict = g_value_get_boolean (value);
+      break;
+    case PROP_SSL_CA_FILE:
+      g_free (src->ssl_ca_file);
+      src->ssl_ca_file = g_value_dup_string (value);
+      break;
+    case PROP_SSL_USE_SYSTEM_CA_FILE:
+      src->ssl_use_system_ca_file = g_value_get_boolean (value);
+      break;
+    case PROP_TLS_DATABASE:
+      g_clear_object (&src->tls_database);
+      src->tls_database = g_value_dup_object (value);
+      break;
+    case PROP_TLS_INTERACTION:
+      g_clear_object (&src->tls_interaction);
+      src->tls_interaction = g_value_dup_object (value);
+      break;
+    case PROP_RETRIES:
+      src->max_retries = g_value_get_int (value);
+      break;
+    case PROP_METHOD:
+      g_free (src->method);
+      src->method = g_value_dup_string (value);
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -490,6 +729,36 @@ gst_soup_http_src_get_property (GObject * object, guint prop_id,
     case PROP_EXTRA_HEADERS:
       gst_value_set_structure (value, src->extra_headers);
       break;
+    case PROP_SOUP_LOG_LEVEL:
+      g_value_set_enum (value, src->log_level);
+      break;
+    case PROP_COMPRESS:
+      g_value_set_boolean (value, src->compress);
+      break;
+    case PROP_KEEP_ALIVE:
+      g_value_set_boolean (value, src->keep_alive);
+      break;
+    case PROP_SSL_STRICT:
+      g_value_set_boolean (value, src->ssl_strict);
+      break;
+    case PROP_SSL_CA_FILE:
+      g_value_set_string (value, src->ssl_ca_file);
+      break;
+    case PROP_SSL_USE_SYSTEM_CA_FILE:
+      g_value_set_boolean (value, src->ssl_use_system_ca_file);
+      break;
+    case PROP_TLS_DATABASE:
+      g_value_set_object (value, src->tls_database);
+      break;
+    case PROP_TLS_INTERACTION:
+      g_value_set_object (value, src->tls_interaction);
+      break;
+    case PROP_RETRIES:
+      g_value_set_int (value, src->max_retries);
+      break;
+    case PROP_METHOD:
+      g_value_set_string (value, src->method);
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -509,32 +778,29 @@ gst_soup_http_src_unicodify (const gchar * str)
 static void
 gst_soup_http_src_cancel_message (GstSoupHTTPSrc * src)
 {
-  if (src->msg != NULL) {
-    src->session_io_status = GST_SOUP_HTTP_SRC_SESSION_IO_STATUS_CANCELLED;
-    soup_session_cancel_message (src->session, src->msg, SOUP_STATUS_CANCELLED);
-  }
-  src->session_io_status = GST_SOUP_HTTP_SRC_SESSION_IO_STATUS_IDLE;
-  src->msg = NULL;
-}
-
-static void
-gst_soup_http_src_queue_message (GstSoupHTTPSrc * src)
-{
-  soup_session_queue_message (src->session, src->msg,
-      (SoupSessionCallback) gst_soup_http_src_response_cb, src);
-  src->session_io_status = GST_SOUP_HTTP_SRC_SESSION_IO_STATUS_QUEUED;
+  g_cancellable_cancel (src->cancellable);
+  g_cond_signal (&src->have_headers_cond);
 }
 
 static gboolean
-gst_soup_http_src_add_range_header (GstSoupHTTPSrc * src, guint64 offset)
+gst_soup_http_src_add_range_header (GstSoupHTTPSrc * src, guint64 offset,
+    guint64 stop_offset)
 {
   gchar buf[64];
-
   gint rc;
 
   soup_message_headers_remove (src->msg->request_headers, "Range");
-  if (offset) {
-    rc = g_snprintf (buf, sizeof (buf), "bytes=%" G_GUINT64_FORMAT "-", offset);
+  if (offset || stop_offset != -1) {
+    if (stop_offset != -1) {
+      g_assert (offset != stop_offset);
+
+      rc = g_snprintf (buf, sizeof (buf), "bytes=%" G_GUINT64_FORMAT "-%"
+          G_GUINT64_FORMAT, offset, (stop_offset > 0) ? stop_offset - 1 :
+          stop_offset);
+    } else {
+      rc = g_snprintf (buf, sizeof (buf), "bytes=%" G_GUINT64_FORMAT "-",
+          offset);
+    }
     if (rc > sizeof (buf) || rc < 0)
       return FALSE;
     soup_message_headers_append (src->msg->request_headers, "Range", buf);
@@ -618,28 +884,86 @@ gst_soup_http_src_add_extra_headers (GstSoupHTTPSrc * src)
   return gst_structure_foreach (src->extra_headers, _append_extra_headers, src);
 }
 
-
-static void
-gst_soup_http_src_session_unpause_message (GstSoupHTTPSrc * src)
+static gboolean
+gst_soup_http_src_session_open (GstSoupHTTPSrc * src)
 {
-  soup_session_unpause_message (src->session, src->msg);
-}
+  if (src->session) {
+    GST_DEBUG_OBJECT (src, "Session is already open");
+    return TRUE;
+  }
 
-static void
-gst_soup_http_src_session_pause_message (GstSoupHTTPSrc * src)
-{
-  soup_session_pause_message (src->session, src->msg);
+  if (!src->location) {
+    GST_ELEMENT_ERROR (src, RESOURCE, OPEN_READ, (_("No URL set.")),
+        ("Missing location property"));
+    return FALSE;
+  }
+
+  if (!src->session) {
+    GST_DEBUG_OBJECT (src, "Creating session");
+    if (src->proxy == NULL) {
+      src->session =
+          soup_session_new_with_options (SOUP_SESSION_USER_AGENT,
+          src->user_agent, SOUP_SESSION_TIMEOUT, src->timeout,
+          SOUP_SESSION_SSL_STRICT, src->ssl_strict,
+          SOUP_SESSION_TLS_INTERACTION, src->tls_interaction, NULL);
+    } else {
+      src->session =
+          soup_session_new_with_options (SOUP_SESSION_PROXY_URI, src->proxy,
+          SOUP_SESSION_TIMEOUT, src->timeout,
+          SOUP_SESSION_SSL_STRICT, src->ssl_strict,
+          SOUP_SESSION_USER_AGENT, src->user_agent,
+          SOUP_SESSION_TLS_INTERACTION, src->tls_interaction, NULL);
+    }
+
+    if (!src->session) {
+      GST_ELEMENT_ERROR (src, LIBRARY, INIT,
+          (NULL), ("Failed to create async session"));
+      return FALSE;
+    }
+
+    g_signal_connect (src->session, "authenticate",
+        G_CALLBACK (gst_soup_http_src_authenticate_cb), src);
+
+    /* Set up logging */
+    gst_soup_util_log_setup (src->session, src->log_level, GST_ELEMENT (src));
+    if (src->tls_database)
+      g_object_set (src->session, "tls-database", src->tls_database, NULL);
+    else if (src->ssl_ca_file)
+      g_object_set (src->session, "ssl-ca-file", src->ssl_ca_file, NULL);
+    else
+      g_object_set (src->session, "ssl-use-system-ca-file",
+          src->ssl_use_system_ca_file, NULL);
+  } else {
+    GST_DEBUG_OBJECT (src, "Re-using session");
+  }
+
+  if (src->compress)
+    soup_session_add_feature_by_type (src->session, SOUP_TYPE_CONTENT_DECODER);
+  else
+    soup_session_remove_feature_by_type (src->session,
+        SOUP_TYPE_CONTENT_DECODER);
+
+  return TRUE;
 }
 
 static void
 gst_soup_http_src_session_close (GstSoupHTTPSrc * src)
 {
-  if (src->session) {
-    soup_session_abort (src->session);  /* This unrefs the message. */
-    g_object_unref (src->session);
-    src->session = NULL;
+  GST_DEBUG_OBJECT (src, "Closing session");
+
+  g_mutex_lock (&src->mutex);
+  if (src->msg) {
+    soup_session_cancel_message (src->session, src->msg, SOUP_STATUS_CANCELLED);
+    g_object_unref (src->msg);
     src->msg = NULL;
   }
+
+  if (src->session) {
+    soup_session_abort (src->session);
+    g_object_unref (src->session);
+    src->session = NULL;
+  }
+  g_mutex_unlock (&src->mutex);
 }
 
 static void
@@ -659,38 +983,91 @@ gst_soup_http_src_authenticate_cb (SoupSession * session, SoupMessage * msg,
 }
 
 static void
-gst_soup_http_src_headers_foreach (const gchar * name, const gchar * val,
-    gpointer src)
+insert_http_header (const gchar * name, const gchar * value, gpointer user_data)
 {
-  GST_DEBUG_OBJECT (src, " %s: %s", name, val);
+  GstStructure *headers = user_data;
+  const GValue *gv;
+
+  if (!g_utf8_validate (name, -1, NULL) || !g_utf8_validate (value, -1, NULL))
+    return;
+
+  gv = gst_structure_get_value (headers, name);
+  if (gv && GST_VALUE_HOLDS_ARRAY (gv)) {
+    GValue v = G_VALUE_INIT;
+
+    g_value_init (&v, G_TYPE_STRING);
+    g_value_set_string (&v, value);
+    gst_value_array_append_value ((GValue *) gv, &v);
+    g_value_unset (&v);
+  } else if (gv && G_VALUE_HOLDS_STRING (gv)) {
+    GValue arr = G_VALUE_INIT;
+    GValue v = G_VALUE_INIT;
+    const gchar *old_value = g_value_get_string (gv);
+
+    g_value_init (&arr, GST_TYPE_ARRAY);
+    g_value_init (&v, G_TYPE_STRING);
+    g_value_set_string (&v, old_value);
+    gst_value_array_append_value (&arr, &v);
+    g_value_set_string (&v, value);
+    gst_value_array_append_value (&arr, &v);
+
+    gst_structure_set_value (headers, name, &arr);
+    g_value_unset (&v);
+    g_value_unset (&arr);
+  } else {
+    gst_structure_set (headers, name, G_TYPE_STRING, value, NULL);
+  }
 }
 
 static void
-gst_soup_http_src_got_headers_cb (SoupMessage * msg, GstSoupHTTPSrc * src)
+gst_soup_http_src_got_headers (GstSoupHTTPSrc * src, SoupMessage * msg)
 {
   const char *value;
   GstTagList *tag_list;
   GstBaseSrc *basesrc;
   guint64 newsize;
   GHashTable *params = NULL;
+  GstEvent *http_headers_event;
+  GstStructure *http_headers, *headers;
+  const gchar *accept_ranges;
 
-  GST_DEBUG_OBJECT (src, "got headers:");
-  soup_message_headers_foreach (msg->response_headers,
-      gst_soup_http_src_headers_foreach, src);
+  GST_INFO_OBJECT (src, "got headers");
 
-  if (msg->status_code == 407 && src->proxy_id && src->proxy_pw)
+  if (msg->status_code == SOUP_STATUS_PROXY_AUTHENTICATION_REQUIRED &&
+      src->proxy_id && src->proxy_pw)
     return;
 
-  if (src->automatic_redirect && SOUP_STATUS_IS_REDIRECTION (msg->status_code)) {
-    GST_DEBUG_OBJECT (src, "%u redirect to \"%s\"", msg->status_code,
-        soup_message_headers_get_one (msg->response_headers, "Location"));
+  if (msg->status_code == SOUP_STATUS_UNAUTHORIZED) {
+    /* force an error */
+    gst_soup_http_src_parse_status (msg, src);
     return;
   }
 
-  if (msg->status_code == SOUP_STATUS_UNAUTHORIZED)
-    return;
+  src->got_headers = TRUE;
+  g_cond_broadcast (&src->have_headers_cond);
 
-  src->session_io_status = GST_SOUP_HTTP_SRC_SESSION_IO_STATUS_RUNNING;
+  http_headers = gst_structure_new_empty ("http-headers");
+  gst_structure_set (http_headers, "uri", G_TYPE_STRING, src->location, NULL);
+  if (src->redirection_uri)
+    gst_structure_set (http_headers, "redirection-uri", G_TYPE_STRING,
+        src->redirection_uri, NULL);
+  headers = gst_structure_new_empty ("request-headers");
+  soup_message_headers_foreach (msg->request_headers, insert_http_header,
+      headers);
+  gst_structure_set (http_headers, "request-headers", GST_TYPE_STRUCTURE,
+      headers, NULL);
+  gst_structure_free (headers);
+  headers = gst_structure_new_empty ("response-headers");
+  soup_message_headers_foreach (msg->response_headers, insert_http_header,
+      headers);
+  gst_structure_set (http_headers, "response-headers", GST_TYPE_STRUCTURE,
+      headers, NULL);
+  gst_structure_free (headers);
+
+  http_headers_event =
+      gst_event_new_custom (GST_EVENT_CUSTOM_DOWNSTREAM_STICKY, http_headers);
+  gst_event_replace (&src->http_headers_event, http_headers_event);
+  gst_event_unref (http_headers_event);
 
   /* Parse Content-Length. */
   if (soup_message_headers_get_encoding (msg->response_headers) ==
@@ -710,52 +1087,86 @@ gst_soup_http_src_got_headers_cb (SoupMessage * msg, GstSoupHTTPSrc * src)
     }
   }
 
+  /* If the server reports Accept-Ranges: none we don't have to try
+   * doing range requests at all
+   */
+  if ((accept_ranges =
+          soup_message_headers_get_one (msg->response_headers,
+              "Accept-Ranges"))) {
+    if (g_ascii_strcasecmp (accept_ranges, "none") == 0)
+      src->seekable = FALSE;
+  }
+
   /* Icecast stuff */
   tag_list = gst_tag_list_new_empty ();
 
   if ((value =
           soup_message_headers_get_one (msg->response_headers,
               "icy-metaint")) != NULL) {
-    gint icy_metaint = atoi (value);
+    gint icy_metaint;
 
-    GST_DEBUG_OBJECT (src, "icy-metaint: %s (parsed: %d)", value, icy_metaint);
-    if (icy_metaint > 0) {
-      if (src->src_caps)
-        gst_caps_unref (src->src_caps);
+    if (g_utf8_validate (value, -1, NULL)) {
+      icy_metaint = atoi (value);
 
-      src->src_caps = gst_caps_new_simple ("application/x-icy",
-          "metadata-interval", G_TYPE_INT, icy_metaint, NULL);
+      GST_DEBUG_OBJECT (src, "icy-metaint: %s (parsed: %d)", value,
+          icy_metaint);
+      if (icy_metaint > 0) {
+        if (src->src_caps)
+          gst_caps_unref (src->src_caps);
 
-      gst_base_src_set_caps (GST_BASE_SRC (src), src->src_caps);
+        src->src_caps = gst_caps_new_simple ("application/x-icy",
+            "metadata-interval", G_TYPE_INT, icy_metaint, NULL);
+
+        gst_base_src_set_caps (GST_BASE_SRC (src), src->src_caps);
+      }
     }
   }
   if ((value =
           soup_message_headers_get_content_type (msg->response_headers,
               &params)) != NULL) {
-    GST_DEBUG_OBJECT (src, "Content-Type: %s", value);
-    if (g_ascii_strcasecmp (value, "audio/L16") == 0) {
+    if (!g_utf8_validate (value, -1, NULL)) {
+      GST_WARNING_OBJECT (src, "Content-Type is invalid UTF-8");
+    } else if (g_ascii_strcasecmp (value, "audio/L16") == 0) {
       gint channels = 2;
       gint rate = 44100;
       char *param;
 
-      if (src->src_caps)
+      GST_DEBUG_OBJECT (src, "Content-Type: %s", value);
+
+      if (src->src_caps) {
         gst_caps_unref (src->src_caps);
+        src->src_caps = NULL;
+      }
 
       param = g_hash_table_lookup (params, "channels");
-      if (param != NULL)
-        channels = atol (param);
+      if (param != NULL) {
+        guint64 val = g_ascii_strtoull (param, NULL, 10);
+        if (val < 64)
+          channels = val;
+        else
+          channels = 0;
+      }
 
       param = g_hash_table_lookup (params, "rate");
-      if (param != NULL)
-        rate = atol (param);
+      if (param != NULL) {
+        guint64 val = g_ascii_strtoull (param, NULL, 10);
+        if (val < G_MAXINT)
+          rate = val;
+        else
+          rate = 0;
+      }
 
-      src->src_caps = gst_caps_new_simple ("audio/x-raw",
-          "format", G_TYPE_STRING, "S16BE",
-          "layout", G_TYPE_STRING, "interleaved",
-          "channels", G_TYPE_INT, channels, "rate", G_TYPE_INT, rate, NULL);
+      if (rate > 0 && channels > 0) {
+        src->src_caps = gst_caps_new_simple ("audio/x-unaligned-raw",
+            "format", G_TYPE_STRING, "S16BE",
+            "layout", G_TYPE_STRING, "interleaved",
+            "channels", G_TYPE_INT, channels, "rate", G_TYPE_INT, rate, NULL);
 
-      gst_base_src_set_caps (GST_BASE_SRC (src), src->src_caps);
+        gst_base_src_set_caps (GST_BASE_SRC (src), src->src_caps);
+      }
     } else {
+      GST_DEBUG_OBJECT (src, "Content-Type: %s", value);
+
       /* Set the Content-Type field on the caps */
       if (src->src_caps) {
         src->src_caps = gst_caps_make_writable (src->src_caps);
@@ -772,30 +1183,36 @@ gst_soup_http_src_got_headers_cb (SoupMessage * msg, GstSoupHTTPSrc * src)
   if ((value =
           soup_message_headers_get_one (msg->response_headers,
               "icy-name")) != NULL) {
-    g_free (src->iradio_name);
-    src->iradio_name = gst_soup_http_src_unicodify (value);
-    if (src->iradio_name) {
-      gst_tag_list_add (tag_list, GST_TAG_MERGE_REPLACE, GST_TAG_ORGANIZATION,
-          src->iradio_name, NULL);
+    if (g_utf8_validate (value, -1, NULL)) {
+      g_free (src->iradio_name);
+      src->iradio_name = gst_soup_http_src_unicodify (value);
+      if (src->iradio_name) {
+        gst_tag_list_add (tag_list, GST_TAG_MERGE_REPLACE, GST_TAG_ORGANIZATION,
+            src->iradio_name, NULL);
+      }
     }
   }
   if ((value =
           soup_message_headers_get_one (msg->response_headers,
               "icy-genre")) != NULL) {
-    g_free (src->iradio_genre);
-    src->iradio_genre = gst_soup_http_src_unicodify (value);
-    if (src->iradio_genre) {
-      gst_tag_list_add (tag_list, GST_TAG_MERGE_REPLACE, GST_TAG_GENRE,
-          src->iradio_genre, NULL);
+    if (g_utf8_validate (value, -1, NULL)) {
+      g_free (src->iradio_genre);
+      src->iradio_genre = gst_soup_http_src_unicodify (value);
+      if (src->iradio_genre) {
+        gst_tag_list_add (tag_list, GST_TAG_MERGE_REPLACE, GST_TAG_GENRE,
+            src->iradio_genre, NULL);
+      }
     }
   }
   if ((value = soup_message_headers_get_one (msg->response_headers, "icy-url"))
       != NULL) {
-    g_free (src->iradio_url);
-    src->iradio_url = gst_soup_http_src_unicodify (value);
-    if (src->iradio_url) {
-      gst_tag_list_add (tag_list, GST_TAG_MERGE_REPLACE, GST_TAG_LOCATION,
-          src->iradio_url, NULL);
+    if (g_utf8_validate (value, -1, NULL)) {
+      g_free (src->iradio_url);
+      src->iradio_url = gst_soup_http_src_unicodify (value);
+      if (src->iradio_url) {
+        gst_tag_list_add (tag_list, GST_TAG_MERGE_REPLACE, GST_TAG_LOCATION,
+            src->iradio_url, NULL);
+      }
     }
   }
   if (!gst_tag_list_is_empty (tag_list)) {
@@ -813,9 +1230,13 @@ gst_soup_http_src_got_headers_cb (SoupMessage * msg, GstSoupHTTPSrc * src)
   if (src->ret == GST_FLOW_CUSTOM_ERROR &&
       src->read_position && msg->status_code != SOUP_STATUS_PARTIAL_CONTENT) {
     src->seekable = FALSE;
-    GST_ELEMENT_ERROR (src, RESOURCE, SEEK,
+    GST_ELEMENT_ERROR_WITH_DETAILS (src, RESOURCE, SEEK,
         (_("Server does not support seeking.")),
-        ("Server does not accept Range HTTP header, URL: %s", src->location));
+        ("Server does not accept Range HTTP header, URL: %s, Redirect to: %s",
+            src->location, GST_STR_NULL (src->redirection_uri)),
+        ("http-status-code", G_TYPE_UINT, msg->status_code,
+            "http-redirection-uri", G_TYPE_STRING,
+            GST_STR_NULL (src->redirection_uri), NULL));
     src->ret = GST_FLOW_ERROR;
   }
 
@@ -823,220 +1244,43 @@ gst_soup_http_src_got_headers_cb (SoupMessage * msg, GstSoupHTTPSrc * src)
    * don't output any data (such as an error html page), and return
    * GST_FLOW_ERROR from the create function instead of having
    * got_chunk_cb overwrite src->ret with FLOW_OK again. */
-  if (src->ret == GST_FLOW_ERROR) {
-    gst_soup_http_src_session_pause_message (src);
-
-    if (src->loop)
-      g_main_loop_quit (src->loop);
+  if (src->ret == GST_FLOW_ERROR || src->ret == GST_FLOW_EOS) {
   }
 }
 
-/* Have body. Signal EOS. */
-static void
-gst_soup_http_src_got_body_cb (SoupMessage * msg, GstSoupHTTPSrc * src)
+static GstBuffer *
+gst_soup_http_src_alloc_buffer (GstSoupHTTPSrc * src)
 {
-  if (G_UNLIKELY (msg != src->msg)) {
-    GST_DEBUG_OBJECT (src, "got body, but not for current message");
-    return;
-  }
-  if (G_UNLIKELY (src->session_io_status !=
-          GST_SOUP_HTTP_SRC_SESSION_IO_STATUS_RUNNING)) {
-    /* Probably a redirect. */
-    return;
-  }
-  GST_DEBUG_OBJECT (src, "got body");
-  src->ret = GST_FLOW_EOS;
-  if (src->loop)
-    g_main_loop_quit (src->loop);
-  gst_soup_http_src_session_pause_message (src);
-}
-
-/* Finished. Signal EOS. */
-static void
-gst_soup_http_src_finished_cb (SoupMessage * msg, GstSoupHTTPSrc * src)
-{
-  if (G_UNLIKELY (msg != src->msg)) {
-    GST_DEBUG_OBJECT (src, "finished, but not for current message");
-    return;
-  }
-  GST_DEBUG_OBJECT (src, "finished");
-  src->ret = GST_FLOW_EOS;
-  if (src->session_io_status == GST_SOUP_HTTP_SRC_SESSION_IO_STATUS_CANCELLED) {
-    /* gst_soup_http_src_cancel_message() triggered this; probably a seek
-     * that occurred in the QUEUEING state; i.e. before the connection setup
-     * was complete. Do nothing */
-  } else if (src->session_io_status ==
-      GST_SOUP_HTTP_SRC_SESSION_IO_STATUS_RUNNING && src->read_position > 0) {
-    /* The server disconnected while streaming. Reconnect and seeking to the
-     * last location. */
-    src->retry = TRUE;
-    src->ret = GST_FLOW_CUSTOM_ERROR;
-  } else if (G_UNLIKELY (src->session_io_status !=
-          GST_SOUP_HTTP_SRC_SESSION_IO_STATUS_RUNNING)) {
-    /* FIXME: reason_phrase is not translated, add proper error message */
-    GST_ELEMENT_ERROR (src, RESOURCE, NOT_FOUND,
-        ("%s", msg->reason_phrase),
-        ("libsoup status code %d", msg->status_code));
-  }
-  if (src->loop)
-    g_main_loop_quit (src->loop);
-}
-
-/* Buffer lifecycle management.
- *
- * gst_soup_http_src_create() runs the GMainLoop for this element, to let
- * Soup take control.
- * A GstBuffer is allocated in gst_soup_http_src_chunk_allocator() and
- * associated with a SoupBuffer.
- * Soup reads HTTP data in the GstBuffer's data buffer.
- * The gst_soup_http_src_got_chunk_cb() is then called with the SoupBuffer.
- * That sets gst_soup_http_src_create()'s return argument to the GstBuffer,
- * increments its refcount (to 2), pauses the flow of data from the HTTP
- * source to prevent gst_soup_http_src_got_chunk_cb() from being called
- * again and breaks out of the GMainLoop.
- * Because the SOUP_MESSAGE_OVERWRITE_CHUNKS flag is set, Soup frees the
- * SoupBuffer and calls gst_soup_http_src_chunk_free(), which decrements the
- * refcount (to 1).
- * gst_soup_http_src_create() returns the GstBuffer. It will be freed by a
- * downstream element.
- * If Soup fails to read HTTP data, it does not call
- * gst_soup_http_src_got_chunk_cb(), but still frees the SoupBuffer and
- * calls gst_soup_http_src_chunk_free(), which decrements the GstBuffer's
- * refcount to 0, freeing it.
- */
-
-typedef struct
-{
-  GstBuffer *buffer;
-  GstMapInfo map;
-} SoupGstChunk;
-
-static void
-gst_soup_http_src_chunk_free (gpointer user_data)
-{
-  SoupGstChunk *chunk = (SoupGstChunk *) user_data;
-
-  gst_buffer_unmap (chunk->buffer, &chunk->map);
-  gst_buffer_unref (chunk->buffer);
-  g_slice_free (SoupGstChunk, chunk);
-}
-
-static SoupBuffer *
-gst_soup_http_src_chunk_allocator (SoupMessage * msg, gsize max_len,
-    gpointer user_data)
-{
-  GstSoupHTTPSrc *src = (GstSoupHTTPSrc *) user_data;
   GstBaseSrc *basesrc = GST_BASE_SRC_CAST (src);
-  GstBuffer *gstbuf;
-  SoupBuffer *soupbuf;
-  gsize length;
   GstFlowReturn rc;
-  SoupGstChunk *chunk;
+  GstBuffer *gstbuf;
 
-  if (max_len)
-    length = MIN (basesrc->blocksize, max_len);
-  else
-    length = basesrc->blocksize;
-  GST_DEBUG_OBJECT (src, "alloc %" G_GSIZE_FORMAT " bytes <= %" G_GSIZE_FORMAT,
-      length, max_len);
-
-  rc = GST_BASE_SRC_CLASS (parent_class)->alloc (basesrc, -1, length, &gstbuf);
+  rc = GST_BASE_SRC_CLASS (parent_class)->alloc (basesrc, -1,
+      basesrc->blocksize, &gstbuf);
   if (G_UNLIKELY (rc != GST_FLOW_OK)) {
-    /* Failed to allocate buffer. Stall SoupSession and return error code
-     * to create(). */
-    src->ret = rc;
-    g_main_loop_quit (src->loop);
     return NULL;
   }
 
-  chunk = g_slice_new0 (SoupGstChunk);
-  chunk->buffer = gstbuf;
-  gst_buffer_map (gstbuf, &chunk->map, GST_MAP_READWRITE);
-
-  soupbuf = soup_buffer_new_with_owner (chunk->map.data, chunk->map.size,
-      chunk, gst_soup_http_src_chunk_free);
-
-  return soupbuf;
-}
-
-static void
-gst_soup_http_src_got_chunk_cb (SoupMessage * msg, SoupBuffer * chunk,
-    GstSoupHTTPSrc * src)
-{
-  GstBaseSrc *basesrc;
-  guint64 new_position;
-  SoupGstChunk *gchunk;
-
-  if (G_UNLIKELY (msg != src->msg)) {
-    GST_DEBUG_OBJECT (src, "got chunk, but not for current message");
-    return;
-  }
-  if (G_UNLIKELY (src->session_io_status !=
-          GST_SOUP_HTTP_SRC_SESSION_IO_STATUS_RUNNING)) {
-    /* Probably a redirect. */
-    return;
-  }
-  basesrc = GST_BASE_SRC_CAST (src);
-  GST_DEBUG_OBJECT (src, "got chunk of %" G_GSIZE_FORMAT " bytes",
-      chunk->length);
-
-  /* Extract the GstBuffer from the SoupBuffer and set its fields. */
-  gchunk = (SoupGstChunk *) soup_buffer_get_owner (chunk);
-  *src->outbuf = gchunk->buffer;
-
-  gst_buffer_resize (*src->outbuf, 0, chunk->length);
-  GST_BUFFER_OFFSET (*src->outbuf) = basesrc->segment.position;
-
-  gst_buffer_ref (*src->outbuf);
-
-  new_position = src->read_position + chunk->length;
-  if (G_LIKELY (src->request_position == src->read_position))
-    src->request_position = new_position;
-  src->read_position = new_position;
-
-  src->ret = GST_FLOW_OK;
-  g_main_loop_quit (src->loop);
-  gst_soup_http_src_session_pause_message (src);
-}
-
-static void
-gst_soup_http_src_response_cb (SoupSession * session, SoupMessage * msg,
-    GstSoupHTTPSrc * src)
-{
-  if (G_UNLIKELY (msg != src->msg)) {
-    GST_DEBUG_OBJECT (src, "got response %d: %s, but not for current message",
-        msg->status_code, msg->reason_phrase);
-    return;
-  }
-  if (G_UNLIKELY (src->session_io_status !=
-          GST_SOUP_HTTP_SRC_SESSION_IO_STATUS_RUNNING)
-      && SOUP_STATUS_IS_REDIRECTION (msg->status_code)) {
-    /* Ignore redirections. */
-    return;
-  }
-  GST_DEBUG_OBJECT (src, "got response %d: %s", msg->status_code,
-      msg->reason_phrase);
-  if (src->session_io_status == GST_SOUP_HTTP_SRC_SESSION_IO_STATUS_RUNNING &&
-      src->read_position > 0) {
-    /* The server disconnected while streaming. Reconnect and seeking to the
-     * last location. */
-    src->retry = TRUE;
-  } else
-    gst_soup_http_src_parse_status (msg, src);
-  /* The session's SoupMessage object expires after this callback returns. */
-  src->msg = NULL;
-  g_main_loop_quit (src->loop);
+  return gstbuf;
 }
 
 #define SOUP_HTTP_SRC_ERROR(src,soup_msg,cat,code,error_message)     \
-  GST_ELEMENT_ERROR ((src), cat, code, ("%s", error_message),        \
-      ("%s (%d), URL: %s", (soup_msg)->reason_phrase,                \
-          (soup_msg)->status_code, (src)->location));
+  do { \
+    GST_ELEMENT_ERROR_WITH_DETAILS ((src), cat, code, ("%s", error_message), \
+        ("%s (%d), URL: %s, Redirect to: %s", (soup_msg)->reason_phrase, \
+            (soup_msg)->status_code, (src)->location, GST_STR_NULL ((src)->redirection_uri)), \
+            ("http-status-code", G_TYPE_UINT, msg->status_code, \
+             "http-redirect-uri", G_TYPE_STRING, GST_STR_NULL ((src)->redirection_uri), NULL)); \
+  } while(0)
 
 static void
 gst_soup_http_src_parse_status (SoupMessage * msg, GstSoupHTTPSrc * src)
 {
-  if (SOUP_STATUS_IS_TRANSPORT_ERROR (msg->status_code)) {
+  if (msg->method == SOUP_METHOD_HEAD) {
+    if (!SOUP_STATUS_IS_SUCCESSFUL (msg->status_code))
+      GST_DEBUG_OBJECT (src, "Ignoring error %d during HEAD request",
+          msg->status_code);
+  } else if (SOUP_STATUS_IS_TRANSPORT_ERROR (msg->status_code)) {
     switch (msg->status_code) {
       case SOUP_STATUS_CANT_RESOLVE:
       case SOUP_STATUS_CANT_RESOLVE_PROXY:
@@ -1056,10 +1300,14 @@ gst_soup_http_src_parse_status (SoupMessage * msg, GstSoupHTTPSrc * src)
         src->ret = GST_FLOW_ERROR;
         break;
       case SOUP_STATUS_IO_ERROR:
-        SOUP_HTTP_SRC_ERROR (src, msg, RESOURCE, READ,
-            _("A network error occured, or the server closed the connection "
-                "unexpectedly."));
-        src->ret = GST_FLOW_ERROR;
+        if (src->max_retries == -1 || src->retry_count < src->max_retries) {
+          src->ret = GST_FLOW_CUSTOM_ERROR;
+        } else {
+          SOUP_HTTP_SRC_ERROR (src, msg, RESOURCE, READ,
+              _("A network error occurred, or the server closed the connection "
+                  "unexpectedly."));
+          src->ret = GST_FLOW_ERROR;
+        }
         break;
       case SOUP_STATUS_MALFORMED:
         SOUP_HTTP_SRC_ERROR (src, msg, RESOURCE, READ,
@@ -1073,30 +1321,91 @@ gst_soup_http_src_parse_status (SoupMessage * msg, GstSoupHTTPSrc * src)
   } else if (SOUP_STATUS_IS_CLIENT_ERROR (msg->status_code) ||
       SOUP_STATUS_IS_REDIRECTION (msg->status_code) ||
       SOUP_STATUS_IS_SERVER_ERROR (msg->status_code)) {
+    const gchar *reason_phrase;
+
+    reason_phrase = msg->reason_phrase;
+    if (reason_phrase && !g_utf8_validate (reason_phrase, -1, NULL)) {
+      GST_ERROR_OBJECT (src, "Invalid UTF-8 in reason");
+      reason_phrase = "(invalid)";
+    }
+
     /* Report HTTP error. */
+
+    /* when content_size is unknown and we have just finished receiving
+     * a body message, requests that go beyond the content limits will result
+     * in an error. Here we convert those to EOS */
+    if (msg->status_code == SOUP_STATUS_REQUESTED_RANGE_NOT_SATISFIABLE &&
+        src->have_body && !src->have_size) {
+      GST_DEBUG_OBJECT (src, "Requested range out of limits and received full "
+          "body, returning EOS");
+      src->ret = GST_FLOW_EOS;
+      return;
+    }
+
     /* FIXME: reason_phrase is not translated and not suitable for user
      * error dialog according to libsoup documentation.
-     * FIXME: error code (OPEN_READ vs. READ) should depend on http status? */
-    GST_ELEMENT_ERROR (src, RESOURCE, OPEN_READ,
-        ("%s", msg->reason_phrase),
-        ("%s (%d), URL: %s", msg->reason_phrase, msg->status_code,
-            src->location));
+     */
+    if (msg->status_code == SOUP_STATUS_NOT_FOUND) {
+      GST_ELEMENT_ERROR_WITH_DETAILS (src, RESOURCE, NOT_FOUND,
+          ("%s", reason_phrase),
+          ("%s (%d), URL: %s, Redirect to: %s", reason_phrase,
+              msg->status_code, src->location,
+              GST_STR_NULL (src->redirection_uri)),
+          ("http-status-code", G_TYPE_UINT, msg->status_code,
+              "http-redirect-uri", G_TYPE_STRING,
+              GST_STR_NULL (src->redirection_uri), NULL));
+    } else if (msg->status_code == SOUP_STATUS_UNAUTHORIZED
+        || msg->status_code == SOUP_STATUS_PAYMENT_REQUIRED
+        || msg->status_code == SOUP_STATUS_FORBIDDEN
+        || msg->status_code == SOUP_STATUS_PROXY_AUTHENTICATION_REQUIRED) {
+      GST_ELEMENT_ERROR_WITH_DETAILS (src, RESOURCE, NOT_AUTHORIZED, ("%s",
+              reason_phrase), ("%s (%d), URL: %s, Redirect to: %s",
+              reason_phrase, msg->status_code, src->location,
+              GST_STR_NULL (src->redirection_uri)), ("http-status-code",
+              G_TYPE_UINT, msg->status_code, "http-redirect-uri", G_TYPE_STRING,
+              GST_STR_NULL (src->redirection_uri), NULL));
+    } else {
+      GST_ELEMENT_ERROR_WITH_DETAILS (src, RESOURCE, OPEN_READ,
+          ("%s", reason_phrase),
+          ("%s (%d), URL: %s, Redirect to: %s", reason_phrase,
+              msg->status_code, src->location,
+              GST_STR_NULL (src->redirection_uri)),
+          ("http-status-code", G_TYPE_UINT, msg->status_code,
+              "http-redirect-uri", G_TYPE_STRING,
+              GST_STR_NULL (src->redirection_uri), NULL));
+    }
     src->ret = GST_FLOW_ERROR;
   }
 }
 
-static gboolean
-gst_soup_http_src_build_message (GstSoupHTTPSrc * src)
+static void
+gst_soup_http_src_restarted_cb (SoupMessage * msg, GstSoupHTTPSrc * src)
 {
-  src->msg = soup_message_new (SOUP_METHOD_GET, src->location);
+  if (soup_session_would_redirect (src->session, msg)) {
+    src->redirection_uri =
+        soup_uri_to_string (soup_message_get_uri (msg), FALSE);
+    src->redirection_permanent =
+        (msg->status_code == SOUP_STATUS_MOVED_PERMANENTLY);
+    GST_DEBUG_OBJECT (src, "%u redirect to \"%s\" (permanent %d)",
+        msg->status_code, src->redirection_uri, src->redirection_permanent);
+  }
+}
+
+static gboolean
+gst_soup_http_src_build_message (GstSoupHTTPSrc * src, const gchar * method)
+{
+  g_return_val_if_fail (src->msg == NULL, FALSE);
+
+  src->msg = soup_message_new (method, src->location);
   if (!src->msg) {
     GST_ELEMENT_ERROR (src, RESOURCE, OPEN_READ,
         ("Error parsing URL."), ("URL: %s", src->location));
     return FALSE;
   }
-  src->session_io_status = GST_SOUP_HTTP_SRC_SESSION_IO_STATUS_IDLE;
-  soup_message_headers_append (src->msg->request_headers, "Connection",
-      "close");
+  if (!src->keep_alive) {
+    soup_message_headers_append (src->msg->request_headers, "Connection",
+        "close");
+  }
   if (src->iradio_mode) {
     soup_message_headers_append (src->msg->request_headers, "icy-metadata",
         "1");
@@ -1109,97 +1418,313 @@ gst_soup_http_src_build_message (GstSoupHTTPSrc * src)
           *cookie);
     }
   }
-  src->retry = FALSE;
 
-  g_signal_connect (src->msg, "got_headers",
-      G_CALLBACK (gst_soup_http_src_got_headers_cb), src);
-  g_signal_connect (src->msg, "got_body",
-      G_CALLBACK (gst_soup_http_src_got_body_cb), src);
-  g_signal_connect (src->msg, "finished",
-      G_CALLBACK (gst_soup_http_src_finished_cb), src);
-  g_signal_connect (src->msg, "got_chunk",
-      G_CALLBACK (gst_soup_http_src_got_chunk_cb), src);
   soup_message_set_flags (src->msg, SOUP_MESSAGE_OVERWRITE_CHUNKS |
       (src->automatic_redirect ? 0 : SOUP_MESSAGE_NO_REDIRECT));
-  soup_message_set_chunk_allocator (src->msg,
-      gst_soup_http_src_chunk_allocator, src, NULL);
-  gst_soup_http_src_add_range_header (src, src->request_position);
+
+  if (src->automatic_redirect) {
+    g_signal_connect (src->msg, "restarted",
+        G_CALLBACK (gst_soup_http_src_restarted_cb), src);
+  }
+
+  gst_soup_http_src_add_range_header (src, src->request_position,
+      src->stop_position);
 
   gst_soup_http_src_add_extra_headers (src);
 
-  GST_DEBUG_OBJECT (src, "request headers:");
-  soup_message_headers_foreach (src->msg->request_headers,
-      gst_soup_http_src_headers_foreach, src);
-
   return TRUE;
+}
+
+static GstFlowReturn
+gst_soup_http_src_send_message (GstSoupHTTPSrc * src)
+{
+  g_return_val_if_fail (src->msg != NULL, GST_FLOW_ERROR);
+
+  /* FIXME We are ignoring the GError here, might be useful to debug */
+  src->input_stream =
+      soup_session_send (src->session, src->msg, src->cancellable, NULL);
+
+  if (g_cancellable_is_cancelled (src->cancellable))
+    return GST_FLOW_FLUSHING;
+
+  src->ret = GST_FLOW_OK;
+
+  gst_soup_http_src_got_headers (src, src->msg);
+  if (src->ret != GST_FLOW_OK) {
+    return src->ret;
+  }
+
+  if (!src->input_stream) {
+    GST_DEBUG_OBJECT (src, "Didn't get an input stream");
+    return GST_FLOW_ERROR;
+  }
+
+  if (SOUP_STATUS_IS_SUCCESSFUL (src->msg->status_code)) {
+    GST_DEBUG_OBJECT (src, "Successfully got a reply");
+  } else {
+    /* FIXME - be more helpful to people debugging */
+    return GST_FLOW_ERROR;
+  }
+
+  return GST_FLOW_OK;
+}
+
+static GstFlowReturn
+gst_soup_http_src_do_request (GstSoupHTTPSrc * src, const gchar * method)
+{
+  if (src->max_retries != -1 && src->retry_count > src->max_retries) {
+    GST_DEBUG_OBJECT (src, "Max retries reached");
+    src->ret = GST_FLOW_ERROR;
+    return src->ret;
+  }
+
+  src->retry_count++;
+  /* EOS immediately if we have an empty segment */
+  if (src->request_position == src->stop_position)
+    return GST_FLOW_EOS;
+
+  GST_LOG_OBJECT (src, "Running request for method: %s", method);
+
+  /* Update the position if we are retrying */
+  if (src->msg && src->request_position > 0) {
+    gst_soup_http_src_add_range_header (src, src->request_position,
+        src->stop_position);
+  }
+
+  if (!src->msg) {
+    if (!gst_soup_http_src_build_message (src, method)) {
+      return GST_FLOW_ERROR;
+    }
+  }
+
+  if (g_cancellable_is_cancelled (src->cancellable)) {
+    GST_INFO_OBJECT (src, "interrupted");
+    src->ret = GST_FLOW_FLUSHING;
+    goto done;
+  }
+  src->ret = gst_soup_http_src_send_message (src);
+
+done:
+  return src->ret;
+}
+
+/*
+ * Check if the bytes_read is above a certain threshold of the blocksize, if
+ * that happens a few times in a row, increase the blocksize; Do the same in
+ * the opposite direction to reduce the blocksize.
+ */
+static void
+gst_soup_http_src_check_update_blocksize (GstSoupHTTPSrc * src,
+    gint64 bytes_read)
+{
+  guint blocksize = gst_base_src_get_blocksize (GST_BASE_SRC_CAST (src));
+
+  GST_LOG_OBJECT (src, "Checking to update blocksize. Read:%" G_GINT64_FORMAT
+      " blocksize:%u", bytes_read, blocksize);
+
+  if (bytes_read >= blocksize * GROW_BLOCKSIZE_LIMIT) {
+    src->reduce_blocksize_count = 0;
+    src->increase_blocksize_count++;
+
+    if (src->increase_blocksize_count >= GROW_BLOCKSIZE_COUNT) {
+      blocksize *= GROW_BLOCKSIZE_FACTOR;
+      GST_DEBUG_OBJECT (src, "Increased blocksize to %u", blocksize);
+      gst_base_src_set_blocksize (GST_BASE_SRC_CAST (src), blocksize);
+      src->increase_blocksize_count = 0;
+    }
+  } else if (bytes_read < blocksize * REDUCE_BLOCKSIZE_LIMIT) {
+    src->reduce_blocksize_count++;
+    src->increase_blocksize_count = 0;
+
+    if (src->reduce_blocksize_count >= REDUCE_BLOCKSIZE_COUNT) {
+      blocksize *= REDUCE_BLOCKSIZE_FACTOR;
+      blocksize = MAX (blocksize, src->minimum_blocksize);
+      GST_DEBUG_OBJECT (src, "Decreased blocksize to %u", blocksize);
+      gst_base_src_set_blocksize (GST_BASE_SRC_CAST (src), blocksize);
+      src->reduce_blocksize_count = 0;
+    }
+  } else {
+    src->reduce_blocksize_count = src->increase_blocksize_count = 0;
+  }
+}
+
+static void
+gst_soup_http_src_update_position (GstSoupHTTPSrc * src, gint64 bytes_read)
+{
+  GstBaseSrc *basesrc = GST_BASE_SRC_CAST (src);
+  guint64 new_position;
+
+  new_position = src->read_position + bytes_read;
+  if (G_LIKELY (src->request_position == src->read_position))
+    src->request_position = new_position;
+  src->read_position = new_position;
+
+  if (src->have_size) {
+    if (new_position > src->content_size) {
+      GST_DEBUG_OBJECT (src, "Got position previous estimated content size "
+          "(%" G_GINT64_FORMAT " > %" G_GINT64_FORMAT ")", new_position,
+          src->content_size);
+      src->content_size = new_position;
+      basesrc->segment.duration = src->content_size;
+      gst_element_post_message (GST_ELEMENT (src),
+          gst_message_new_duration_changed (GST_OBJECT (src)));
+    } else if (new_position == src->content_size) {
+      GST_DEBUG_OBJECT (src, "We're EOS now");
+    }
+  }
+}
+
+static GstFlowReturn
+gst_soup_http_src_read_buffer (GstSoupHTTPSrc * src, GstBuffer ** outbuf)
+{
+  gssize read_bytes;
+  GstMapInfo mapinfo;
+  GstBaseSrc *bsrc;
+  GstFlowReturn ret;
+
+  bsrc = GST_BASE_SRC_CAST (src);
+
+  *outbuf = gst_soup_http_src_alloc_buffer (src);
+  if (!*outbuf) {
+    GST_WARNING_OBJECT (src, "Failed to allocate buffer");
+    return GST_FLOW_ERROR;
+  }
+
+  if (!gst_buffer_map (*outbuf, &mapinfo, GST_MAP_WRITE)) {
+    GST_WARNING_OBJECT (src, "Failed to map buffer");
+    return GST_FLOW_ERROR;
+  }
+
+  read_bytes =
+      g_input_stream_read (src->input_stream, mapinfo.data, mapinfo.size,
+      src->cancellable, NULL);
+  GST_DEBUG_OBJECT (src, "Read %" G_GSSIZE_FORMAT " bytes from http input",
+      read_bytes);
+
+  g_mutex_lock (&src->mutex);
+  if (g_cancellable_is_cancelled (src->cancellable)) {
+    gst_buffer_unmap (*outbuf, &mapinfo);
+    gst_buffer_unref (*outbuf);
+    g_mutex_unlock (&src->mutex);
+    return GST_FLOW_FLUSHING;
+  }
+
+  gst_buffer_unmap (*outbuf, &mapinfo);
+  if (read_bytes > 0) {
+    gst_buffer_set_size (*outbuf, read_bytes);
+    GST_BUFFER_OFFSET (*outbuf) = bsrc->segment.position;
+    ret = GST_FLOW_OK;
+    gst_soup_http_src_update_position (src, read_bytes);
+
+    /* Got some data, reset retry counter */
+    src->retry_count = 0;
+
+    gst_soup_http_src_check_update_blocksize (src, read_bytes);
+
+    /* If we're at the end of a range request, read again to let libsoup
+     * finalize the request. This allows to reuse the connection again later,
+     * otherwise we would have to cancel the message and close the connection
+     */
+    if (bsrc->segment.stop != -1
+        && bsrc->segment.position + read_bytes >= bsrc->segment.stop) {
+      guint8 tmp[128];
+
+      g_object_unref (src->msg);
+      src->msg = NULL;
+      src->have_body = TRUE;
+
+      /* This should return immediately as we're at the end of the range */
+      read_bytes =
+          g_input_stream_read (src->input_stream, tmp, sizeof (tmp),
+          src->cancellable, NULL);
+      if (read_bytes > 0)
+        GST_ERROR_OBJECT (src,
+            "Read %" G_GSIZE_FORMAT " bytes after end of range", read_bytes);
+    }
+  } else {
+    gst_buffer_unref (*outbuf);
+    if (read_bytes < 0 ||
+        (src->have_size && src->read_position < src->content_size)) {
+      /* Maybe the server disconnected, retry */
+      ret = GST_FLOW_CUSTOM_ERROR;
+    } else {
+      g_object_unref (src->msg);
+      src->msg = NULL;
+      ret = GST_FLOW_EOS;
+      src->have_body = TRUE;
+    }
+  }
+  g_mutex_unlock (&src->mutex);
+
+  return ret;
 }
 
 static GstFlowReturn
 gst_soup_http_src_create (GstPushSrc * psrc, GstBuffer ** outbuf)
 {
   GstSoupHTTPSrc *src;
+  GstFlowReturn ret = GST_FLOW_OK;
+  GstEvent *http_headers_event = NULL;
 
   src = GST_SOUP_HTTP_SRC (psrc);
 
-  if (src->msg && (src->request_position != src->read_position)) {
-    if (src->content_size != 0 && src->request_position >= src->content_size) {
-      GST_WARNING_OBJECT (src, "Seeking behind the end of file -- EOS");
-      return GST_FLOW_EOS;
-    } else if (src->session_io_status ==
-        GST_SOUP_HTTP_SRC_SESSION_IO_STATUS_IDLE) {
-      gst_soup_http_src_add_range_header (src, src->request_position);
-    } else {
-      GST_DEBUG_OBJECT (src, "Seek from position %" G_GUINT64_FORMAT
-          " to %" G_GUINT64_FORMAT ": requeueing connection request",
-          src->read_position, src->request_position);
-      gst_soup_http_src_cancel_message (src);
+retry:
+  g_mutex_lock (&src->mutex);
+
+  /* Check for pending position change */
+  if (src->request_position != src->read_position) {
+    if (src->input_stream) {
+      g_input_stream_close (src->input_stream, src->cancellable, NULL);
+      g_object_unref (src->input_stream);
+      src->input_stream = NULL;
     }
   }
-  if (!src->msg)
-    if (!gst_soup_http_src_build_message (src))
-      return GST_FLOW_ERROR;
 
-  src->ret = GST_FLOW_CUSTOM_ERROR;
-  src->outbuf = outbuf;
-  do {
-    if (src->interrupted) {
-      GST_DEBUG_OBJECT (src, "interrupted");
-      break;
-    }
-    if (src->retry) {
-      GST_DEBUG_OBJECT (src, "Reconnecting");
-      if (!gst_soup_http_src_build_message (src))
-        return GST_FLOW_ERROR;
-      src->retry = FALSE;
-      continue;
-    }
-    if (!src->msg) {
-      GST_DEBUG_OBJECT (src, "EOS reached");
-      break;
-    }
+  if (g_cancellable_is_cancelled (src->cancellable)) {
+    ret = GST_FLOW_FLUSHING;
+    g_mutex_unlock (&src->mutex);
+    goto done;
+  }
 
-    switch (src->session_io_status) {
-      case GST_SOUP_HTTP_SRC_SESSION_IO_STATUS_IDLE:
-        GST_DEBUG_OBJECT (src, "Queueing connection request");
-        gst_soup_http_src_queue_message (src);
-        break;
-      case GST_SOUP_HTTP_SRC_SESSION_IO_STATUS_QUEUED:
-        break;
-      case GST_SOUP_HTTP_SRC_SESSION_IO_STATUS_RUNNING:
-        gst_soup_http_src_session_unpause_message (src);
-        break;
-      case GST_SOUP_HTTP_SRC_SESSION_IO_STATUS_CANCELLED:
-        /* Impossible. */
-        break;
+  /* If we have no open connection to the server, start one */
+  if (!src->input_stream) {
+    *outbuf = NULL;
+    ret =
+        gst_soup_http_src_do_request (src,
+        src->method ? src->method : SOUP_METHOD_GET);
+    http_headers_event = src->http_headers_event;
+    src->http_headers_event = NULL;
+  }
+  g_mutex_unlock (&src->mutex);
+
+  if (ret == GST_FLOW_OK || ret == GST_FLOW_CUSTOM_ERROR) {
+    if (http_headers_event) {
+      gst_pad_push_event (GST_BASE_SRC_PAD (src), http_headers_event);
+      http_headers_event = NULL;
     }
+  }
 
-    if (src->ret == GST_FLOW_CUSTOM_ERROR)
-      g_main_loop_run (src->loop);
-  } while (src->ret == GST_FLOW_CUSTOM_ERROR);
+  if (ret == GST_FLOW_OK)
+    ret = gst_soup_http_src_read_buffer (src, outbuf);
 
-  if (src->ret == GST_FLOW_CUSTOM_ERROR)
-    src->ret = GST_FLOW_EOS;
-  return src->ret;
+done:
+  GST_DEBUG_OBJECT (src, "Returning %d %s", ret, gst_flow_get_name (ret));
+  if (ret != GST_FLOW_OK) {
+    if (http_headers_event)
+      gst_event_unref (http_headers_event);
+
+    g_mutex_lock (&src->mutex);
+    if (src->input_stream) {
+      g_object_unref (src->input_stream);
+      src->input_stream = NULL;
+    }
+    g_mutex_unlock (&src->mutex);
+    if (ret == GST_FLOW_CUSTOM_ERROR) {
+      ret = GST_FLOW_OK;
+      goto retry;
+    }
+  }
+  return ret;
 }
 
 static gboolean
@@ -1209,48 +1734,7 @@ gst_soup_http_src_start (GstBaseSrc * bsrc)
 
   GST_DEBUG_OBJECT (src, "start(\"%s\")", src->location);
 
-  if (!src->location) {
-    GST_ELEMENT_ERROR (src, RESOURCE, OPEN_READ, (_("No URL set.")),
-        ("Missing location property"));
-    return FALSE;
-  }
-
-  src->context = g_main_context_new ();
-
-  src->loop = g_main_loop_new (src->context, TRUE);
-  if (!src->loop) {
-    GST_ELEMENT_ERROR (src, LIBRARY, INIT,
-        (NULL), ("Failed to start GMainLoop"));
-    g_main_context_unref (src->context);
-    return FALSE;
-  }
-
-  if (src->proxy == NULL) {
-    src->session =
-        soup_session_async_new_with_options (SOUP_SESSION_ASYNC_CONTEXT,
-        src->context, SOUP_SESSION_USER_AGENT, src->user_agent,
-        SOUP_SESSION_TIMEOUT, src->timeout,
-#ifdef HAVE_LIBSOUP_GNOME
-        SOUP_SESSION_ADD_FEATURE_BY_TYPE, SOUP_TYPE_PROXY_RESOLVER_GNOME,
-#endif
-        NULL);
-  } else {
-    src->session =
-        soup_session_async_new_with_options (SOUP_SESSION_ASYNC_CONTEXT,
-        src->context, SOUP_SESSION_PROXY_URI, src->proxy,
-        SOUP_SESSION_TIMEOUT, src->timeout,
-        SOUP_SESSION_USER_AGENT, src->user_agent, NULL);
-  }
-
-  if (!src->session) {
-    GST_ELEMENT_ERROR (src, LIBRARY, INIT,
-        (NULL), ("Failed to create async session"));
-    return FALSE;
-  }
-
-  g_signal_connect (src->session, "authenticate",
-      G_CALLBACK (gst_soup_http_src_authenticate_cb), src);
-  return TRUE;
+  return gst_soup_http_src_session_open (src);
 }
 
 static gboolean
@@ -1260,20 +1744,34 @@ gst_soup_http_src_stop (GstBaseSrc * bsrc)
 
   src = GST_SOUP_HTTP_SRC (bsrc);
   GST_DEBUG_OBJECT (src, "stop()");
-  gst_soup_http_src_session_close (src);
-  if (src->loop) {
-    g_main_loop_unref (src->loop);
-    g_main_context_unref (src->context);
-    src->loop = NULL;
-    src->context = NULL;
-  }
-  if (src->extra_headers) {
-    gst_structure_free (src->extra_headers);
-    src->extra_headers = NULL;
-  }
+  if (src->keep_alive && !src->msg)
+    gst_soup_http_src_cancel_message (src);
+  else
+    gst_soup_http_src_session_close (src);
 
   gst_soup_http_src_reset (src);
   return TRUE;
+}
+
+static GstStateChangeReturn
+gst_soup_http_src_change_state (GstElement * element, GstStateChange transition)
+{
+  GstStateChangeReturn ret;
+  GstSoupHTTPSrc *src;
+
+  src = GST_SOUP_HTTP_SRC (element);
+
+  switch (transition) {
+    case GST_STATE_CHANGE_READY_TO_NULL:
+      gst_soup_http_src_session_close (src);
+      break;
+    default:
+      break;
+  }
+
+  ret = GST_ELEMENT_CLASS (parent_class)->change_state (element, transition);
+
+  return ret;
 }
 
 /* Interrupt a blocking request. */
@@ -1285,9 +1783,8 @@ gst_soup_http_src_unlock (GstBaseSrc * bsrc)
   src = GST_SOUP_HTTP_SRC (bsrc);
   GST_DEBUG_OBJECT (src, "unlock()");
 
-  src->interrupted = TRUE;
-  if (src->loop)
-    g_main_loop_quit (src->loop);
+  src->ret = GST_FLOW_FLUSHING;
+  gst_soup_http_src_cancel_message (src);
   return TRUE;
 }
 
@@ -1300,7 +1797,8 @@ gst_soup_http_src_unlock_stop (GstBaseSrc * bsrc)
   src = GST_SOUP_HTTP_SRC (bsrc);
   GST_DEBUG_OBJECT (src, "unlock_stop()");
 
-  src->interrupted = FALSE;
+  src->ret = GST_FLOW_OK;
+  g_cancellable_reset (src->cancellable);
   return TRUE;
 }
 
@@ -1321,10 +1819,42 @@ gst_soup_http_src_get_size (GstBaseSrc * bsrc, guint64 * size)
   return FALSE;
 }
 
+static void
+gst_soup_http_src_check_seekable (GstSoupHTTPSrc * src)
+{
+  GstFlowReturn ret = GST_FLOW_OK;
+
+  /* Special case to check if the server allows range requests
+   * before really starting to get data in the buffer creation
+   * loops.
+   */
+  if (!src->got_headers && GST_STATE (src) >= GST_STATE_PAUSED) {
+    g_mutex_lock (&src->mutex);
+    while (!src->got_headers && !g_cancellable_is_cancelled (src->cancellable)
+        && ret == GST_FLOW_OK) {
+      if ((src->msg && src->msg->method != SOUP_METHOD_HEAD)) {
+        /* wait for the current request to finish */
+        g_cond_wait (&src->have_headers_cond, &src->mutex);
+      } else {
+        if (gst_soup_http_src_session_open (src)) {
+          ret = gst_soup_http_src_do_request (src, SOUP_METHOD_HEAD);
+        }
+      }
+    }
+    if (src->ret == GST_FLOW_EOS) {
+      /* A HEAD request shouldn't lead to EOS */
+      src->ret = GST_FLOW_OK;
+    }
+    g_mutex_unlock (&src->mutex);
+  }
+}
+
 static gboolean
 gst_soup_http_src_is_seekable (GstBaseSrc * bsrc)
 {
   GstSoupHTTPSrc *src = GST_SOUP_HTTP_SRC (bsrc);
+
+  gst_soup_http_src_check_seekable (src);
 
   return src->seekable;
 }
@@ -1334,15 +1864,21 @@ gst_soup_http_src_do_seek (GstBaseSrc * bsrc, GstSegment * segment)
 {
   GstSoupHTTPSrc *src = GST_SOUP_HTTP_SRC (bsrc);
 
-  GST_DEBUG_OBJECT (src, "do_seek(%" G_GUINT64_FORMAT ")", segment->start);
-
+  GST_DEBUG_OBJECT (src, "do_seek(%" G_GUINT64_FORMAT "-%" G_GUINT64_FORMAT
+      ")", segment->start, segment->stop);
   if (src->read_position == segment->start &&
-      src->request_position == src->read_position) {
-    GST_DEBUG_OBJECT (src, "Seek to current read position and no seek pending");
+      src->request_position == src->read_position &&
+      src->stop_position == segment->stop) {
+    GST_DEBUG_OBJECT (src,
+        "Seek to current read/end position and no seek pending");
     return TRUE;
   }
 
-  if (!src->seekable) {
+  gst_soup_http_src_check_seekable (src);
+
+  /* If we have no headers we don't know yet if it is seekable or not.
+   * Store the start position and error out later if it isn't */
+  if (src->got_headers && !src->seekable) {
     GST_WARNING_OBJECT (src, "Not seekable");
     return FALSE;
   }
@@ -1352,12 +1888,15 @@ gst_soup_http_src_do_seek (GstBaseSrc * bsrc, GstSegment * segment)
     return FALSE;
   }
 
-  if (src->content_size != 0 && segment->start >= src->content_size) {
-    GST_WARNING_OBJECT (src, "Seeking behind end of file, will go to EOS soon");
+  if (src->have_size && segment->start >= src->content_size) {
+    GST_WARNING_OBJECT (src,
+        "Potentially seeking behind end of file, might EOS immediately");
   }
 
   /* Wait for create() to handle the jump in offset. */
   src->request_position = segment->start;
+  src->stop_position = segment->stop;
+
   return TRUE;
 }
 
@@ -1366,10 +1905,17 @@ gst_soup_http_src_query (GstBaseSrc * bsrc, GstQuery * query)
 {
   GstSoupHTTPSrc *src = GST_SOUP_HTTP_SRC (bsrc);
   gboolean ret;
+  GstSchedulingFlags flags;
+  gint minsize, maxsize, align;
 
   switch (GST_QUERY_TYPE (query)) {
     case GST_QUERY_URI:
       gst_query_set_uri (query, src->location);
+      if (src->redirection_uri != NULL) {
+        gst_query_set_uri_redirection (query, src->redirection_uri);
+        gst_query_set_uri_redirection_permanent (query,
+            src->redirection_permanent);
+      }
       ret = TRUE;
       break;
     default:
@@ -1379,6 +1925,16 @@ gst_soup_http_src_query (GstBaseSrc * bsrc, GstQuery * query)
 
   if (!ret)
     ret = GST_BASE_SRC_CLASS (parent_class)->query (bsrc, query);
+
+  switch (GST_QUERY_TYPE (query)) {
+    case GST_QUERY_SCHEDULING:
+      gst_query_parse_scheduling (query, &flags, &minsize, &maxsize, &align);
+      flags |= GST_SCHEDULING_FLAG_BANDWIDTH_LIMITED;
+      gst_query_set_scheduling (query, flags, minsize, maxsize, align);
+      break;
+    default:
+      break;
+  }
 
   return ret;
 }
@@ -1406,6 +1962,11 @@ gst_soup_http_src_set_location (GstSoupHTTPSrc * src, const gchar * uri,
     }
   }
 
+  if (src->redirection_uri) {
+    g_free (src->redirection_uri);
+    src->redirection_uri = NULL;
+  }
+
   src->location = g_strdup (uri);
 
   return TRUE;
@@ -1418,6 +1979,10 @@ gst_soup_http_src_set_proxy (GstSoupHTTPSrc * src, const gchar * uri)
     soup_uri_free (src->proxy);
     src->proxy = NULL;
   }
+
+  if (uri == NULL || *uri == '\0')
+    return TRUE;
+
   if (g_str_has_prefix (uri, "http://")) {
     src->proxy = soup_uri_new (uri);
   } else {
@@ -1427,7 +1992,7 @@ gst_soup_http_src_set_proxy (GstSoupHTTPSrc * src, const gchar * uri)
     g_free (new_uri);
   }
 
-  return TRUE;
+  return (src->proxy != NULL);
 }
 
 static guint

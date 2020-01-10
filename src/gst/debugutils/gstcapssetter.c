@@ -20,34 +20,24 @@
 /**
  * SECTION:element-capssetter
  *
- * <refsect2>
- * <para>
- * Sets or merges caps on a stream's buffers.
- * That is, a buffer's caps are updated using (fields of)
- * <link linkend="GstCapsSetter--caps">caps</link>.  Note that this may
- * contain multiple structures (though not likely recommended), but each
- * of these must be fixed (or will otherwise be rejected).
- * </para>
- * <para>
- * If <link linkend="GstCapsSetter--join">join</link>
- * is TRUE, then the incoming caps' mime-type is compared to the mime-type(s)
- * of provided caps and only matching structure(s) are considered for updating.
- * </para>
- * <para>
- * If <link linkend="GstCapsSetter--replace">replace</link>
- * is TRUE, then any caps update is preceded by clearing existing fields,
- * making provided fields (as a whole) replace incoming ones.
- * Otherwise, no clearing is performed, in which case provided fields are
- * added/merged onto incoming caps
- * </para>
- * <para>
+ * Sets or merges caps on a stream's buffers. That is, a buffer's caps are
+ * updated using (fields of) #GstCapsSetter:caps. Note that this may contain
+ * multiple structures (though not likely recommended), but each of these must
+ * be fixed (or will otherwise be rejected).
+ * 
+ * If #GstCapsSetter:join is %TRUE, then the incoming caps' mime-type is
+ * compared to the mime-type(s) of provided caps and only matching structure(s)
+ * are considered for updating.
+ * 
+ * If #GstCapsSetter:replace is %TRUE, then any caps update is preceded by
+ * clearing existing fields, making provided fields (as a whole) replace
+ * incoming ones. Otherwise, no clearing is performed, in which case provided
+ * fields are added/merged onto incoming caps
+ * 
  * Although this element might mainly serve as debug helper,
  * it can also practically be used to correct a faulty pixel-aspect-ratio,
  * or to modify a yuv fourcc value to effectively swap chroma components or such
  * alike.
- * </para>
- * </refsect2>
- *
  */
 
 
@@ -146,10 +136,10 @@ gst_caps_setter_class_init (GstCapsSetterClass * g_class)
       "Set/merge caps on stream",
       "Mark Nauwelaerts <mnauw@users.sourceforge.net>");
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_caps_setter_sink_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_caps_setter_src_template));
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_caps_setter_sink_template);
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_caps_setter_src_template);
 
   trans_class->transform_size =
       GST_DEBUG_FUNCPTR (gst_caps_setter_transform_size);
@@ -195,7 +185,7 @@ gst_caps_setter_transform_caps (GstBaseTransform * trans,
   GstCaps *ret = NULL, *filter_caps = NULL;
   GstStructure *structure, *merge;
   const gchar *name;
-  gint i, j;
+  gint i, j, k;
 
   GST_DEBUG_OBJECT (trans,
       "receiving caps: %" GST_PTR_FORMAT ", with filter: %" GST_PTR_FORMAT,
@@ -212,33 +202,31 @@ gst_caps_setter_transform_caps (GstBaseTransform * trans,
 
   ret = gst_caps_copy (caps);
 
-  /* this function is always called with a simple caps */
-  if (!GST_CAPS_IS_SIMPLE (ret))
-    return ret;
-
-  structure = gst_caps_get_structure (ret, 0);
-  name = gst_structure_get_name (structure);
-
   GST_OBJECT_LOCK (filter);
   filter_caps = gst_caps_ref (filter->caps);
   GST_OBJECT_UNLOCK (filter);
 
-  for (i = 0; i < gst_caps_get_size (filter_caps); ++i) {
-    merge = gst_caps_get_structure (filter_caps, i);
-    if (gst_structure_has_name (merge, name) || !filter->join) {
+  for (k = 0; k < gst_caps_get_size (ret); k++) {
+    structure = gst_caps_get_structure (ret, k);
+    name = gst_structure_get_name (structure);
 
-      if (!filter->join)
-        gst_structure_set_name (structure, gst_structure_get_name (merge));
+    for (i = 0; i < gst_caps_get_size (filter_caps); ++i) {
+      merge = gst_caps_get_structure (filter_caps, i);
+      if (gst_structure_has_name (merge, name) || !filter->join) {
 
-      if (filter->replace)
-        gst_structure_remove_all_fields (structure);
+        if (!filter->join)
+          gst_structure_set_name (structure, gst_structure_get_name (merge));
 
-      for (j = 0; j < gst_structure_n_fields (merge); ++j) {
-        const gchar *fname;
+        if (filter->replace)
+          gst_structure_remove_all_fields (structure);
 
-        fname = gst_structure_nth_field_name (merge, j);
-        gst_structure_set_value (structure, fname,
-            gst_structure_get_value (merge, fname));
+        for (j = 0; j < gst_structure_n_fields (merge); ++j) {
+          const gchar *fname;
+
+          fname = gst_structure_nth_field_name (merge, j);
+          gst_structure_set_value (structure, fname,
+              gst_structure_get_value (merge, fname));
+        }
       }
     }
   }

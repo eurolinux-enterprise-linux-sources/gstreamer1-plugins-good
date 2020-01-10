@@ -15,8 +15,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  *
  * The development of this code was made possible due to the involvement of
  * Pioneers of the Inevitable, the creators of the Songbird Music player
@@ -30,6 +30,9 @@
 #include "gstosxaudioelement.h"
 #include "gstosxaudiosink.h"
 #include "gstosxaudiosrc.h"
+#ifndef HAVE_IOS
+#include "gstosxaudiodeviceprovider.h"
+#endif
 
 static gboolean
 plugin_init (GstPlugin * plugin)
@@ -42,6 +45,11 @@ plugin_init (GstPlugin * plugin)
           GST_TYPE_OSX_AUDIO_SRC)) {
     return FALSE;
   }
+#ifndef HAVE_IOS
+  if (!gst_device_provider_register (plugin, "osxaudiodeviceprovider",
+          GST_RANK_PRIMARY, GST_TYPE_OSX_AUDIO_DEVICE_PROVIDER))
+    return FALSE;
+#endif
 
   return TRUE;
 }

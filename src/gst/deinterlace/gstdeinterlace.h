@@ -15,8 +15,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 #ifndef __GST_DEINTERLACE_H__
@@ -25,7 +25,7 @@
 #include <gst/gst.h>
 #include <gst/video/video.h>
 #include <gst/video/gstvideopool.h>
-#include <gst/video/gstvideofilter.h>
+#include <gst/video/gstvideometa.h>
 
 #include "gstdeinterlacemethod.h"
 
@@ -63,7 +63,8 @@ typedef enum
 {
   GST_DEINTERLACE_ALL,         /* All (missing data is interp.) */
   GST_DEINTERLACE_TF,          /* Top Fields Only */
-  GST_DEINTERLACE_BF           /* Bottom Fields Only */
+  GST_DEINTERLACE_BF,          /* Bottom Fields Only */
+  GST_DEINTERLACE_FIELDS_AUTO  /* Automatically detect */
 } GstDeinterlaceFields;
 
 typedef enum
@@ -76,7 +77,8 @@ typedef enum
 typedef enum {
   GST_DEINTERLACE_MODE_AUTO,
   GST_DEINTERLACE_MODE_INTERLACED,
-  GST_DEINTERLACE_MODE_DISABLED
+  GST_DEINTERLACE_MODE_DISABLED,
+  GST_DEINTERLACE_MODE_AUTO_STRICT
 } GstDeinterlaceMode;
 
 typedef enum
@@ -125,6 +127,8 @@ struct _GstDeinterlace
 
   GstDeinterlaceFields fields;
 
+  GstDeinterlaceFields user_set_fields;
+
   /* current state (differs when flushing/inverse telecine using weave) */
   GstDeinterlaceMethods method_id;
   /* property value */
@@ -137,6 +141,7 @@ struct _GstDeinterlace
   GstAllocationParams params;
 
   gboolean passthrough;
+  gboolean discont;
 
   GstClockTime field_duration; /* Duration of one field */
 

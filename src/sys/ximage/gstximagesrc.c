@@ -14,8 +14,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
@@ -66,7 +66,6 @@ enum
 {
   PROP_0,
   PROP_DISPLAY_NAME,
-  PROP_SCREEN_NUM,
   PROP_SHOW_POINTER,
   PROP_USE_DAMAGE,
   PROP_STARTX,
@@ -85,10 +84,12 @@ static GstCaps *gst_ximage_src_fixate (GstBaseSrc * bsrc, GstCaps * caps);
 static void gst_ximage_src_clear_bufpool (GstXImageSrc * ximagesrc);
 
 /* Called when a buffer is returned from the pipeline */
-static void
+static gboolean
 gst_ximage_src_return_buf (GstXImageSrc * ximagesrc, GstBuffer * ximage)
 {
   GstMetaXImage *meta = GST_META_XIMAGE_GET (ximage);
+  /* True will make dispose free the buffer, while false will keep it */
+  gboolean ret = TRUE;
 
   /* If our geometry changed we can't reuse that image. */
   if ((meta->width != ximagesrc->width) || (meta->height != ximagesrc->height)) {
@@ -107,7 +108,10 @@ gst_ximage_src_return_buf (GstXImageSrc * ximagesrc, GstBuffer * ximage)
     GST_BUFFER_FLAGS (GST_BUFFER (ximage)) = 0; /* clear out any flags from the previous use */
     ximagesrc->buffer_pool = g_slist_prepend (ximagesrc->buffer_pool, ximage);
     g_mutex_unlock (&ximagesrc->pool_lock);
+    ret = FALSE;
   }
+
+  return ret;
 }
 
 static Window
@@ -164,6 +168,9 @@ gst_ximage_src_open_display (GstXImageSrc * s, const gchar * name)
     int status;
     XWindowAttributes attrs;
     Window window;
+    int x, y;
+    Window child;
+    Bool coord_translated;
 
     if (s->xid != 0) {
       status = XGetWindowAttributes (s->xcontext->disp, s->xid, &attrs);
@@ -200,8 +207,19 @@ gst_ximage_src_open_display (GstXImageSrc * s, const gchar * name)
     g_assert (s->xwindow != 0);
     s->width = attrs.width;
     s->height = attrs.height;
-    GST_INFO_OBJECT (s, "Using default window size of %dx%d",
-        s->width, s->height);
+
+    coord_translated = XTranslateCoordinates (s->xcontext->disp, s->xwindow,
+        s->xcontext->root, 0, 0, &x, &y, &child);
+    if (coord_translated) {
+      s->x = x;
+      s->y = y;
+    } else {
+      s->x = 0;
+      s->y = 0;
+    }
+
+    GST_INFO_OBJECT (s, "Using default window size of %dx%d at location %d,%d",
+        s->width, s->height, s->x, s->y);
   }
 use_root_window:
 
@@ -355,6 +373,25 @@ gst_ximage_src_recalc (GstXImageSrc * src)
 }
 
 #ifdef HAVE_XFIXES
+static gboolean
+gst_ximage_is_pointer_in_region (GstXImageSrc * src)
+{
+  Window window_returned;
+  int root_x, root_y;
+  int win_x, win_y;
+  unsigned int mask_return;
+  Bool on_window;
+
+  on_window = XQueryPointer (src->xcontext->disp, src->xwindow,
+      &window_returned, &window_returned, &root_x, &root_y, &win_x, &win_y,
+      &mask_return);
+
+  return (on_window && (win_x >= src->startx) && (win_y >= src->starty) &&
+      (win_x < src->endx) && (win_y < src->endy));
+}
+#endif
+
+#ifdef HAVE_XFIXES
 static void
 composite_pixel (GstXContext * xcontext, guchar * dest, guchar * src)
 {
@@ -460,13 +497,15 @@ gst_ximage_src_ximage_get (GstXImageSrc * ximagesrc)
 
     meta = GST_META_XIMAGE_GET (ximage);
 
-    if ((meta->width != ximagesrc->width) ||
-        (meta->height != ximagesrc->height)) {
-      gst_ximage_buffer_free (ximage);
-    }
-
     ximagesrc->buffer_pool = g_slist_delete_link (ximagesrc->buffer_pool,
         ximagesrc->buffer_pool);
+
+    if ((meta->width == ximagesrc->width) ||
+        (meta->height == ximagesrc->height))
+      break;
+
+    gst_ximage_buffer_free (ximage);
+    ximage = NULL;
   }
   g_mutex_unlock (&ximagesrc->pool_lock);
 
@@ -497,6 +536,7 @@ gst_ximage_src_ximage_get (GstXImageSrc * ximagesrc)
   if (ximagesrc->have_xdamage && ximagesrc->use_damage &&
       ximagesrc->last_ximage != NULL) {
     XEvent ev;
+    gboolean have_damage = FALSE;
 
     /* have_frame is TRUE when either the entire screen has been
      * grabbed or when the last image has been copied */
@@ -505,83 +545,91 @@ gst_ximage_src_ximage_get (GstXImageSrc * ximagesrc)
     GST_DEBUG_OBJECT (ximagesrc, "Retrieving screen using XDamage");
 
     do {
+      XDamageNotifyEvent *damage_ev = (XDamageNotifyEvent *) (&ev);
+
       XNextEvent (ximagesrc->xcontext->disp, &ev);
 
-      if (ev.type == ximagesrc->damage_event_base + XDamageNotify) {
-        XserverRegion parts;
-        XRectangle *rects;
-        int nrects;
+      if (ev.type == ximagesrc->damage_event_base + XDamageNotify &&
+          damage_ev->level == XDamageReportNonEmpty) {
 
-        parts = XFixesCreateRegion (ximagesrc->xcontext->disp, 0, 0);
         XDamageSubtract (ximagesrc->xcontext->disp, ximagesrc->damage, None,
-            parts);
-        /* Now copy out all of the damaged rectangles. */
-        rects = XFixesFetchRegion (ximagesrc->xcontext->disp, parts, &nrects);
-        if (rects != NULL) {
-          int i;
-
-          if (!have_frame) {
-            GST_LOG_OBJECT (ximagesrc,
-                "Copying from last frame ximage->size: %" G_GSIZE_FORMAT,
-                gst_buffer_get_size (ximage));
-            copy_buffer (ximage, ximagesrc->last_ximage);
-            have_frame = TRUE;
-          }
-          for (i = 0; i < nrects; i++) {
-            GST_LOG_OBJECT (ximagesrc,
-                "Damaged sub-region @ %d,%d size %dx%d reported",
-                rects[i].x, rects[i].y, rects[i].width, rects[i].height);
-
-            /* if we only want a small area, clip this damage region to
-             * area we want */
-            if (ximagesrc->endx > ximagesrc->startx &&
-                ximagesrc->endy > ximagesrc->starty) {
-              /* see if damage area intersects */
-              if (rects[i].x + rects[i].width - 1 < ximagesrc->startx ||
-                  rects[i].x > ximagesrc->endx) {
-                /* trivial reject */
-              } else if (rects[i].y + rects[i].height - 1 < ximagesrc->starty ||
-                  rects[i].y > ximagesrc->endy) {
-                /* trivial reject */
-              } else {
-                /* find intersect region */
-                int startx, starty, width, height;
-
-                startx = (rects[i].x < ximagesrc->startx) ? ximagesrc->startx :
-                    rects[i].x;
-                starty = (rects[i].y < ximagesrc->starty) ? ximagesrc->starty :
-                    rects[i].y;
-                width = (rects[i].x + rects[i].width - 1 < ximagesrc->endx) ?
-                    rects[i].x + rects[i].width - startx :
-                    ximagesrc->endx - startx + 1;
-                height = (rects[i].y + rects[i].height - 1 < ximagesrc->endy) ?
-                    rects[i].y + rects[i].height - starty : ximagesrc->endy -
-                    starty + 1;
-
-                GST_LOG_OBJECT (ximagesrc,
-                    "Retrieving damaged sub-region @ %d,%d size %dx%d as intersect region",
-                    startx, starty, width, height);
-                XGetSubImage (ximagesrc->xcontext->disp, ximagesrc->xwindow,
-                    startx, starty, width, height, AllPlanes, ZPixmap,
-                    meta->ximage, startx - ximagesrc->startx,
-                    starty - ximagesrc->starty);
-              }
-            } else {
-
-              GST_LOG_OBJECT (ximagesrc,
-                  "Retrieving damaged sub-region @ %d,%d size %dx%d",
-                  rects[i].x, rects[i].y, rects[i].width, rects[i].height);
-
-              XGetSubImage (ximagesrc->xcontext->disp, ximagesrc->xwindow,
-                  rects[i].x, rects[i].y,
-                  rects[i].width, rects[i].height,
-                  AllPlanes, ZPixmap, meta->ximage, rects[i].x, rects[i].y);
-            }
-          }
-          free (rects);
-        }
+            ximagesrc->damage_region);
+        have_damage = TRUE;
       }
     } while (XPending (ximagesrc->xcontext->disp));
+
+    if (have_damage) {
+      XRectangle *rects;
+      int nrects;
+
+      /* Now copy out all of the damaged rectangles. */
+      rects =
+          XFixesFetchRegion (ximagesrc->xcontext->disp,
+          ximagesrc->damage_region, &nrects);
+      if (rects != NULL) {
+        int i;
+
+        if (!have_frame) {
+          GST_LOG_OBJECT (ximagesrc,
+              "Copying from last frame ximage->size: %" G_GSIZE_FORMAT,
+              gst_buffer_get_size (ximage));
+          copy_buffer (ximage, ximagesrc->last_ximage);
+          have_frame = TRUE;
+        }
+        for (i = 0; i < nrects; i++) {
+          GST_LOG_OBJECT (ximagesrc,
+              "Damaged sub-region @ %d,%d size %dx%d reported",
+              rects[i].x, rects[i].y, rects[i].width, rects[i].height);
+
+          /* if we only want a small area, clip this damage region to
+           * area we want */
+          if (ximagesrc->endx > ximagesrc->startx &&
+              ximagesrc->endy > ximagesrc->starty) {
+            /* see if damage area intersects */
+            if (rects[i].x + rects[i].width - 1 < ximagesrc->startx ||
+                rects[i].x > ximagesrc->endx) {
+              /* trivial reject */
+            } else if (rects[i].y + rects[i].height - 1 < ximagesrc->starty ||
+                rects[i].y > ximagesrc->endy) {
+              /* trivial reject */
+            } else {
+              /* find intersect region */
+              int startx, starty, width, height;
+
+              startx = (rects[i].x < ximagesrc->startx) ? ximagesrc->startx :
+                  rects[i].x;
+              starty = (rects[i].y < ximagesrc->starty) ? ximagesrc->starty :
+                  rects[i].y;
+              width = (rects[i].x + rects[i].width - 1 < ximagesrc->endx) ?
+                  rects[i].x + rects[i].width - startx :
+                  ximagesrc->endx - startx + 1;
+              height = (rects[i].y + rects[i].height - 1 < ximagesrc->endy) ?
+                  rects[i].y + rects[i].height - starty : ximagesrc->endy -
+                  starty + 1;
+
+              GST_LOG_OBJECT (ximagesrc,
+                  "Retrieving damaged sub-region @ %d,%d size %dx%d as intersect region",
+                  startx, starty, width, height);
+              XGetSubImage (ximagesrc->xcontext->disp, ximagesrc->xwindow,
+                  startx, starty, width, height, AllPlanes, ZPixmap,
+                  meta->ximage, startx - ximagesrc->startx,
+                  starty - ximagesrc->starty);
+            }
+          } else {
+
+            GST_LOG_OBJECT (ximagesrc,
+                "Retrieving damaged sub-region @ %d,%d size %dx%d",
+                rects[i].x, rects[i].y, rects[i].width, rects[i].height);
+
+            XGetSubImage (ximagesrc->xcontext->disp, ximagesrc->xwindow,
+                rects[i].x, rects[i].y,
+                rects[i].width, rects[i].height,
+                AllPlanes, ZPixmap, meta->ximage, rects[i].x, rects[i].y);
+          }
+        }
+        XFree (rects);
+      }
+    }
     if (!have_frame) {
       GST_LOG_OBJECT (ximagesrc,
           "Copying from last frame ximage->size: %" G_GSIZE_FORMAT,
@@ -594,8 +642,10 @@ gst_ximage_src_ximage_get (GstXImageSrc * ximagesrc)
     if (ximagesrc->cursor_image) {
       gint x, y, width, height;
 
-      x = ximagesrc->cursor_image->x - ximagesrc->cursor_image->xhot;
-      y = ximagesrc->cursor_image->y - ximagesrc->cursor_image->yhot;
+      x = ximagesrc->cursor_image->x - ximagesrc->cursor_image->xhot -
+          ximagesrc->x;
+      y = ximagesrc->cursor_image->y - ximagesrc->cursor_image->yhot -
+          ximagesrc->y;
       width = ximagesrc->cursor_image->width;
       height = ximagesrc->cursor_image->height;
 
@@ -677,7 +727,8 @@ gst_ximage_src_ximage_get (GstXImageSrc * ximagesrc)
 #endif
 
 #ifdef HAVE_XFIXES
-  if (ximagesrc->show_pointer && ximagesrc->have_xfixes) {
+  if (ximagesrc->show_pointer && ximagesrc->have_xfixes
+      && gst_ximage_is_pointer_in_region (ximagesrc)) {
 
     GST_DEBUG_OBJECT (ximagesrc, "Using XFixes to draw cursor");
     /* get cursor */
@@ -689,37 +740,36 @@ gst_ximage_src_ximage_get (GstXImageSrc * ximagesrc)
       int startx, starty, iwidth, iheight;
       gboolean cursor_in_image = TRUE;
 
-      cx = ximagesrc->cursor_image->x - ximagesrc->cursor_image->xhot;
-      if (cx < 0)
-        cx = 0;
-      cy = ximagesrc->cursor_image->y - ximagesrc->cursor_image->yhot;
-      if (cy < 0)
-        cy = 0;
+      cx = ximagesrc->cursor_image->x - ximagesrc->cursor_image->xhot -
+          ximagesrc->x;
+      cy = ximagesrc->cursor_image->y - ximagesrc->cursor_image->yhot -
+          ximagesrc->y;
       count = ximagesrc->cursor_image->width * ximagesrc->cursor_image->height;
 
       /* only get where cursor last was, if it is in our range */
       if (ximagesrc->endx > ximagesrc->startx &&
           ximagesrc->endy > ximagesrc->starty) {
         /* check bounds */
-        if (cx + ximagesrc->cursor_image->width < ximagesrc->startx ||
-            cx > ximagesrc->endx) {
+        if (cx + ximagesrc->cursor_image->width < (int) ximagesrc->startx ||
+            cx > (int) ximagesrc->endx) {
           /* trivial reject */
           cursor_in_image = FALSE;
-        } else if (cy + ximagesrc->cursor_image->height < ximagesrc->starty ||
-            cy > ximagesrc->endy) {
+        } else if (cy + ximagesrc->cursor_image->height <
+            (int) ximagesrc->starty || cy > (int) ximagesrc->endy) {
           /* trivial reject */
           cursor_in_image = FALSE;
         } else {
           /* find intersect region */
 
-          startx = (cx < ximagesrc->startx) ? ximagesrc->startx : cx;
-          starty = (cy < ximagesrc->starty) ? ximagesrc->starty : cy;
+          startx = (cx < (int) ximagesrc->startx) ? ximagesrc->startx : cx;
+          starty = (cy < (int) ximagesrc->starty) ? ximagesrc->starty : cy;
           iwidth = (cx + ximagesrc->cursor_image->width < ximagesrc->endx) ?
               cx + ximagesrc->cursor_image->width - startx :
               ximagesrc->endx - startx;
-          iheight = (cy + ximagesrc->cursor_image->height < ximagesrc->endy) ?
-              cy + ximagesrc->cursor_image->height - starty :
-              ximagesrc->endy - starty;
+          iheight =
+              (cy + ximagesrc->cursor_image->height <
+              ximagesrc->endy) ? cy + ximagesrc->cursor_image->height -
+              starty : ximagesrc->endy - starty;
         }
       } else {
         startx = cx;
@@ -735,11 +785,11 @@ gst_ximage_src_ximage_get (GstXImageSrc * ximagesrc)
               GUINT_TO_LE (ximagesrc->cursor_image->pixels[i]);
         /* copy those pixels across */
         for (j = starty;
-            j < starty + iheight && j < ximagesrc->starty + ximagesrc->height;
-            j++) {
+            j < starty + iheight
+            && j < ximagesrc->starty + ximagesrc->height; j++) {
           for (i = startx;
-              i < startx + iwidth && i < ximagesrc->startx + ximagesrc->width;
-              i++) {
+              i < startx + iwidth
+              && i < ximagesrc->startx + ximagesrc->width; i++) {
             guint8 *src, *dest;
 
             src =
@@ -748,8 +798,8 @@ gst_ximage_src_ximage_get (GstXImageSrc * ximagesrc)
             dest =
                 (guint8 *) & (meta->ximage->data[((j -
                             ximagesrc->starty) * ximagesrc->width + (i -
-                            ximagesrc->startx)) * (ximagesrc->xcontext->bpp /
-                        8)]);
+                            ximagesrc->startx)) *
+                    (ximagesrc->xcontext->bpp / 8)]);
 
             composite_pixel (ximagesrc->xcontext, (guint8 *) dest,
                 (guint8 *) src);
@@ -862,7 +912,8 @@ gst_ximage_src_create (GstPushSrc * bs, GstBuffer ** buf)
     return GST_FLOW_ERROR;
 
   *buf = image;
-  GST_BUFFER_TIMESTAMP (*buf) = next_capture_ts;
+  GST_BUFFER_DTS (*buf) = GST_CLOCK_TIME_NONE;
+  GST_BUFFER_PTS (*buf) = next_capture_ts;
   GST_BUFFER_DURATION (*buf) = dur;
 
   return GST_FLOW_OK;
@@ -879,9 +930,6 @@ gst_ximage_src_set_property (GObject * object, guint prop_id,
 
       g_free (src->display_name);
       src->display_name = g_strdup (g_value_get_string (value));
-      break;
-    case PROP_SCREEN_NUM:
-      src->screen_num = g_value_get_uint (value);
       break;
     case PROP_SHOW_POINTER:
       src->show_pointer = g_value_get_boolean (value);
@@ -925,8 +973,8 @@ gst_ximage_src_set_property (GObject * object, guint prop_id,
 }
 
 static void
-gst_ximage_src_get_property (GObject * object, guint prop_id, GValue * value,
-    GParamSpec * pspec)
+gst_ximage_src_get_property (GObject * object, guint prop_id,
+    GValue * value, GParamSpec * pspec)
 {
   GstXImageSrc *src = GST_XIMAGE_SRC (object);
 
@@ -937,9 +985,6 @@ gst_ximage_src_get_property (GObject * object, guint prop_id, GValue * value,
       else
         g_value_set_string (value, src->display_name);
 
-      break;
-    case PROP_SCREEN_NUM:
-      g_value_set_uint (value, src->screen_num);
       break;
     case PROP_SHOW_POINTER:
       g_value_set_boolean (value, src->show_pointer);
@@ -1020,6 +1065,7 @@ gst_ximage_src_get_caps (GstBaseSrc * bs, GstCaps * filter)
   GstXContext *xcontext;
   gint width, height;
   GstVideoFormat format;
+  guint32 alpha_mask;
 
   if ((!s->xcontext) && (!gst_ximage_src_open_display (s, s->display_name)))
     return gst_pad_get_pad_template_caps (GST_BASE_SRC (s)->srcpad);
@@ -1070,18 +1116,26 @@ gst_ximage_src_get_caps (GstBaseSrc * bs, GstCaps * filter)
   }
   GST_DEBUG ("width = %d, height=%d", width, height);
 
+  /* extrapolate alpha mask */
+  if (xcontext->depth == 32) {
+    alpha_mask = ~(xcontext->r_mask_output
+        | xcontext->g_mask_output | xcontext->b_mask_output);
+  } else {
+    alpha_mask = 0;
+  }
+
   format =
       gst_video_format_from_masks (xcontext->depth, xcontext->bpp,
-      xcontext->endianness, xcontext->r_mask_output, xcontext->g_mask_output,
-      xcontext->b_mask_output, 0);
+      xcontext->endianness, xcontext->r_mask_output,
+      xcontext->g_mask_output, xcontext->b_mask_output, alpha_mask);
 
   return gst_caps_new_simple ("video/x-raw",
       "format", G_TYPE_STRING, gst_video_format_to_string (format),
       "width", G_TYPE_INT, width,
       "height", G_TYPE_INT, height,
       "framerate", GST_TYPE_FRACTION_RANGE, 1, G_MAXINT, G_MAXINT, 1,
-      "pixel-aspect-ratio", GST_TYPE_FRACTION, xcontext->par_n, xcontext->par_d,
-      NULL);
+      "pixel-aspect-ratio", GST_TYPE_FRACTION, xcontext->par_n,
+      xcontext->par_d, NULL);
 }
 
 static gboolean
@@ -1142,105 +1196,86 @@ gst_ximage_src_class_init (GstXImageSrcClass * klass)
   gc->finalize = gst_ximage_src_finalize;
 
   g_object_class_install_property (gc, PROP_DISPLAY_NAME,
-      g_param_spec_string ("display-name", "Display", "X Display Name", NULL,
-          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
-  g_object_class_install_property (gc, PROP_SCREEN_NUM,
-      g_param_spec_uint ("screen-num", "Screen number", "X Screen Number",
-          0, G_MAXINT, 0, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+      g_param_spec_string ("display-name", "Display", "X Display Name",
+          NULL, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gc, PROP_SHOW_POINTER,
       g_param_spec_boolean ("show-pointer", "Show Mouse Pointer",
           "Show mouse pointer (if XFixes extension enabled)", TRUE,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
   /**
-   * GstXImageSrc:use-damage
+   * GstXImageSrc:use-damage:
    *
    * Use XDamage (if the XDamage extension is enabled)
-   *
-   * Since: 0.10.4
-   **/
+   */
   g_object_class_install_property (gc, PROP_USE_DAMAGE,
       g_param_spec_boolean ("use-damage", "Use XDamage",
           "Use XDamage (if XDamage extension enabled)", TRUE,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
   /**
-   * GstXImageSrc:startx
+   * GstXImageSrc:startx:
    *
    * X coordinate of top left corner of area to be recorded
    * (0 for top left of screen)
-   *
-   * Since: 0.10.4
-   **/
+   */
   g_object_class_install_property (gc, PROP_STARTX,
       g_param_spec_uint ("startx", "Start X co-ordinate",
           "X coordinate of top left corner of area to be recorded (0 for top left of screen)",
           0, G_MAXINT, 0, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
   /**
-   * GstXImageSrc:starty
+   * GstXImageSrc:starty:
    *
    * Y coordinate of top left corner of area to be recorded
    * (0 for top left of screen)
-   *
-   * Since: 0.10.4
-   **/
+   */
   g_object_class_install_property (gc, PROP_STARTY,
       g_param_spec_uint ("starty", "Start Y co-ordinate",
           "Y coordinate of top left corner of area to be recorded (0 for top left of screen)",
           0, G_MAXINT, 0, G_PARAM_READWRITE));
   /**
-   * GstXImageSrc:endx
+   * GstXImageSrc:endx:
    *
    * X coordinate of bottom right corner of area to be recorded
    * (0 for bottom right of screen)
-   *
-   * Since: 0.10.4
-   **/
+   */
   g_object_class_install_property (gc, PROP_ENDX,
       g_param_spec_uint ("endx", "End X",
           "X coordinate of bottom right corner of area to be recorded (0 for bottom right of screen)",
           0, G_MAXINT, 0, G_PARAM_READWRITE));
   /**
-   * GstXImageSrc:endy
+   * GstXImageSrc:endy:
    *
    * Y coordinate of bottom right corner of area to be recorded
    * (0 for bottom right of screen)
-   *
-   * Since: 0.10.4
-   **/
+   */
   g_object_class_install_property (gc, PROP_ENDY,
       g_param_spec_uint ("endy", "End Y",
           "Y coordinate of bottom right corner of area to be recorded (0 for bottom right of screen)",
           0, G_MAXINT, 0, G_PARAM_READWRITE));
 
   /**
-   * GstXImageSrc:remote
+   * GstXImageSrc:remote:
    *
    * Whether the X display is remote. The element will try to use alternate calls
    * known to work better with remote displays.
-   *
-   * Since: 0.10.26
-   **/
+   */
   g_object_class_install_property (gc, PROP_REMOTE,
       g_param_spec_boolean ("remote", "Remote dispay",
           "Whether the display is remote", FALSE,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
   /**
-   * GstXImageSrc:xid
+   * GstXImageSrc:xid:
    *
    * The XID of the window to capture. 0 for the root window (default).
-   *
-   * Since: 0.10.31
-   **/
+   */
   g_object_class_install_property (gc, PROP_XID,
       g_param_spec_uint64 ("xid", "Window XID",
           "Window XID to capture from", 0, G_MAXUINT64, 0,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
   /**
-   * GstXImageSrc:xname
+   * GstXImageSrc:xname:
    *
    * The name of the window to capture, if any.
-   *
-   * Since: 0.10.31
-   **/
+   */
   g_object_class_install_property (gc, PROP_XNAME,
       g_param_spec_string ("xname", "Window name",
           "Window name to capture from", NULL,
@@ -1252,7 +1287,7 @@ gst_ximage_src_class_init (GstXImageSrcClass * klass)
       "Lutz Mueller <lutz@users.sourceforge.net>, "
       "Jan Schmidt <thaytan@mad.scientist.com>, "
       "Zaheer Merali <zaheerabbas at merali dot org>");
-  gst_element_class_add_pad_template (ec, gst_static_pad_template_get (&t));
+  gst_element_class_add_static_pad_template (ec, &t);
 
   bc->fixate = gst_ximage_src_fixate;
   bc->get_caps = gst_ximage_src_get_caps;

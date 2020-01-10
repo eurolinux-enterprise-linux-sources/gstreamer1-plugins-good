@@ -49,6 +49,8 @@ struct _GstSoupHTTPSrc {
   GstPushSrc element;
 
   gchar *location;             /* Full URI. */
+  gchar *redirection_uri;      /* Full URI after redirections. */
+  gboolean redirection_permanent; /* Permanent or temporary redirect? */
   gchar *user_agent;           /* User-Agent HTTP header. */
   gboolean automatic_redirect; /* Follow redirects. */
   SoupURI *proxy;              /* HTTP proxy URI. */
@@ -57,17 +59,14 @@ struct _GstSoupHTTPSrc {
   gchar *proxy_id;             /* Authentication user id for proxy URI. */
   gchar *proxy_pw;             /* Authentication user password for proxy URI. */
   gchar **cookies;             /* HTTP request cookies. */
-  GMainContext *context;       /* I/O context. */
-  GMainLoop *loop;             /* Event loop. */
   SoupSession *session;        /* Async context. */
-  GstSoupHTTPSrcSessionIOStatus session_io_status;
-                               /* Async I/O status. */
   SoupMessage *msg;            /* Request message. */
   GstFlowReturn ret;           /* Return code from callback. */
-  GstBuffer **outbuf;          /* Return buffer allocated by callback. */
-  gboolean interrupted;        /* Signal unlock(). */
-  gboolean retry;              /* Should attempt to reconnect. */
+  gint retry_count;            /* Number of retries since we received data */
+  gint max_retries;            /* Maximum number of retries */
+  gchar *method;               /* HTTP method */
 
+  gboolean got_headers;        /* Already received headers from the server */
   gboolean have_size;          /* Received and parsed Content-Length
                                   header. */
   guint64 content_size;        /* Value of Content-Length header. */
@@ -75,6 +74,25 @@ struct _GstSoupHTTPSrc {
   gboolean seekable;           /* FALSE if the server does not support
                                   Range. */
   guint64 request_position;    /* Seek to this position. */
+  guint64 stop_position;       /* Stop at this position. */
+  gboolean have_body;          /* Indicates if it has just been signaled the
+                                * end of the message body. This is used to
+                                * decide if an out of range request should be
+                                * handled as an error or EOS when the content
+                                * size is unknown */
+  gboolean keep_alive;         /* Use keep-alive sessions */
+  gboolean ssl_strict;
+  gchar *ssl_ca_file;
+  gboolean ssl_use_system_ca_file;
+  GTlsDatabase *tls_database;
+  GTlsInteraction *tls_interaction;
+
+  GCancellable *cancellable;
+  GInputStream *input_stream;
+
+  gint reduce_blocksize_count;
+  gint increase_blocksize_count;
+  guint minimum_blocksize;
 
   /* Shoutcast/icecast metadata extraction handling. */
   gboolean iradio_mode;
@@ -85,7 +103,16 @@ struct _GstSoupHTTPSrc {
 
   GstStructure *extra_headers;
 
+  SoupLoggerLogLevel log_level;/* Soup HTTP session logger level */
+
+  gboolean compress;
+
   guint timeout;
+
+  GMutex mutex;
+  GCond have_headers_cond;
+
+  GstEvent *http_headers_event;
 };
 
 struct _GstSoupHTTPSrcClass {

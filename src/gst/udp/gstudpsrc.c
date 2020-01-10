@@ -3,6 +3,8 @@
  * Copyright (C) <2005> Nokia Corporation <kai.vehmanen@nokia.com>
  * Copyright (C) <2012> Collabora Ltd.
  *   Author: Sebastian Dröge <sebastian.droege@collabora.co.uk>
+ * Copyright (C) 2014 Tim-Philipp Müller <tim@centricular.com>
+ * Copyright (C) 2014 Centricular Ltd
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -16,8 +18,8 @@
  *
  * You should have received a copy of the GNU Library General Public
  * License along with this library; if not, write to the
- * Free Software Foundation, Inc., 59 Temple Place - Suite 330,
- * Boston, MA 02111-1307, USA.
+ * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
+ * Boston, MA 02110-1301, USA.
  */
 
 /**
@@ -34,12 +36,12 @@
  * udpsrc can read from multicast groups by setting the #GstUDPSrc:multicast-group
  * property to the IP address of the multicast group.
  *
- * Alternatively one can provide a custom socket to udpsrc with the #GstUDPSrc:sockfd
+ * Alternatively one can provide a custom socket to udpsrc with the #GstUDPSrc:socket
  * property, udpsrc will then not allocate a socket itself but use the provided
  * one.
  *
  * The #GstUDPSrc:caps property is mainly used to give a type to the UDP packet
- * so that they can be autoplugged in GStreamer pipelines. This is very usefull
+ * so that they can be autoplugged in GStreamer pipelines. This is very useful
  * for RTP implementations where the contents of the UDP packets is transfered
  * out-of-bounds using SDP or other means.
  *
@@ -78,13 +80,12 @@
  * </itemizedlist>
  * The message is typically used to detect that no UDP arrives in the receiver
  * because it is blocked by a firewall.
- * </para>
- * <para>
+ *
  * A custom file descriptor can be configured with the
- * #GstUDPSrc:sockfd property. The socket will be closed when setting the
- * element to READY by default. This behaviour can be
- * overriden with the #GstUDPSrc:closefd property, in which case the application
- * is responsible for closing the file descriptor.
+ * #GstUDPSrc:socket property. The socket will be closed when setting
+ * the element to READY by default. This behaviour can be overriden
+ * with the #GstUDPSrc:close-socket property, in which case the
+ * application is responsible for closing the file descriptor.
  *
  * <refsect2>
  * <title>Examples</title>
@@ -101,20 +102,313 @@
  * gst-launch-1.0 -v udpsrc port=0 ! fakesink
  * ]| read udp packets from a free port.
  * </refsect2>
- *
- * Last reviewed on 2007-09-20 (0.10.7)
  */
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
 
+/* Needed to get struct in6_pktinfo.
+ * Also all these have to be before glib.h is included as
+ * otherwise struct in6_pktinfo is not defined completely
+ * due to broken glibc headers */
+#define _GNU_SOURCE
+/* Needed for OSX/iOS to define the IPv6 variants */
+#define __APPLE_USE_RFC_3542
+#include <sys/types.h>
+#ifdef HAVE_SYS_SOCKET_H
+#include <sys/socket.h>
+#endif
+
+#include <string.h>
 #include "gstudpsrc.h"
 
 #include <gst/net/gstnetaddressmeta.h>
 
-#ifdef HAVE_SYS_SOCKET_H
-#include <sys/socket.h>
+#include <gio/gnetworking.h>
+
+/* Required for other parts of in_pktinfo / in6_pktinfo but only
+ * on non-Windows and can be included after glib.h */
+#ifndef G_PLATFORM_WIN32
+#include <netinet/ip.h>
 #endif
+
+/* Control messages for getting the destination address */
+#ifdef IP_PKTINFO
+GType gst_ip_pktinfo_message_get_type (void);
+
+#define GST_TYPE_IP_PKTINFO_MESSAGE         (gst_ip_pktinfo_message_get_type ())
+#define GST_IP_PKTINFO_MESSAGE(o)           (G_TYPE_CHECK_INSTANCE_CAST ((o), GST_TYPE_IP_PKTINFO_MESSAGE, GstIPPktinfoMessage))
+#define GST_IP_PKTINFO_MESSAGE_CLASS(c)     (G_TYPE_CHECK_CLASS_CAST ((c), GST_TYPE_IP_PKTINFO_MESSAGE, GstIPPktinfoMessageClass))
+#define GST_IS_IP_PKTINFO_MESSAGE(o)        (G_TYPE_CHECK_INSTANCE_TYPE ((o), GST_TYPE_IP_PKTINFO_MESSAGE))
+#define GST_IS_IP_PKTINFO_MESSAGE_CLASS(c)  (G_TYPE_CHECK_CLASS_TYPE ((c), GST_TYPE_IP_PKTINFO_MESSAGE))
+#define GST_IP_PKTINFO_MESSAGE_GET_CLASS(o) (G_TYPE_INSTANCE_GET_CLASS ((o), GST_TYPE_IP_PKTINFO_MESSAGE, GstIPPktinfoMessageClass))
+
+typedef struct _GstIPPktinfoMessage GstIPPktinfoMessage;
+typedef struct _GstIPPktinfoMessageClass GstIPPktinfoMessageClass;
+
+struct _GstIPPktinfoMessageClass
+{
+  GSocketControlMessageClass parent_class;
+
+};
+
+struct _GstIPPktinfoMessage
+{
+  GSocketControlMessage parent;
+
+  guint ifindex;
+#ifndef G_PLATFORM_WIN32
+#ifndef __NetBSD__
+  struct in_addr spec_dst;
+#endif
+#endif
+  struct in_addr addr;
+};
+
+G_DEFINE_TYPE (GstIPPktinfoMessage, gst_ip_pktinfo_message,
+    G_TYPE_SOCKET_CONTROL_MESSAGE);
+
+static gsize
+gst_ip_pktinfo_message_get_size (GSocketControlMessage * message)
+{
+  return sizeof (struct in_pktinfo);
+}
+
+static int
+gst_ip_pktinfo_message_get_level (GSocketControlMessage * message)
+{
+  return IPPROTO_IP;
+}
+
+static int
+gst_ip_pktinfo_message_get_msg_type (GSocketControlMessage * message)
+{
+  return IP_PKTINFO;
+}
+
+static GSocketControlMessage *
+gst_ip_pktinfo_message_deserialize (gint level,
+    gint type, gsize size, gpointer data)
+{
+  struct in_pktinfo *pktinfo;
+  GstIPPktinfoMessage *message;
+
+  if (level != IPPROTO_IP || type != IP_PKTINFO)
+    return NULL;
+
+  if (size < sizeof (struct in_pktinfo))
+    return NULL;
+
+  pktinfo = data;
+
+  message = g_object_new (GST_TYPE_IP_PKTINFO_MESSAGE, NULL);
+  message->ifindex = pktinfo->ipi_ifindex;
+#ifndef G_PLATFORM_WIN32
+#ifndef __NetBSD__
+  message->spec_dst = pktinfo->ipi_spec_dst;
+#endif
+#endif
+  message->addr = pktinfo->ipi_addr;
+
+  return G_SOCKET_CONTROL_MESSAGE (message);
+}
+
+static void
+gst_ip_pktinfo_message_init (GstIPPktinfoMessage * message)
+{
+}
+
+static void
+gst_ip_pktinfo_message_class_init (GstIPPktinfoMessageClass * class)
+{
+  GSocketControlMessageClass *scm_class;
+
+  scm_class = G_SOCKET_CONTROL_MESSAGE_CLASS (class);
+  scm_class->get_size = gst_ip_pktinfo_message_get_size;
+  scm_class->get_level = gst_ip_pktinfo_message_get_level;
+  scm_class->get_type = gst_ip_pktinfo_message_get_msg_type;
+  scm_class->deserialize = gst_ip_pktinfo_message_deserialize;
+}
+#endif
+
+#ifdef IPV6_PKTINFO
+GType gst_ipv6_pktinfo_message_get_type (void);
+
+#define GST_TYPE_IPV6_PKTINFO_MESSAGE         (gst_ipv6_pktinfo_message_get_type ())
+#define GST_IPV6_PKTINFO_MESSAGE(o)           (G_TYPE_CHECK_INSTANCE_CAST ((o), GST_TYPE_IPV6_PKTINFO_MESSAGE, GstIPV6PktinfoMessage))
+#define GST_IPV6_PKTINFO_MESSAGE_CLASS(c)     (G_TYPE_CHECK_CLASS_CAST ((c), GST_TYPE_IPV6_PKTINFO_MESSAGE, GstIPV6PktinfoMessageClass))
+#define GST_IS_IPV6_PKTINFO_MESSAGE(o)        (G_TYPE_CHECK_INSTANCE_TYPE ((o), GST_TYPE_IPV6_PKTINFO_MESSAGE))
+#define GST_IS_IPV6_PKTINFO_MESSAGE_CLASS(c)  (G_TYPE_CHECK_CLASS_TYPE ((c), GST_TYPE_IPV6_PKTINFO_MESSAGE))
+#define GST_IPV6_PKTINFO_MESSAGE_GET_CLASS(o) (G_TYPE_INSTANCE_GET_CLASS ((o), GST_TYPE_IPV6_PKTINFO_MESSAGE, GstIPV6PktinfoMessageClass))
+
+typedef struct _GstIPV6PktinfoMessage GstIPV6PktinfoMessage;
+typedef struct _GstIPV6PktinfoMessageClass GstIPV6PktinfoMessageClass;
+
+struct _GstIPV6PktinfoMessageClass
+{
+  GSocketControlMessageClass parent_class;
+
+};
+
+struct _GstIPV6PktinfoMessage
+{
+  GSocketControlMessage parent;
+
+  guint ifindex;
+  struct in6_addr addr;
+};
+
+G_DEFINE_TYPE (GstIPV6PktinfoMessage, gst_ipv6_pktinfo_message,
+    G_TYPE_SOCKET_CONTROL_MESSAGE);
+
+static gsize
+gst_ipv6_pktinfo_message_get_size (GSocketControlMessage * message)
+{
+  return sizeof (struct in6_pktinfo);
+}
+
+static int
+gst_ipv6_pktinfo_message_get_level (GSocketControlMessage * message)
+{
+  return IPPROTO_IPV6;
+}
+
+static int
+gst_ipv6_pktinfo_message_get_msg_type (GSocketControlMessage * message)
+{
+  return IPV6_PKTINFO;
+}
+
+static GSocketControlMessage *
+gst_ipv6_pktinfo_message_deserialize (gint level,
+    gint type, gsize size, gpointer data)
+{
+  struct in6_pktinfo *pktinfo;
+  GstIPV6PktinfoMessage *message;
+
+  if (level != IPPROTO_IPV6 || type != IPV6_PKTINFO)
+    return NULL;
+
+  if (size < sizeof (struct in6_pktinfo))
+    return NULL;
+
+  pktinfo = data;
+
+  message = g_object_new (GST_TYPE_IPV6_PKTINFO_MESSAGE, NULL);
+  message->ifindex = pktinfo->ipi6_ifindex;
+  message->addr = pktinfo->ipi6_addr;
+
+  return G_SOCKET_CONTROL_MESSAGE (message);
+}
+
+static void
+gst_ipv6_pktinfo_message_init (GstIPV6PktinfoMessage * message)
+{
+}
+
+static void
+gst_ipv6_pktinfo_message_class_init (GstIPV6PktinfoMessageClass * class)
+{
+  GSocketControlMessageClass *scm_class;
+
+  scm_class = G_SOCKET_CONTROL_MESSAGE_CLASS (class);
+  scm_class->get_size = gst_ipv6_pktinfo_message_get_size;
+  scm_class->get_level = gst_ipv6_pktinfo_message_get_level;
+  scm_class->get_type = gst_ipv6_pktinfo_message_get_msg_type;
+  scm_class->deserialize = gst_ipv6_pktinfo_message_deserialize;
+}
+
+#endif
+
+#ifdef IP_RECVDSTADDR
+GType gst_ip_recvdstaddr_message_get_type (void);
+
+#define GST_TYPE_IP_RECVDSTADDR_MESSAGE         (gst_ip_recvdstaddr_message_get_type ())
+#define GST_IP_RECVDSTADDR_MESSAGE(o)           (G_TYPE_CHECK_INSTANCE_CAST ((o), GST_TYPE_IP_RECVDSTADDR_MESSAGE, GstIPRecvdstaddrMessage))
+#define GST_IP_RECVDSTADDR_MESSAGE_CLASS(c)     (G_TYPE_CHECK_CLASS_CAST ((c), GST_TYPE_IP_RECVDSTADDR_MESSAGE, GstIPRecvdstaddrMessageClass))
+#define GST_IS_IP_RECVDSTADDR_MESSAGE(o)        (G_TYPE_CHECK_INSTANCE_TYPE ((o), GST_TYPE_IP_RECVDSTADDR_MESSAGE))
+#define GST_IS_IP_RECVDSTADDR_MESSAGE_CLASS(c)  (G_TYPE_CHECK_CLASS_TYPE ((c), GST_TYPE_IP_RECVDSTADDR_MESSAGE))
+#define GST_IP_RECVDSTADDR_MESSAGE_GET_CLASS(o) (G_TYPE_INSTANCE_GET_CLASS ((o), GST_TYPE_IP_RECVDSTADDR_MESSAGE, GstIPRecvdstaddrMessageClass))
+
+typedef struct _GstIPRecvdstaddrMessage GstIPRecvdstaddrMessage;
+typedef struct _GstIPRecvdstaddrMessageClass GstIPRecvdstaddrMessageClass;
+
+struct _GstIPRecvdstaddrMessageClass
+{
+  GSocketControlMessageClass parent_class;
+
+};
+
+struct _GstIPRecvdstaddrMessage
+{
+  GSocketControlMessage parent;
+
+  guint ifindex;
+  struct in_addr addr;
+};
+
+G_DEFINE_TYPE (GstIPRecvdstaddrMessage, gst_ip_recvdstaddr_message,
+    G_TYPE_SOCKET_CONTROL_MESSAGE);
+
+static gsize
+gst_ip_recvdstaddr_message_get_size (GSocketControlMessage * message)
+{
+  return sizeof (struct in_addr);
+}
+
+static int
+gst_ip_recvdstaddr_message_get_level (GSocketControlMessage * message)
+{
+  return IPPROTO_IP;
+}
+
+static int
+gst_ip_recvdstaddr_message_get_msg_type (GSocketControlMessage * message)
+{
+  return IP_RECVDSTADDR;
+}
+
+static GSocketControlMessage *
+gst_ip_recvdstaddr_message_deserialize (gint level,
+    gint type, gsize size, gpointer data)
+{
+  struct in_addr *addr;
+  GstIPRecvdstaddrMessage *message;
+
+  if (level != IPPROTO_IP || type != IP_RECVDSTADDR)
+    return NULL;
+
+  if (size < sizeof (struct in_addr))
+    return NULL;
+
+  addr = data;
+
+  message = g_object_new (GST_TYPE_IP_RECVDSTADDR_MESSAGE, NULL);
+  message->addr = *addr;
+
+  return G_SOCKET_CONTROL_MESSAGE (message);
+}
+
+static void
+gst_ip_recvdstaddr_message_init (GstIPRecvdstaddrMessage * message)
+{
+}
+
+static void
+gst_ip_recvdstaddr_message_class_init (GstIPRecvdstaddrMessageClass * class)
+{
+  GSocketControlMessageClass *scm_class;
+
+  scm_class = G_SOCKET_CONTROL_MESSAGE_CLASS (class);
+  scm_class->get_size = gst_ip_recvdstaddr_message_get_size;
+  scm_class->get_level = gst_ip_recvdstaddr_message_get_level;
+  scm_class->get_type = gst_ip_recvdstaddr_message_get_msg_type;
+  scm_class->deserialize = gst_ip_recvdstaddr_message_deserialize;
+}
+#endif
+
+/* not 100% correct, but a good upper bound for memory allocation purposes */
+#define MAX_IPV4_UDP_PACKET_SIZE (65536 - 8)
 
 GST_DEBUG_CATEGORY_STATIC (udpsrc_debug);
 #define GST_CAT_DEFAULT (udpsrc_debug)
@@ -137,6 +431,8 @@ static GstStaticPadTemplate src_template = GST_STATIC_PAD_TEMPLATE ("src",
 #define UDP_DEFAULT_USED_SOCKET        NULL
 #define UDP_DEFAULT_AUTO_MULTICAST     TRUE
 #define UDP_DEFAULT_REUSE              TRUE
+#define UDP_DEFAULT_LOOP               TRUE
+#define UDP_DEFAULT_RETRIEVE_SENDER_ADDRESS TRUE
 
 enum
 {
@@ -155,23 +451,19 @@ enum
   PROP_USED_SOCKET,
   PROP_AUTO_MULTICAST,
   PROP_REUSE,
-
-  PROP_LAST
+  PROP_ADDRESS,
+  PROP_LOOP,
+  PROP_RETRIEVE_SENDER_ADDRESS
 };
 
 static void gst_udpsrc_uri_handler_init (gpointer g_iface, gpointer iface_data);
 
 static GstCaps *gst_udpsrc_getcaps (GstBaseSrc * src, GstCaps * filter);
-
 static GstFlowReturn gst_udpsrc_create (GstPushSrc * psrc, GstBuffer ** buf);
-
-static gboolean gst_udpsrc_start (GstBaseSrc * bsrc);
-
-static gboolean gst_udpsrc_stop (GstBaseSrc * bsrc);
-
+static gboolean gst_udpsrc_close (GstUDPSrc * src);
 static gboolean gst_udpsrc_unlock (GstBaseSrc * bsrc);
-
 static gboolean gst_udpsrc_unlock_stop (GstBaseSrc * bsrc);
+static gboolean gst_udpsrc_negotiate (GstBaseSrc * basesrc);
 
 static void gst_udpsrc_finalize (GObject * object);
 
@@ -179,6 +471,9 @@ static void gst_udpsrc_set_property (GObject * object, guint prop_id,
     const GValue * value, GParamSpec * pspec);
 static void gst_udpsrc_get_property (GObject * object, guint prop_id,
     GValue * value, GParamSpec * pspec);
+
+static GstStateChangeReturn gst_udpsrc_change_state (GstElement * element,
+    GstStateChange transition);
 
 #define gst_udpsrc_parent_class parent_class
 G_DEFINE_TYPE_WITH_CODE (GstUDPSrc, gst_udpsrc, GST_TYPE_PUSH_SRC,
@@ -199,6 +494,16 @@ gst_udpsrc_class_init (GstUDPSrcClass * klass)
 
   GST_DEBUG_CATEGORY_INIT (udpsrc_debug, "udpsrc", 0, "UDP src");
 
+#ifdef IP_PKTINFO
+  GST_TYPE_IP_PKTINFO_MESSAGE;
+#endif
+#ifdef IPV6_PKTINFO
+  GST_TYPE_IPV6_PKTINFO_MESSAGE;
+#endif
+#ifdef IP_RECVDSTADDR
+  GST_TYPE_IP_RECVDSTADDR_MESSAGE;
+#endif
+
   gobject_class->set_property = gst_udpsrc_set_property;
   gobject_class->get_property = gst_udpsrc_get_property;
   gobject_class->finalize = gst_udpsrc_finalize;
@@ -207,10 +512,14 @@ gst_udpsrc_class_init (GstUDPSrcClass * klass)
       g_param_spec_int ("port", "Port",
           "The port to receive the packets from, 0=allocate", 0, G_MAXUINT16,
           UDP_DEFAULT_PORT, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+  /* FIXME 2.0: Remove multicast-group property */
+#ifndef GST_REMOVE_DEPRECATED
   g_object_class_install_property (gobject_class, PROP_MULTICAST_GROUP,
       g_param_spec_string ("multicast-group", "Multicast Group",
-          "The Address of multicast group to join", UDP_DEFAULT_MULTICAST_GROUP,
-          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+          "The Address of multicast group to join. (DEPRECATED: "
+          "Use address property instead)", UDP_DEFAULT_MULTICAST_GROUP,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_DEPRECATED));
+#endif
   g_object_class_install_property (gobject_class, PROP_MULTICAST_IFACE,
       g_param_spec_string ("multicast-iface", "Multicast Interface",
           "The network interface on which to join the multicast group",
@@ -259,9 +568,41 @@ gst_udpsrc_class_init (GstUDPSrcClass * klass)
   g_object_class_install_property (gobject_class, PROP_REUSE,
       g_param_spec_boolean ("reuse", "Reuse", "Enable reuse of the port",
           UDP_DEFAULT_REUSE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+  g_object_class_install_property (gobject_class, PROP_ADDRESS,
+      g_param_spec_string ("address", "Address",
+          "Address to receive packets for. This is equivalent to the "
+          "multicast-group property for now", UDP_DEFAULT_MULTICAST_GROUP,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+  /**
+   * GstUDPSrc::loop:
+   *
+   * Can be used to disable multicast loopback.
+   *
+   * Since: 1.8
+   */
+  g_object_class_install_property (gobject_class, PROP_LOOP,
+      g_param_spec_boolean ("loop", "Multicast Loopback",
+          "Used for setting the multicast loop parameter. TRUE = enable,"
+          " FALSE = disable", UDP_DEFAULT_LOOP,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+  /**
+   * GstUDPSrc::retrieve-sender-address:
+   *
+   * Whether to retrieve the sender address and add it to the buffers as
+   * meta. Disabling this might result in minor performance improvements
+   * in certain scenarios.
+   *
+   * Since: 1.10
+   */
+  g_object_class_install_property (gobject_class, PROP_RETRIEVE_SENDER_ADDRESS,
+      g_param_spec_boolean ("retrieve-sender-address",
+          "Retrieve Sender Address",
+          "Whether to retrieve the sender address and add it to buffers as "
+          "meta. Disabling this might result in minor performance improvements "
+          "in certain scenarios", UDP_DEFAULT_RETRIEVE_SENDER_ADDRESS,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
-  gst_element_class_add_pad_template (gstelement_class,
-      gst_static_pad_template_get (&src_template));
+  gst_element_class_add_static_pad_template (gstelement_class, &src_template);
 
   gst_element_class_set_static_metadata (gstelement_class,
       "UDP packet receiver", "Source/Network",
@@ -269,11 +610,12 @@ gst_udpsrc_class_init (GstUDPSrcClass * klass)
       "Wim Taymans <wim@fluendo.com>, "
       "Thijs Vermeir <thijs.vermeir@barco.com>");
 
-  gstbasesrc_class->start = gst_udpsrc_start;
-  gstbasesrc_class->stop = gst_udpsrc_stop;
+  gstelement_class->change_state = gst_udpsrc_change_state;
+
   gstbasesrc_class->unlock = gst_udpsrc_unlock;
   gstbasesrc_class->unlock_stop = gst_udpsrc_unlock_stop;
   gstbasesrc_class->get_caps = gst_udpsrc_getcaps;
+  gstbasesrc_class->negotiate = gst_udpsrc_negotiate;
 
   gstpushsrc_class->create = gst_udpsrc_create;
 }
@@ -285,7 +627,7 @@ gst_udpsrc_init (GstUDPSrc * udpsrc)
       g_strdup_printf ("udp://%s:%u", UDP_DEFAULT_MULTICAST_GROUP,
       UDP_DEFAULT_PORT);
 
-  udpsrc->host = g_strdup (UDP_DEFAULT_MULTICAST_GROUP);
+  udpsrc->address = g_strdup (UDP_DEFAULT_MULTICAST_GROUP);
   udpsrc->port = UDP_DEFAULT_PORT;
   udpsrc->socket = UDP_DEFAULT_SOCKET;
   udpsrc->multi_iface = g_strdup (UDP_DEFAULT_MULTICAST_IFACE);
@@ -297,8 +639,8 @@ gst_udpsrc_init (GstUDPSrc * udpsrc)
   udpsrc->auto_multicast = UDP_DEFAULT_AUTO_MULTICAST;
   udpsrc->used_socket = UDP_DEFAULT_USED_SOCKET;
   udpsrc->reuse = UDP_DEFAULT_REUSE;
-
-  udpsrc->cancellable = g_cancellable_new ();
+  udpsrc->loop = UDP_DEFAULT_LOOP;
+  udpsrc->retrieve_sender_address = UDP_DEFAULT_RETRIEVE_SENDER_ADDRESS;
 
   /* configure basesrc to be a live source */
   gst_base_src_set_live (GST_BASE_SRC (udpsrc), TRUE);
@@ -326,8 +668,8 @@ gst_udpsrc_finalize (GObject * object)
   g_free (udpsrc->uri);
   udpsrc->uri = NULL;
 
-  g_free (udpsrc->host);
-  udpsrc->host = NULL;
+  g_free (udpsrc->address);
+  udpsrc->address = NULL;
 
   if (udpsrc->socket)
     g_object_unref (udpsrc->socket);
@@ -337,10 +679,6 @@ gst_udpsrc_finalize (GObject * object)
     g_object_unref (udpsrc->used_socket);
   udpsrc->used_socket = NULL;
 
-  if (udpsrc->cancellable)
-    g_object_unref (udpsrc->cancellable);
-  udpsrc->cancellable = NULL;
-
   G_OBJECT_CLASS (parent_class)->finalize (object);
 }
 
@@ -348,47 +686,205 @@ static GstCaps *
 gst_udpsrc_getcaps (GstBaseSrc * src, GstCaps * filter)
 {
   GstUDPSrc *udpsrc;
+  GstCaps *caps, *result;
 
   udpsrc = GST_UDPSRC (src);
 
-  if (udpsrc->caps) {
-    return (filter) ? gst_caps_intersect_full (filter, udpsrc->caps,
-        GST_CAPS_INTERSECT_FIRST) : gst_caps_ref (udpsrc->caps);
+  GST_OBJECT_LOCK (src);
+  if ((caps = udpsrc->caps))
+    gst_caps_ref (caps);
+  GST_OBJECT_UNLOCK (src);
+
+  if (caps) {
+    if (filter) {
+      result = gst_caps_intersect_full (filter, caps, GST_CAPS_INTERSECT_FIRST);
+      gst_caps_unref (caps);
+    } else {
+      result = caps;
+    }
   } else {
-    return (filter) ? gst_caps_ref (filter) : gst_caps_new_any ();
+    result = (filter) ? gst_caps_ref (filter) : gst_caps_new_any ();
   }
+  return result;
+}
+
+static void
+gst_udpsrc_reset_memory_allocator (GstUDPSrc * src)
+{
+  if (src->mem != NULL) {
+    gst_memory_unmap (src->mem, &src->map);
+    gst_memory_unref (src->mem);
+    src->mem = NULL;
+  }
+  if (src->mem_max != NULL) {
+    gst_memory_unmap (src->mem_max, &src->map_max);
+    gst_memory_unref (src->mem_max);
+    src->mem_max = NULL;
+  }
+
+  src->vec[0].buffer = NULL;
+  src->vec[0].size = 0;
+  src->vec[1].buffer = NULL;
+  src->vec[1].size = 0;
+
+  if (src->allocator != NULL) {
+    gst_object_unref (src->allocator);
+    src->allocator = NULL;
+  }
+}
+
+static gboolean
+gst_udpsrc_negotiate (GstBaseSrc * basesrc)
+{
+  GstUDPSrc *src = GST_UDPSRC_CAST (basesrc);
+  gboolean ret;
+
+  /* just chain up to the default implementation, we just want to
+   * retrieve the allocator at the end of it (if there is one) */
+  ret = GST_BASE_SRC_CLASS (parent_class)->negotiate (basesrc);
+
+  if (ret) {
+    GstAllocationParams new_params;
+    GstAllocator *new_allocator = NULL;
+
+    /* retrieve new allocator */
+    gst_base_src_get_allocator (basesrc, &new_allocator, &new_params);
+
+    if (src->allocator != new_allocator ||
+        memcmp (&src->params, &new_params, sizeof (GstAllocationParams)) != 0) {
+      /* drop old allocator and throw away any memory allocated with it */
+      gst_udpsrc_reset_memory_allocator (src);
+
+      /* and save the new allocator and/or new allocation parameters */
+      src->allocator = new_allocator;
+      src->params = new_params;
+
+      GST_INFO_OBJECT (src, "new allocator: %" GST_PTR_FORMAT, new_allocator);
+    }
+  }
+
+  return ret;
+}
+
+static gboolean
+gst_udpsrc_alloc_mem (GstUDPSrc * src, GstMemory ** p_mem, GstMapInfo * map,
+    gsize size)
+{
+  GstMemory *mem;
+
+  mem = gst_allocator_alloc (src->allocator, size, &src->params);
+
+  if (!gst_memory_map (mem, map, GST_MAP_WRITE)) {
+    gst_memory_unref (mem);
+    memset (map, 0, sizeof (GstMapInfo));
+    return FALSE;
+  }
+  *p_mem = mem;
+  return TRUE;
+}
+
+static gboolean
+gst_udpsrc_ensure_mem (GstUDPSrc * src)
+{
+  if (src->mem == NULL) {
+    gsize mem_size = 1500;      /* typical max. MTU */
+
+    /* if packets are likely to be smaller, just use that size, otherwise
+     * default to assuming incoming packets are around MTU size */
+    if (src->max_size > 0 && src->max_size < mem_size)
+      mem_size = src->max_size;
+
+    if (!gst_udpsrc_alloc_mem (src, &src->mem, &src->map, mem_size))
+      return FALSE;
+
+    src->vec[0].buffer = src->map.data;
+    src->vec[0].size = src->map.size;
+  }
+
+  if (src->mem_max == NULL) {
+    gsize max_size = MAX_IPV4_UDP_PACKET_SIZE;
+
+    if (!gst_udpsrc_alloc_mem (src, &src->mem_max, &src->map_max, max_size))
+      return FALSE;
+
+    src->vec[1].buffer = src->map_max.data;
+    src->vec[1].size = src->map_max.size;
+  }
+
+  return TRUE;
+}
+
+static void
+gst_udpsrc_create_cancellable (GstUDPSrc * src)
+{
+  GPollFD pollfd;
+
+  src->cancellable = g_cancellable_new ();
+  src->made_cancel_fd = g_cancellable_make_pollfd (src->cancellable, &pollfd);
+}
+
+static void
+gst_udpsrc_free_cancellable (GstUDPSrc * src)
+{
+  if (src->made_cancel_fd) {
+    g_cancellable_release_fd (src->cancellable);
+    src->made_cancel_fd = FALSE;
+  }
+  g_object_unref (src->cancellable);
+  src->cancellable = NULL;
 }
 
 static GstFlowReturn
 gst_udpsrc_create (GstPushSrc * psrc, GstBuffer ** buf)
 {
-  GstFlowReturn ret;
   GstUDPSrc *udpsrc;
-  GstBuffer *outbuf;
-  GstMapInfo info;
+  GstBuffer *outbuf = NULL;
   GSocketAddress *saddr = NULL;
-  gsize offset;
-  gssize readsize;
-  gssize res;
+  GSocketAddress **p_saddr;
+  gint flags = G_SOCKET_MSG_NONE;
   gboolean try_again;
   GError *err = NULL;
+  gssize res;
+  gsize offset;
+  GSocketControlMessage **msgs = NULL;
+  GSocketControlMessage ***p_msgs;
+  gint n_msgs = 0, i;
 
   udpsrc = GST_UDPSRC_CAST (psrc);
 
+  if (!gst_udpsrc_ensure_mem (udpsrc))
+    goto memory_alloc_error;
+
+  /* optimization: use messages only in multicast mode and
+   * if we can't let the kernel do the filtering for us */
+  p_msgs =
+      (g_inet_address_get_is_multicast (g_inet_socket_address_get_address
+          (udpsrc->addr))) ? &msgs : NULL;
+#ifdef IP_MULTICAST_ALL
+  if (g_inet_address_get_family (g_inet_socket_address_get_address
+          (udpsrc->addr)) == G_SOCKET_FAMILY_IPV4)
+    p_msgs = NULL;
+#endif
+
+  /* Retrieve sender address unless we've been configured not to do so */
+  p_saddr = (udpsrc->retrieve_sender_address) ? &saddr : NULL;
+
 retry:
-  /* quick check, avoid going in select when we already have data */
-  readsize = g_socket_get_available_bytes (udpsrc->used_socket);
-  if (readsize > 0)
-    goto no_select;
 
   do {
+    gint64 timeout;
+
     try_again = FALSE;
 
-    GST_LOG_OBJECT (udpsrc, "doing select, timeout %" G_GUINT64_FORMAT,
-        udpsrc->timeout);
+    if (udpsrc->timeout)
+      timeout = udpsrc->timeout / 1000;
+    else
+      timeout = -1;
 
-    if (!g_socket_condition_wait (udpsrc->used_socket, G_IO_IN | G_IO_PRI,
-            udpsrc->cancellable, &err)) {
+    GST_LOG_OBJECT (udpsrc, "doing select, timeout %" G_GINT64_FORMAT, timeout);
+
+    if (!g_socket_condition_timed_wait (udpsrc->used_socket, G_IO_IN | G_IO_PRI,
+            timeout, udpsrc->cancellable, &err)) {
       if (g_error_matches (err, G_IO_ERROR, G_IO_ERROR_BUSY)
           || g_error_matches (err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
         goto stopped;
@@ -407,90 +903,140 @@ retry:
     }
   } while (G_UNLIKELY (try_again));
 
-  /* ask how much is available for reading on the socket, this should be exactly
-   * one UDP packet. We will check the return value, though, because in some
-   * case it can return 0 and we don't want a 0 sized buffer. */
-  readsize = g_socket_get_available_bytes (udpsrc->used_socket);
-  if (G_UNLIKELY (readsize < 0))
-    goto get_available_error;
-
-  /* If we get here and the readsize is zero, then either select was woken up
-   * by activity that is not a read, or a poll error occurred, or a UDP packet
-   * was received that has no data. Since we cannot identify which case it is,
-   * we handle all of them. This could possibly lead to a UDP packet getting
-   * lost, but since UDP is not reliable, we can accept this. */
-  if (G_UNLIKELY (!readsize)) {
-    /* try to read a packet (and it will be ignored),
-     * in case a packet with no data arrived */
-    res =
-        g_socket_receive_from (udpsrc->used_socket, NULL, NULL,
-        0, udpsrc->cancellable, &err);
-    if (G_UNLIKELY (res < 0))
-      goto receive_error;
-
-    /* poll again */
-    goto retry;
+  if (saddr != NULL) {
+    g_object_unref (saddr);
+    saddr = NULL;
   }
 
-no_select:
-  GST_LOG_OBJECT (udpsrc, "ioctl says %d bytes available", (int) readsize);
-
-  ret = GST_BASE_SRC_CLASS (parent_class)->alloc (GST_BASE_SRC_CAST (udpsrc),
-      -1, readsize, &outbuf);
-  if (ret != GST_FLOW_OK)
-    goto alloc_failed;
-
-  gst_buffer_map (outbuf, &info, GST_MAP_WRITE);
-  offset = 0;
-
-  if (saddr)
-    g_object_unref (saddr);
-  saddr = NULL;
-
   res =
-      g_socket_receive_from (udpsrc->used_socket, &saddr, (gchar *) info.data,
-      info.size, udpsrc->cancellable, &err);
+      g_socket_receive_message (udpsrc->used_socket, p_saddr, udpsrc->vec, 2,
+      p_msgs, &n_msgs, &flags, udpsrc->cancellable, &err);
 
   if (G_UNLIKELY (res < 0)) {
-    /* EHOSTUNREACH for a UDP socket means that a packet sent with udpsink
-     * generated a "port unreachable" ICMP response. We ignore that and try
-     * again. */
+    /* G_IO_ERROR_HOST_UNREACHABLE for a UDP socket means that a packet sent
+     * with udpsink generated a "port unreachable" ICMP response. We ignore
+     * that and try again.
+     * On Windows we get G_IO_ERROR_CONNECTION_CLOSED instead */
+#if GLIB_CHECK_VERSION(2,44,0)
+    if (g_error_matches (err, G_IO_ERROR, G_IO_ERROR_HOST_UNREACHABLE) ||
+        g_error_matches (err, G_IO_ERROR, G_IO_ERROR_CONNECTION_CLOSED)) {
+#else
     if (g_error_matches (err, G_IO_ERROR, G_IO_ERROR_HOST_UNREACHABLE)) {
-      gst_buffer_unmap (outbuf, &info);
-      gst_buffer_unref (outbuf);
-      outbuf = NULL;
+#endif
       g_clear_error (&err);
       goto retry;
     }
     goto receive_error;
   }
 
-  /* patch offset and size when stripping off the headers */
-  if (G_UNLIKELY (udpsrc->skip_first_bytes != 0)) {
-    if (G_UNLIKELY (readsize < udpsrc->skip_first_bytes))
-      goto skip_error;
+  /* remember maximum packet size */
+  if (res > udpsrc->max_size)
+    udpsrc->max_size = res;
 
-    offset += udpsrc->skip_first_bytes;
-    res -= udpsrc->skip_first_bytes;
+  /* Retry if multicast and the destination address is not ours. We don't want
+   * to receive arbitrary packets */
+  if (p_msgs) {
+    GInetAddress *iaddr = g_inet_socket_address_get_address (udpsrc->addr);
+    gboolean skip_packet = FALSE;
+    gsize iaddr_size = g_inet_address_get_native_size (iaddr);
+    const guint8 *iaddr_bytes = g_inet_address_to_bytes (iaddr);
+
+    for (i = 0; i < n_msgs && !skip_packet; i++) {
+#ifdef IP_PKTINFO
+      if (GST_IS_IP_PKTINFO_MESSAGE (msgs[i])) {
+        GstIPPktinfoMessage *msg = GST_IP_PKTINFO_MESSAGE (msgs[i]);
+
+        if (sizeof (msg->addr) == iaddr_size
+            && memcmp (iaddr_bytes, &msg->addr, sizeof (msg->addr)))
+          skip_packet = TRUE;
+      }
+#endif
+#ifdef IPV6_PKTINFO
+      if (GST_IS_IPV6_PKTINFO_MESSAGE (msgs[i])) {
+        GstIPV6PktinfoMessage *msg = GST_IPV6_PKTINFO_MESSAGE (msgs[i]);
+
+        if (sizeof (msg->addr) == iaddr_size
+            && memcmp (iaddr_bytes, &msg->addr, sizeof (msg->addr)))
+          skip_packet = TRUE;
+      }
+#endif
+#ifdef IP_RECVDSTADDR
+      if (GST_IS_IP_RECVDSTADDR_MESSAGE (msgs[i])) {
+        GstIPRecvdstaddrMessage *msg = GST_IP_RECVDSTADDR_MESSAGE (msgs[i]);
+
+        if (sizeof (msg->addr) == iaddr_size
+            && memcmp (iaddr_bytes, &msg->addr, sizeof (msg->addr)))
+          skip_packet = TRUE;
+      }
+#endif
+    }
+
+    for (i = 0; i < n_msgs; i++) {
+      g_object_unref (msgs[i]);
+    }
+    g_free (msgs);
+
+    if (skip_packet) {
+      GST_DEBUG_OBJECT (udpsrc,
+          "Dropping packet for a different multicast address");
+
+      if (saddr != NULL) {
+        g_object_unref (saddr);
+        saddr = NULL;
+      }
+
+      goto retry;
+    }
   }
 
-  gst_buffer_unmap (outbuf, &info);
-  gst_buffer_resize (outbuf, offset, res);
+  outbuf = gst_buffer_new ();
+
+  /* append first memory chunk to buffer */
+  gst_buffer_append_memory (outbuf, udpsrc->mem);
+
+  /* if the packet didn't fit into the first chunk, add second one as well */
+  if (res > udpsrc->map.size) {
+    gst_buffer_append_memory (outbuf, udpsrc->mem_max);
+    gst_memory_unmap (udpsrc->mem_max, &udpsrc->map_max);
+    udpsrc->vec[1].buffer = NULL;
+    udpsrc->vec[1].size = 0;
+    udpsrc->mem_max = NULL;
+  }
+
+  /* make sure we allocate a new chunk next time (we do this only here because
+   * we look at map.size to see if the second memory chunk is needed above) */
+  gst_memory_unmap (udpsrc->mem, &udpsrc->map);
+  udpsrc->vec[0].buffer = NULL;
+  udpsrc->vec[0].size = 0;
+  udpsrc->mem = NULL;
+
+  offset = udpsrc->skip_first_bytes;
+
+  if (G_UNLIKELY (offset > 0 && res < offset))
+    goto skip_error;
+
+  gst_buffer_resize (outbuf, offset, res - offset);
 
   /* use buffer metadata so receivers can also track the address */
   if (saddr) {
     gst_buffer_add_net_address_meta (outbuf, saddr);
     g_object_unref (saddr);
+    saddr = NULL;
   }
-  saddr = NULL;
 
-  GST_LOG_OBJECT (udpsrc, "read %d bytes", (int) readsize);
+  GST_LOG_OBJECT (udpsrc, "read packet of %d bytes", (int) res);
 
   *buf = GST_BUFFER_CAST (outbuf);
 
-  return ret;
+  return GST_FLOW_OK;
 
   /* ERRORS */
+memory_alloc_error:
+  {
+    GST_ELEMENT_ERROR (udpsrc, RESOURCE, READ, (NULL),
+        ("Failed to allocate or map memory"));
+    return GST_FLOW_ERROR;
+  }
 select_error:
   {
     GST_ELEMENT_ERROR (udpsrc, RESOURCE, READ, (NULL),
@@ -504,22 +1050,8 @@ stopped:
     g_clear_error (&err);
     return GST_FLOW_FLUSHING;
   }
-get_available_error:
-  {
-    GST_ELEMENT_ERROR (udpsrc, RESOURCE, READ, (NULL),
-        ("get available bytes failed"));
-    return GST_FLOW_ERROR;
-  }
-alloc_failed:
-  {
-    GST_DEBUG ("Allocation failed");
-    return ret;
-  }
 receive_error:
   {
-    gst_buffer_unmap (outbuf, &info);
-    gst_buffer_unref (outbuf);
-
     if (g_error_matches (err, G_IO_ERROR, G_IO_ERROR_BUSY) ||
         g_error_matches (err, G_IO_ERROR, G_IO_ERROR_CANCELLED)) {
       g_clear_error (&err);
@@ -533,7 +1065,6 @@ receive_error:
   }
 skip_error:
   {
-    gst_buffer_unmap (outbuf, &info);
     gst_buffer_unref (outbuf);
 
     GST_ELEMENT_ERROR (udpsrc, STREAM, DECODE, (NULL),
@@ -545,17 +1076,17 @@ skip_error:
 static gboolean
 gst_udpsrc_set_uri (GstUDPSrc * src, const gchar * uri, GError ** error)
 {
-  gchar *host;
+  gchar *address;
   guint16 port;
 
-  if (!gst_udp_parse_uri (uri, &host, &port))
+  if (!gst_udp_parse_uri (uri, &address, &port))
     goto wrong_uri;
 
   if (port == (guint16) - 1)
     port = UDP_DEFAULT_PORT;
 
-  g_free (src->host);
-  src->host = host;
+  g_free (src->address);
+  src->address = address;
   src->port = port;
 
   g_free (src->uri);
@@ -587,20 +1118,23 @@ gst_udpsrc_set_property (GObject * object, guint prop_id, const GValue * value,
     case PROP_PORT:
       udpsrc->port = g_value_get_int (value);
       g_free (udpsrc->uri);
-      udpsrc->uri = g_strdup_printf ("udp://%s:%u", udpsrc->host, udpsrc->port);
+      udpsrc->uri =
+          g_strdup_printf ("udp://%s:%u", udpsrc->address, udpsrc->port);
       break;
     case PROP_MULTICAST_GROUP:
+    case PROP_ADDRESS:
     {
       const gchar *group;
 
-      g_free (udpsrc->host);
+      g_free (udpsrc->address);
       if ((group = g_value_get_string (value)))
-        udpsrc->host = g_strdup (group);
+        udpsrc->address = g_strdup (group);
       else
-        udpsrc->host = g_strdup (UDP_DEFAULT_MULTICAST_GROUP);
+        udpsrc->address = g_strdup (UDP_DEFAULT_MULTICAST_GROUP);
 
       g_free (udpsrc->uri);
-      udpsrc->uri = g_strdup_printf ("udp://%s:%u", udpsrc->host, udpsrc->port);
+      udpsrc->uri =
+          g_strdup_printf ("udp://%s:%u", udpsrc->address, udpsrc->port);
       break;
     }
     case PROP_MULTICAST_IFACE:
@@ -617,9 +1151,7 @@ gst_udpsrc_set_property (GObject * object, guint prop_id, const GValue * value,
     case PROP_CAPS:
     {
       const GstCaps *new_caps_val = gst_value_get_caps (value);
-
       GstCaps *new_caps;
-
       GstCaps *old_caps;
 
       if (new_caps_val == NULL) {
@@ -628,11 +1160,14 @@ gst_udpsrc_set_property (GObject * object, guint prop_id, const GValue * value,
         new_caps = gst_caps_copy (new_caps_val);
       }
 
+      GST_OBJECT_LOCK (udpsrc);
       old_caps = udpsrc->caps;
       udpsrc->caps = new_caps;
+      GST_OBJECT_UNLOCK (udpsrc);
       if (old_caps)
         gst_caps_unref (old_caps);
-      gst_pad_set_caps (GST_BASE_SRC (udpsrc)->srcpad, new_caps);
+
+      gst_pad_mark_reconfigure (GST_BASE_SRC_PAD (udpsrc));
       break;
     }
     case PROP_SOCKET:
@@ -666,6 +1201,12 @@ gst_udpsrc_set_property (GObject * object, guint prop_id, const GValue * value,
     case PROP_REUSE:
       udpsrc->reuse = g_value_get_boolean (value);
       break;
+    case PROP_LOOP:
+      udpsrc->loop = g_value_get_boolean (value);
+      break;
+    case PROP_RETRIEVE_SENDER_ADDRESS:
+      udpsrc->retrieve_sender_address = g_value_get_boolean (value);
+      break;
     default:
       break;
   }
@@ -685,7 +1226,8 @@ gst_udpsrc_get_property (GObject * object, guint prop_id, GValue * value,
       g_value_set_int (value, udpsrc->port);
       break;
     case PROP_MULTICAST_GROUP:
-      g_value_set_string (value, udpsrc->host);
+    case PROP_ADDRESS:
+      g_value_set_string (value, udpsrc->address);
       break;
     case PROP_MULTICAST_IFACE:
       g_value_set_string (value, udpsrc->multi_iface);
@@ -694,7 +1236,9 @@ gst_udpsrc_get_property (GObject * object, guint prop_id, GValue * value,
       g_value_set_string (value, udpsrc->uri);
       break;
     case PROP_CAPS:
+      GST_OBJECT_LOCK (udpsrc);
       gst_value_set_caps (value, udpsrc->caps);
+      GST_OBJECT_UNLOCK (udpsrc);
       break;
     case PROP_SOCKET:
       g_value_set_object (value, udpsrc->socket);
@@ -717,52 +1261,78 @@ gst_udpsrc_get_property (GObject * object, guint prop_id, GValue * value,
     case PROP_REUSE:
       g_value_set_boolean (value, udpsrc->reuse);
       break;
+    case PROP_LOOP:
+      g_value_set_boolean (value, udpsrc->loop);
+      break;
+    case PROP_RETRIEVE_SENDER_ADDRESS:
+      g_value_set_boolean (value, udpsrc->retrieve_sender_address);
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
   }
 }
 
+static GInetAddress *
+gst_udpsrc_resolve (GstUDPSrc * src, const gchar * address)
+{
+  GInetAddress *addr;
+  GError *err = NULL;
+  GResolver *resolver;
+
+  addr = g_inet_address_new_from_string (address);
+  if (!addr) {
+    GList *results;
+
+    GST_DEBUG_OBJECT (src, "resolving IP address for host %s", address);
+    resolver = g_resolver_get_default ();
+    results =
+        g_resolver_lookup_by_name (resolver, address, src->cancellable, &err);
+    if (!results)
+      goto name_resolve;
+    addr = G_INET_ADDRESS (g_object_ref (results->data));
+
+    g_resolver_free_addresses (results);
+    g_object_unref (resolver);
+  }
+#ifndef GST_DISABLE_GST_DEBUG
+  {
+    gchar *ip = g_inet_address_to_string (addr);
+
+    GST_DEBUG_OBJECT (src, "IP address for host %s is %s", address, ip);
+    g_free (ip);
+  }
+#endif
+
+  return addr;
+
+name_resolve:
+  {
+    GST_WARNING_OBJECT (src, "Failed to resolve %s: %s", address, err->message);
+    g_clear_error (&err);
+    g_object_unref (resolver);
+    return NULL;
+  }
+}
+
 /* create a socket for sending to remote machine */
 static gboolean
-gst_udpsrc_start (GstBaseSrc * bsrc)
+gst_udpsrc_open (GstUDPSrc * src)
 {
-  GstUDPSrc *src;
   GInetAddress *addr, *bind_addr;
   GSocketAddress *bind_saddr;
-  GResolver *resolver;
   GError *err = NULL;
 
-  src = GST_UDPSRC (bsrc);
+  gst_udpsrc_create_cancellable (src);
 
   if (src->socket == NULL) {
     /* need to allocate a socket */
-    GST_DEBUG_OBJECT (src, "allocating socket for %s:%d", src->host, src->port);
+    GST_DEBUG_OBJECT (src, "allocating socket for %s:%d", src->address,
+        src->port);
 
-    addr = g_inet_address_new_from_string (src->host);
-    if (!addr) {
-      GList *results;
-
-      GST_DEBUG_OBJECT (src, "resolving IP address for host %s", src->host);
-      resolver = g_resolver_get_default ();
-      results =
-          g_resolver_lookup_by_name (resolver, src->host, src->cancellable,
-          &err);
-      if (!results)
-        goto name_resolve;
-      addr = G_INET_ADDRESS (g_object_ref (results->data));
-
-      g_resolver_free_addresses (results);
-      g_object_unref (resolver);
-    }
-#ifndef GST_DISABLE_GST_DEBUG
-    {
-      gchar *ip = g_inet_address_to_string (addr);
-
-      GST_DEBUG_OBJECT (src, "IP address for host %s is %s", src->host, ip);
-      g_free (ip);
-    }
-#endif
+    addr = gst_udpsrc_resolve (src, src->address);
+    if (!addr)
+      goto name_resolve;
 
     if ((src->used_socket =
             g_socket_new (g_inet_address_get_family (addr),
@@ -780,6 +1350,7 @@ gst_udpsrc_start (GstBaseSrc * bsrc)
 
     GST_DEBUG_OBJECT (src, "binding on port %d", src->port);
 
+    /* For multicast, bind to ANY and join the multicast group later */
     if (g_inet_address_get_is_multicast (addr))
       bind_addr = g_inet_address_new_any (g_inet_address_get_family (addr));
     else
@@ -793,59 +1364,78 @@ gst_udpsrc_start (GstBaseSrc * bsrc)
       goto bind_error;
 
     g_object_unref (bind_saddr);
+    g_socket_set_multicast_loopback (src->used_socket, src->loop);
   } else {
+    GInetSocketAddress *local_addr;
+
     GST_DEBUG_OBJECT (src, "using provided socket %p", src->socket);
     /* we use the configured socket, try to get some info about it */
     src->used_socket = G_SOCKET (g_object_ref (src->socket));
     src->external_socket = TRUE;
 
-    if (src->addr)
-      g_object_unref (src->addr);
-    src->addr =
+    local_addr =
         G_INET_SOCKET_ADDRESS (g_socket_get_local_address (src->used_socket,
             &err));
-    if (!src->addr)
+    if (!local_addr)
       goto getsockname_error;
+
+    addr = gst_udpsrc_resolve (src, src->address);
+    if (!addr)
+      goto name_resolve;
+
+    /* If bound to ANY and address points to a multicast address, make
+     * sure that address is not overridden with ANY but we have the
+     * opportunity later to join the multicast address. This ensures that we
+     * have the same behaviour as for sockets created by udpsrc */
+    if (!src->auto_multicast ||
+        !g_inet_address_get_is_any (g_inet_socket_address_get_address
+            (local_addr))
+        || !g_inet_address_get_is_multicast (addr)) {
+      g_object_unref (addr);
+      if (src->addr)
+        g_object_unref (src->addr);
+      src->addr = local_addr;
+    } else {
+      g_object_unref (local_addr);
+      if (src->addr)
+        g_object_unref (src->addr);
+      src->addr =
+          G_INET_SOCKET_ADDRESS (g_inet_socket_address_new (addr, src->port));
+      g_object_unref (addr);
+    }
   }
 
-  if (src->timeout)
-    g_socket_set_timeout (src->used_socket, src->timeout / GST_SECOND);
-
-#ifdef SO_RCVBUF
   {
-    gint rcvsize, ret;
-    socklen_t len;
+    gint val = 0;
 
-    len = sizeof (rcvsize);
     if (src->buffer_size != 0) {
-      rcvsize = src->buffer_size;
+      GError *opt_err = NULL;
 
-      GST_DEBUG_OBJECT (src, "setting udp buffer of %d bytes", rcvsize);
+      GST_INFO_OBJECT (src, "setting udp buffer of %d bytes", src->buffer_size);
       /* set buffer size, Note that on Linux this is typically limited to a
        * maximum of around 100K. Also a minimum of 128 bytes is required on
        * Linux. */
-      ret =
-          setsockopt (g_socket_get_fd (src->used_socket), SOL_SOCKET, SO_RCVBUF,
-          (void *) &rcvsize, len);
-      if (ret != 0) {
+      if (!g_socket_set_option (src->used_socket, SOL_SOCKET, SO_RCVBUF,
+              src->buffer_size, &opt_err)) {
         GST_ELEMENT_WARNING (src, RESOURCE, SETTINGS, (NULL),
-            ("Could not create a buffer of requested %d bytes, %d: %s (%d)",
-                rcvsize, ret, g_strerror (errno), errno));
+            ("Could not create a buffer of requested %d bytes: %s",
+                src->buffer_size, opt_err->message));
+        g_error_free (opt_err);
+        opt_err = NULL;
       }
     }
 
-    /* read the value of the receive buffer. Note that on linux this returns 2x the
-     * value we set because the kernel allocates extra memory for metadata.
-     * The default on Linux is about 100K (which is about 50K without metadata) */
-    ret =
-        getsockopt (g_socket_get_fd (src->used_socket), SOL_SOCKET, SO_RCVBUF,
-        (void *) &rcvsize, &len);
-    if (ret == 0)
-      GST_DEBUG_OBJECT (src, "have udp buffer of %d bytes", rcvsize);
-    else
+    /* read the value of the receive buffer. Note that on linux this returns
+     * 2x the value we set because the kernel allocates extra memory for
+     * metadata. The default on Linux is about 100K (which is about 50K
+     * without metadata) */
+    if (g_socket_get_option (src->used_socket, SOL_SOCKET, SO_RCVBUF, &val,
+            NULL)) {
+      GST_INFO_OBJECT (src, "have udp buffer of %d bytes", val);
+    } else {
       GST_DEBUG_OBJECT (src, "could not get udp buffer size");
+    }
   }
-#endif
 
   g_socket_set_broadcast (src->used_socket, TRUE);
 
@@ -853,11 +1443,61 @@ gst_udpsrc_start (GstBaseSrc * bsrc)
       &&
       g_inet_address_get_is_multicast (g_inet_socket_address_get_address
           (src->addr))) {
-    GST_DEBUG_OBJECT (src, "joining multicast group %s", src->host);
+    GST_DEBUG_OBJECT (src, "joining multicast group %s", src->address);
     if (!g_socket_join_multicast_group (src->used_socket,
             g_inet_socket_address_get_address (src->addr),
             FALSE, src->multi_iface, &err))
       goto membership;
+
+    if (g_inet_address_get_family (g_inet_socket_address_get_address
+            (src->addr)) == G_SOCKET_FAMILY_IPV4) {
+#if defined(IP_MULTICAST_ALL)
+      if (!g_socket_set_option (src->used_socket, IPPROTO_IP, IP_MULTICAST_ALL,
+              0, &err)) {
+        GST_WARNING_OBJECT (src, "Failed to disable IP_MULTICAST_ALL: %s",
+            err->message);
+        g_clear_error (&err);
+      }
+#elif defined(IP_PKTINFO)
+      if (!g_socket_set_option (src->used_socket, IPPROTO_IP, IP_PKTINFO, TRUE,
+              &err)) {
+        GST_WARNING_OBJECT (src, "Failed to enable IP_PKTINFO: %s",
+            err->message);
+        g_clear_error (&err);
+      }
+#elif defined(IP_RECVDSTADDR)
+      if (!g_socket_set_option (src->used_socket, IPPROTO_IP, IP_RECVDSTADDR,
+              TRUE, &err)) {
+        GST_WARNING_OBJECT (src, "Failed to enable IP_RECVDSTADDR: %s",
+            err->message);
+        g_clear_error (&err);
+      }
+#else
+#pragma message("No API available for getting IPv4 destination address")
+      GST_WARNING_OBJECT (src, "No API available for getting IPv4 destination "
+          "address, will receive packets for every destination to our port");
+#endif
+    } else
+        if (g_inet_address_get_family (g_inet_socket_address_get_address
+            (src->addr)) == G_SOCKET_FAMILY_IPV6) {
+#ifdef IPV6_PKTINFO
+#ifdef IPV6_RECVPKTINFO
+      if (!g_socket_set_option (src->used_socket, IPPROTO_IPV6,
+              IPV6_RECVPKTINFO, TRUE, &err)) {
+#else
+      if (!g_socket_set_option (src->used_socket, IPPROTO_IPV6, IPV6_PKTINFO,
+              TRUE, &err)) {
+#endif
+        GST_WARNING_OBJECT (src, "Failed to enable IPV6_PKTINFO: %s",
+            err->message);
+        g_clear_error (&err);
+      }
+#else
+#pragma message("No API available for getting IPv6 destination address")
+      GST_WARNING_OBJECT (src, "No API available for getting IPv6 destination "
+          "address, will receive packets for every destination to our port");
+#endif
+    }
   }
 
   /* NOTE: sockaddr_in.sin_port works for ipv4 and ipv6 because sin_port
@@ -882,15 +1522,16 @@ gst_udpsrc_start (GstBaseSrc * bsrc)
     g_object_unref (addr);
   }
 
+  src->allocator = NULL;
+  gst_allocation_params_init (&src->params);
+
+  src->max_size = 0;
+
   return TRUE;
 
   /* ERRORS */
 name_resolve:
   {
-    GST_ELEMENT_ERROR (src, RESOURCE, SETTINGS, (NULL),
-        ("Name resolval failed: %s", err->message));
-    g_clear_error (&err);
-    g_object_unref (resolver);
     return FALSE;
   }
 no_socket:
@@ -907,7 +1548,7 @@ bind_error:
         ("bind failed: %s", err->message));
     g_clear_error (&err);
     g_object_unref (bind_saddr);
-    gst_udpsrc_stop (GST_BASE_SRC (src));
+    gst_udpsrc_close (src);
     return FALSE;
   }
 membership:
@@ -915,7 +1556,7 @@ membership:
     GST_ELEMENT_ERROR (src, RESOURCE, SETTINGS, (NULL),
         ("could add membership: %s", err->message));
     g_clear_error (&err);
-    gst_udpsrc_stop (GST_BASE_SRC (src));
+    gst_udpsrc_close (src);
     return FALSE;
   }
 getsockname_error:
@@ -923,7 +1564,7 @@ getsockname_error:
     GST_ELEMENT_ERROR (src, RESOURCE, SETTINGS, (NULL),
         ("getsockname failed: %s", err->message));
     g_clear_error (&err);
-    gst_udpsrc_stop (GST_BASE_SRC (src));
+    gst_udpsrc_close (src);
     return FALSE;
   }
 }
@@ -949,19 +1590,17 @@ gst_udpsrc_unlock_stop (GstBaseSrc * bsrc)
   src = GST_UDPSRC (bsrc);
 
   GST_LOG_OBJECT (src, "No longer flushing");
-  g_cancellable_reset (src->cancellable);
+
+  gst_udpsrc_free_cancellable (src);
+  gst_udpsrc_create_cancellable (src);
 
   return TRUE;
 }
 
 static gboolean
-gst_udpsrc_stop (GstBaseSrc * bsrc)
+gst_udpsrc_close (GstUDPSrc * src)
 {
-  GstUDPSrc *src;
-
-  src = GST_UDPSRC (bsrc);
-
-  GST_DEBUG ("stopping, closing sockets");
+  GST_DEBUG ("closing sockets");
 
   if (src->used_socket) {
     if (src->auto_multicast
@@ -970,7 +1609,7 @@ gst_udpsrc_stop (GstBaseSrc * bsrc)
             (src->addr))) {
       GError *err = NULL;
 
-      GST_DEBUG_OBJECT (src, "leaving multicast group %s", src->host);
+      GST_DEBUG_OBJECT (src, "leaving multicast group %s", src->address);
 
       if (!g_socket_leave_multicast_group (src->used_socket,
               g_inet_socket_address_get_address (src->addr), FALSE,
@@ -995,8 +1634,58 @@ gst_udpsrc_stop (GstBaseSrc * bsrc)
     src->addr = NULL;
   }
 
+  gst_udpsrc_reset_memory_allocator (src);
+
+  gst_udpsrc_free_cancellable (src);
+
   return TRUE;
 }
+
+
+static GstStateChangeReturn
+gst_udpsrc_change_state (GstElement * element, GstStateChange transition)
+{
+  GstUDPSrc *src;
+  GstStateChangeReturn result;
+
+  src = GST_UDPSRC (element);
+
+  switch (transition) {
+    case GST_STATE_CHANGE_NULL_TO_READY:
+      if (!gst_udpsrc_open (src))
+        goto open_failed;
+      break;
+    default:
+      break;
+  }
+  if ((result =
+          GST_ELEMENT_CLASS (parent_class)->change_state (element,
+              transition)) == GST_STATE_CHANGE_FAILURE)
+    goto failure;
+
+  switch (transition) {
+    case GST_STATE_CHANGE_READY_TO_NULL:
+      gst_udpsrc_close (src);
+      break;
+    default:
+      break;
+  }
+  return result;
+  /* ERRORS */
+open_failed:
+  {
+    GST_DEBUG_OBJECT (src, "failed to open socket");
+    return GST_STATE_CHANGE_FAILURE;
+  }
+failure:
+  {
+    GST_DEBUG_OBJECT (src, "parent failed state change");
+    return result;
+  }
+}
+
+
+
 
 /*** GSTURIHANDLER INTERFACE *************************************************/
 
