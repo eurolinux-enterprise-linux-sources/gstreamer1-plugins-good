@@ -17,28 +17,14 @@
  * Boston, MA 02110-1301, USA.
  */
 
-
- /**
- * SECTION:element-rtpj2kdepay
- *
- * Depayload an RTP-payloaded JPEG 2000 image into RTP packets according to RFC 5371
- * and RFC 5372.
- * For detailed information see: https://datatracker.ietf.org/doc/rfc5371/
- * and https://datatracker.ietf.org/doc/rfc5372/
- */
-
-
 #ifdef HAVE_CONFIG_H
 #  include "config.h"
 #endif
 
 #include <gst/rtp/gstrtpbuffer.h>
-#include <gst/video/video.h>
 
 #include <string.h>
-#include "gstrtpj2kcommon.h"
 #include "gstrtpj2kdepay.h"
-#include "gstrtputils.h"
 
 GST_DEBUG_CATEGORY_STATIC (rtpj2kdepay_debug);
 #define GST_CAT_DEFAULT (rtpj2kdepay_debug)
@@ -47,23 +33,27 @@ static GstStaticPadTemplate gst_rtp_j2k_depay_src_template =
 GST_STATIC_PAD_TEMPLATE ("src",
     GST_PAD_SRC,
     GST_PAD_ALWAYS,
-    GST_STATIC_CAPS ("image/x-jpc, "
-        "colorspace = (string) { sRGB, sYUV, GRAY }")
+    GST_STATIC_CAPS ("image/x-jpc")
     );
 
 static GstStaticPadTemplate gst_rtp_j2k_depay_sink_template =
-    GST_STATIC_PAD_TEMPLATE ("sink",
+GST_STATIC_PAD_TEMPLATE ("sink",
     GST_PAD_SINK,
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS ("application/x-rtp, "
-        "media = (string) \"video\", " "clock-rate = (int) 90000, "
-        GST_RTP_J2K_SAMPLING_LIST ","
-        "encoding-name = (string) \"JPEG2000\";"
-        "application/x-rtp, "
-        "media = (string) \"video\", " "clock-rate = (int) 90000, "
-        "colorspace = (string) { sRGB, sYUV, GRAY }, "
-        "encoding-name = (string) \"JPEG2000\";")
+        "media = (string) \"video\", "
+        "clock-rate = (int) 90000, " "encoding-name = (string) \"JPEG2000\"")
     );
+
+typedef enum
+{
+  J2K_MARKER = 0xFF,
+  J2K_MARKER_SOC = 0x4F,
+  J2K_MARKER_SOT = 0x90,
+  J2K_MARKER_SOP = 0x91,
+  J2K_MARKER_SOD = 0x93,
+  J2K_MARKER_EOC = 0xD9
+} RtpJ2KMarker;
 
 enum
 {
@@ -88,7 +78,7 @@ gst_rtp_j2k_depay_change_state (GstElement * element,
 static gboolean gst_rtp_j2k_depay_setcaps (GstRTPBaseDepayload * depayload,
     GstCaps * caps);
 static GstBuffer *gst_rtp_j2k_depay_process (GstRTPBaseDepayload * depayload,
-    GstRTPBuffer * rtp);
+    GstBuffer * buf);
 
 static void
 gst_rtp_j2k_depay_class_init (GstRtpJ2KDepayClass * klass)
@@ -106,10 +96,10 @@ gst_rtp_j2k_depay_class_init (GstRtpJ2KDepayClass * klass)
   gobject_class->set_property = gst_rtp_j2k_depay_set_property;
   gobject_class->get_property = gst_rtp_j2k_depay_get_property;
 
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_j2k_depay_src_template);
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_j2k_depay_sink_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_j2k_depay_src_template));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_j2k_depay_sink_template));
 
   gst_element_class_set_static_metadata (gstelement_class,
       "RTP JPEG 2000 depayloader", "Codec/Depayloader/Network/RTP",
@@ -119,7 +109,7 @@ gst_rtp_j2k_depay_class_init (GstRtpJ2KDepayClass * klass)
   gstelement_class->change_state = gst_rtp_j2k_depay_change_state;
 
   gstrtpbasedepayload_class->set_caps = gst_rtp_j2k_depay_setcaps;
-  gstrtpbasedepayload_class->process_rtp_packet = gst_rtp_j2k_depay_process;
+  gstrtpbasedepayload_class->process = gst_rtp_j2k_depay_process;
 
   GST_DEBUG_CATEGORY_INIT (rtpj2kdepay_debug, "rtpj2kdepay", 0,
       "J2K Video RTP Depayloader");
@@ -183,12 +173,10 @@ gst_rtp_j2k_depay_finalize (GObject * object)
 static gboolean
 gst_rtp_j2k_depay_setcaps (GstRTPBaseDepayload * depayload, GstCaps * caps)
 {
-  GstStructure *structure = NULL;
+  GstStructure *structure;
   gint clock_rate;
-  GstCaps *outcaps = NULL;
-  gboolean res = FALSE;
-  const gchar *colorspace = NULL;
-  const gchar *sampling = NULL;
+  GstCaps *outcaps;
+  gboolean res;
 
   structure = gst_caps_get_structure (caps, 0);
 
@@ -196,35 +184,10 @@ gst_rtp_j2k_depay_setcaps (GstRTPBaseDepayload * depayload, GstCaps * caps)
     clock_rate = 90000;
   depayload->clock_rate = clock_rate;
 
-  sampling = gst_structure_get_string (structure, "sampling");
-  if (sampling) {
-    if (!strcmp (sampling, GST_RTP_J2K_RGB) ||
-        !strcmp (sampling, GST_RTP_J2K_RGBA) ||
-        !strcmp (sampling, GST_RTP_J2K_BGR) ||
-        !strcmp (sampling, GST_RTP_J2K_BGRA))
-      colorspace = "sRGB";
-    else if (!strcmp (sampling, GST_RTP_J2K_GRAYSCALE))
-      colorspace = "GRAY";
-    else
-      colorspace = "sYUV";
-  } else {
-    GST_ELEMENT_WARNING (depayload, STREAM, DEMUX, NULL,
-        ("Non-compliant stream: sampling field missing. Frames my appear incorrect"));
-    colorspace = gst_structure_get_string (structure, "colorspace");
-    if (!strcmp (colorspace, "GRAY")) {
-      sampling = GST_RTP_J2K_GRAYSCALE;
-    }
-  }
-
-  outcaps = gst_caps_new_simple ("image/x-jpc",
-      "framerate", GST_TYPE_FRACTION, 0, 1,
-      "fields", G_TYPE_INT, 1, "colorspace", G_TYPE_STRING, colorspace, NULL);
-
-  if (sampling)
-    gst_caps_set_simple (outcaps, "sampling", G_TYPE_STRING, sampling, NULL);
-
+  outcaps =
+      gst_caps_new_simple ("image/x-jpc", "framerate", GST_TYPE_FRACTION, 0, 1,
+      "fields", G_TYPE_INT, 1, "colorspace", G_TYPE_STRING, "sYUV", NULL);
   res = gst_pad_set_caps (depayload->srcpad, outcaps);
-
   gst_caps_unref (outcaps);
 
   return res;
@@ -337,10 +300,10 @@ gst_rtp_j2k_depay_flush_tile (GstRTPBaseDepayload * depayload)
       if (map.size < 12)
         goto invalid_tile;
 
-      if (map.data[0] == GST_J2K_MARKER && map.data[1] == GST_J2K_MARKER_SOT) {
+      if (map.data[0] == 0xff && map.data[1] == J2K_MARKER_SOT) {
         guint Psot, nPsot;
 
-        if (end[0] == GST_J2K_MARKER && end[1] == GST_J2K_MARKER_EOC)
+        if (end[0] == 0xff && end[1] == J2K_MARKER_EOC)
           nPsot = avail - 2;
         else
           nPsot = avail;
@@ -409,15 +372,18 @@ gst_rtp_j2k_depay_flush_frame (GstRTPBaseDepayload * depayload)
     goto done;
 
   if (avail > 2) {
-    GstBuffer *outbuf;
+    GList *list, *walk;
+    GstBufferList *buflist;
 
     /* take the last bytes of the JPEG 2000 data to see if there is an EOC
      * marker */
     gst_adapter_copy (rtpj2kdepay->f_adapter, end, avail - 2, 2);
 
-    if (end[0] != GST_J2K_MARKER && end[1] != GST_J2K_MARKER_EOC) {
-      end[0] = GST_J2K_MARKER;
-      end[1] = GST_J2K_MARKER_EOC;
+    if (end[0] != 0xff && end[1] != 0xd9) {
+      GstBuffer *outbuf;
+
+      end[0] = 0xff;
+      end[1] = 0xd9;
 
       GST_DEBUG_OBJECT (rtpj2kdepay, "no EOC marker, adding one");
 
@@ -429,11 +395,17 @@ gst_rtp_j2k_depay_flush_frame (GstRTPBaseDepayload * depayload)
       avail += 2;
     }
 
-    GST_DEBUG_OBJECT (rtpj2kdepay, "pushing buffer of %u bytes", avail);
-    outbuf = gst_adapter_take_buffer (rtpj2kdepay->f_adapter, avail);
-    gst_rtp_drop_meta (GST_ELEMENT_CAST (depayload),
-        outbuf, g_quark_from_static_string (GST_META_TAG_VIDEO_STR));
-    ret = gst_rtp_base_depayload_push (depayload, outbuf);
+    GST_DEBUG_OBJECT (rtpj2kdepay, "pushing buffer list of %u bytes", avail);
+    list = gst_adapter_take_list (rtpj2kdepay->f_adapter, avail);
+
+    buflist = gst_buffer_list_new ();
+
+    for (walk = list; walk; walk = g_list_next (walk))
+      gst_buffer_list_add (buflist, GST_BUFFER_CAST (walk->data));
+
+    g_list_free (list);
+
+    ret = gst_rtp_base_depayload_push_list (depayload, buflist);
   } else {
     GST_WARNING_OBJECT (rtpj2kdepay, "empty packet");
     gst_adapter_clear (rtpj2kdepay->f_adapter);
@@ -454,24 +426,27 @@ done:
 }
 
 static GstBuffer *
-gst_rtp_j2k_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
+gst_rtp_j2k_depay_process (GstRTPBaseDepayload * depayload, GstBuffer * buf)
 {
   GstRtpJ2KDepay *rtpj2kdepay;
   guint8 *payload;
   guint MHF, mh_id, frag_offset, tile, payload_len, j2klen;
   gint gap;
   guint32 rtptime;
+  GstRTPBuffer rtp = { NULL };
 
   rtpj2kdepay = GST_RTP_J2K_DEPAY (depayload);
 
-  payload = gst_rtp_buffer_get_payload (rtp);
-  payload_len = gst_rtp_buffer_get_payload_len (rtp);
+  gst_rtp_buffer_map (buf, GST_MAP_READ, &rtp);
+
+  payload = gst_rtp_buffer_get_payload (&rtp);
+  payload_len = gst_rtp_buffer_get_payload_len (&rtp);
 
   /* we need at least a header */
-  if (payload_len < GST_RTP_J2K_HEADER_SIZE)
+  if (payload_len < 8)
     goto empty_packet;
 
-  rtptime = gst_rtp_buffer_get_timestamp (rtp);
+  rtptime = gst_rtp_buffer_get_timestamp (&rtp);
 
   /* new timestamp marks new frame */
   if (rtpj2kdepay->last_rtptime != rtptime) {
@@ -499,7 +474,7 @@ gst_rtp_j2k_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
 
   tile = (payload[2] << 8) | payload[3];
   frag_offset = (payload[5] << 16) | (payload[6] << 8) | payload[7];
-  j2klen = payload_len - GST_RTP_J2K_HEADER_SIZE;
+  j2klen = payload_len - 8;
 
   GST_DEBUG_OBJECT (rtpj2kdepay, "MHF %u, tile %u, frag %u, expected %u", MHF,
       tile, frag_offset, rtpj2kdepay->next_frag);
@@ -516,19 +491,19 @@ gst_rtp_j2k_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
   }
 
   /* check for sync code */
-  if (j2klen > 2 && payload[GST_RTP_J2K_HEADER_SIZE] == GST_J2K_MARKER) {
-    guint marker = payload[GST_RTP_J2K_HEADER_SIZE + 1];
+  if (j2klen > 2 && payload[8] == 0xff) {
+    guint marker = payload[9];
 
     /* packets must start with SOC, SOT or SOP */
     switch (marker) {
-      case GST_J2K_MARKER_SOC:
+      case J2K_MARKER_SOC:
         GST_DEBUG_OBJECT (rtpj2kdepay, "found SOC packet");
         /* flush the previous frame, should have happened when the timestamp
          * changed above. */
         gst_rtp_j2k_depay_flush_frame (depayload);
         rtpj2kdepay->have_sync = TRUE;
         break;
-      case GST_J2K_MARKER_SOT:
+      case J2K_MARKER_SOT:
         /* flush the previous tile */
         gst_rtp_j2k_depay_flush_tile (depayload);
         GST_DEBUG_OBJECT (rtpj2kdepay, "found SOT packet");
@@ -536,7 +511,7 @@ gst_rtp_j2k_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
         /* we sync on the tile now */
         rtpj2kdepay->last_tile = tile;
         break;
-      case GST_J2K_MARKER_SOP:
+      case J2K_MARKER_SOP:
         GST_DEBUG_OBJECT (rtpj2kdepay, "found SOP packet");
         /* flush the previous PU */
         gst_rtp_j2k_depay_flush_pu (depayload);
@@ -568,7 +543,7 @@ gst_rtp_j2k_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
     }
     /* and push in pu adapter */
     GST_DEBUG_OBJECT (rtpj2kdepay, "push pu of size %u in adapter", j2klen);
-    pu_frag = gst_rtp_buffer_get_payload_subbuffer (rtp, 8, -1);
+    pu_frag = gst_rtp_buffer_get_payload_subbuffer (&rtp, 8, -1);
     gst_adapter_push (rtpj2kdepay->pu_adapter, pu_frag);
 
     if (MHF & 2) {
@@ -581,11 +556,12 @@ gst_rtp_j2k_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
   }
 
   /* marker bit finishes the frame */
-  if (gst_rtp_buffer_get_marker (rtp)) {
+  if (gst_rtp_buffer_get_marker (&rtp)) {
     GST_DEBUG_OBJECT (rtpj2kdepay, "marker set, last buffer");
     /* then flush frame */
     gst_rtp_j2k_depay_flush_frame (depayload);
   }
+  gst_rtp_buffer_unmap (&rtp);
 
   return NULL;
 
@@ -594,6 +570,7 @@ empty_packet:
   {
     GST_ELEMENT_WARNING (rtpj2kdepay, STREAM, DECODE,
         ("Empty Payload."), (NULL));
+    gst_rtp_buffer_unmap (&rtp);
     return NULL;
   }
 wrong_mh_id:
@@ -602,6 +579,7 @@ wrong_mh_id:
         ("Invalid mh_id %u, expected %u", mh_id, rtpj2kdepay->last_mh_id),
         (NULL));
     gst_rtp_j2k_depay_clear_pu (rtpj2kdepay);
+    gst_rtp_buffer_unmap (&rtp);
     return NULL;
   }
 }

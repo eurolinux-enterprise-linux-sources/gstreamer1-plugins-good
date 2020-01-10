@@ -38,10 +38,8 @@
 
 #include <string.h>
 #include <gst/rtp/gstrtpbuffer.h>
-#include <gst/video/video.h>
 
 #include "gstrtpjpegpay.h"
-#include "gstrtputils.h"
 
 static GstStaticPadTemplate gst_rtp_jpeg_pay_sink_template =
     GST_STATIC_PAD_TEMPLATE ("sink",
@@ -51,18 +49,12 @@ static GstStaticPadTemplate gst_rtp_jpeg_pay_sink_template =
     );
 
 static GstStaticPadTemplate gst_rtp_jpeg_pay_src_template =
-    GST_STATIC_PAD_TEMPLATE ("src",
+GST_STATIC_PAD_TEMPLATE ("src",
     GST_PAD_SRC,
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS ("application/x-rtp, "
         "  media = (string) \"video\", "
-        "  payload = (int) " GST_RTP_PAYLOAD_JPEG_STRING ", "
-        "  clock-rate = (int) 90000,   "
-        "  encoding-name = (string) \"JPEG\", "
-        "  width = (int) [ 1, 65536 ], " "  height = (int) [ 1, 65536 ]; "
-        " application/x-rtp, "
-        "  media = (string) \"video\", "
-        "  payload = (int) " GST_RTP_PAYLOAD_DYNAMIC_STRING ", "
+        "  payload = (int) 26 ,        "
         "  clock-rate = (int) 90000,   "
         "  encoding-name = (string) \"JPEG\", "
         "  width = (int) [ 1, 65536 ], " "  height = (int) [ 1, 65536 ]")
@@ -107,15 +99,10 @@ enum _RtpJpegMarker
   JPEG_MARKER_DQT = 0xDB,
   JPEG_MARKER_SOF = 0xC0,
   JPEG_MARKER_DHT = 0xC4,
-  JPEG_MARKER_JPG = 0xC8,
   JPEG_MARKER_SOS = 0xDA,
   JPEG_MARKER_EOI = 0xD9,
   JPEG_MARKER_DRI = 0xDD,
-  JPEG_MARKER_APP0 = 0xE0,
-  JPEG_MARKER_H264 = 0xE4,      /* APP4 */
-  JPEG_MARKER_APP15 = 0xEF,
-  JPEG_MARKER_JPG0 = 0xF0,
-  JPEG_MARKER_JPG13 = 0xFD
+  JPEG_MARKER_H264 = 0xE4
 };
 
 #define DEFAULT_JPEG_QUANT    255
@@ -127,7 +114,8 @@ enum
 {
   PROP_0,
   PROP_JPEG_QUALITY,
-  PROP_JPEG_TYPE
+  PROP_JPEG_TYPE,
+  PROP_LAST
 };
 
 enum
@@ -261,10 +249,10 @@ gst_rtp_jpeg_pay_class_init (GstRtpJPEGPayClass * klass)
   gobject_class->set_property = gst_rtp_jpeg_pay_set_property;
   gobject_class->get_property = gst_rtp_jpeg_pay_get_property;
 
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_jpeg_pay_src_template);
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_jpeg_pay_sink_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_jpeg_pay_src_template));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_jpeg_pay_sink_template));
 
   gst_element_class_set_static_metadata (gstelement_class, "RTP JPEG payloader",
       "Codec/Payloader/Network/RTP",
@@ -296,8 +284,6 @@ gst_rtp_jpeg_pay_init (GstRtpJPEGPay * pay)
   pay->type = DEFAULT_JPEG_TYPE;
   pay->width = -1;
   pay->height = -1;
-
-  GST_RTP_BASE_PAYLOAD_PT (pay) = GST_RTP_PAYLOAD_JPEG;
 }
 
 static gboolean
@@ -310,6 +296,7 @@ gst_rtp_jpeg_pay_setcaps (GstRTPBasePayload * basepayload, GstCaps * caps)
   gint num = 0, denom;
   gchar *rate = NULL;
   gchar *dim = NULL;
+  gchar *size;
 
   pay = GST_RTP_JPEG_PAY (basepayload);
 
@@ -336,14 +323,15 @@ gst_rtp_jpeg_pay_setcaps (GstRTPBasePayload * basepayload, GstCaps * caps)
     pay->width = GST_ROUND_UP_8 (width) / 8;
   }
 
-  gst_rtp_base_payload_set_options (basepayload, "video",
-      basepayload->pt != GST_RTP_PAYLOAD_JPEG, "JPEG", 90000);
+  gst_rtp_base_payload_set_options (basepayload, "video", TRUE, "JPEG", 90000);
 
   if (num > 0) {
     gdouble framerate;
     gst_util_fraction_to_double (num, denom, &framerate);
     rate = g_strdup_printf ("%f", framerate);
   }
+
+  size = g_strdup_printf ("%d-%d", width, height);
 
   if (pay->width == 0) {
     GST_DEBUG_OBJECT (pay,
@@ -353,19 +341,24 @@ gst_rtp_jpeg_pay_setcaps (GstRTPBasePayload * basepayload, GstCaps * caps)
 
   if (rate != NULL && dim != NULL) {
     res = gst_rtp_base_payload_set_outcaps (basepayload, "a-framerate",
-        G_TYPE_STRING, rate, "x-dimensions", G_TYPE_STRING, dim, NULL);
+        G_TYPE_STRING, rate, "a-framesize", G_TYPE_STRING, size,
+        "x-dimensions", G_TYPE_STRING, dim, NULL);
   } else if (rate != NULL && dim == NULL) {
     res = gst_rtp_base_payload_set_outcaps (basepayload, "a-framerate",
-        G_TYPE_STRING, rate, NULL);
+        G_TYPE_STRING, rate, "a-framesize", G_TYPE_STRING, size, NULL);
   } else if (rate == NULL && dim != NULL) {
     res = gst_rtp_base_payload_set_outcaps (basepayload, "x-dimensions",
-        G_TYPE_STRING, dim, NULL);
+        G_TYPE_STRING, dim, "a-framesize", G_TYPE_STRING, size, NULL);
   } else {
-    res = gst_rtp_base_payload_set_outcaps (basepayload, NULL);
+    res = gst_rtp_base_payload_set_outcaps (basepayload, "a-framesize",
+        G_TYPE_STRING, size, NULL);
   }
 
-  g_free (dim);
-  g_free (rate);
+  if (dim != NULL)
+    g_free (dim);
+  if (rate != NULL)
+    g_free (rate);
+  g_free (size);
 
   return res;
 
@@ -558,6 +551,21 @@ gst_rtp_jpeg_pay_read_sof (GstRtpJPEGPay * pay, const guint8 * data,
   if (!(info[2].samp == 0x11))
     goto invalid_comp;
 
+  /* the other components are free to use any quant table but they have to
+   * have the same table id */
+  if (info[1].qt != info[2].qt) {
+    /* Some MJPG (like the one from the Logitech C-920 camera) uses different
+     * quant tables for component 1 and 2 but both tables contain the exact
+     * same data, so we could consider them as being the same tables */
+    if (!(info[1].qt < tables_elements &&
+            info[2].qt < tables_elements &&
+            tables[info[1].qt].size > 0 &&
+            tables[info[1].qt].size == tables[info[2].qt].size &&
+            memcmp (tables[info[1].qt].data, tables[info[2].qt].data,
+                tables[info[1].qt].size) == 0))
+      goto invalid_comp;
+  }
+
   return TRUE;
 
   /* ERRORS */
@@ -688,7 +696,7 @@ gst_rtp_jpeg_pay_handle_buffer (GstRTPBasePayload * basepayload,
   gst_buffer_map (buffer, &map, GST_MAP_READ);
   data = map.data;
   size = map.size;
-  timestamp = GST_BUFFER_PTS (buffer);
+  timestamp = GST_BUFFER_TIMESTAMP (buffer);
   offset = 0;
   discont = GST_BUFFER_IS_DISCONT (buffer);
 
@@ -702,10 +710,8 @@ gst_rtp_jpeg_pay_handle_buffer (GstRTPBasePayload * basepayload,
   dri_found = FALSE;
 
   while (!sos_found && (offset < size)) {
-    gint marker;
-
     GST_LOG_OBJECT (pay, "checking from offset %u", offset);
-    switch ((marker = gst_rtp_jpeg_pay_scan_marker (data, size, &offset))) {
+    switch (gst_rtp_jpeg_pay_scan_marker (data, size, &offset)) {
       case JPEG_MARKER_JFIF:
       case JPEG_MARKER_CMT:
       case JPEG_MARKER_DHT:
@@ -742,14 +748,6 @@ gst_rtp_jpeg_pay_handle_buffer (GstRTPBasePayload * basepayload,
           dri_found = TRUE;
         break;
       default:
-        if (marker == JPEG_MARKER_JPG ||
-            (marker >= JPEG_MARKER_JPG0 && marker <= JPEG_MARKER_JPG13) ||
-            (marker >= JPEG_MARKER_APP0 && marker <= JPEG_MARKER_APP15)) {
-          GST_LOG_OBJECT (pay, "skipping marker");
-          offset += gst_rtp_jpeg_pay_header_size (data, offset);
-        } else {
-          GST_FIXME_OBJECT (pay, "unhandled marker 0x%02x", marker);
-        }
         break;
     }
   }
@@ -891,15 +889,13 @@ gst_rtp_jpeg_pay_handle_buffer (GstRTPBasePayload * basepayload,
     gst_rtp_buffer_unmap (&rtp);
 
     /* create a new buf to hold the payload */
-    paybuf = gst_buffer_copy_region (buffer, GST_BUFFER_COPY_ALL,
+    paybuf = gst_buffer_copy_region (buffer, GST_BUFFER_COPY_MEMORY,
         jpeg_header_size + offset, payload_size);
 
     /* join memory parts */
-    gst_rtp_copy_meta (GST_ELEMENT_CAST (pay), outbuf, paybuf,
-        g_quark_from_static_string (GST_META_TAG_VIDEO_STR));
     outbuf = gst_buffer_append (outbuf, paybuf);
 
-    GST_BUFFER_PTS (outbuf) = timestamp;
+    GST_BUFFER_TIMESTAMP (outbuf) = timestamp;
 
     if (discont) {
       GST_BUFFER_FLAG_SET (outbuf, GST_BUFFER_FLAG_DISCONT);

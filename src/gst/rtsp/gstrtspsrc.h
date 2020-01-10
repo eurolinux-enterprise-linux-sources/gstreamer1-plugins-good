@@ -48,7 +48,10 @@
 
 G_BEGIN_DECLS
 
-#include <gst/rtsp/rtsp.h>
+#include <gst/rtsp/gstrtspconnection.h>
+#include <gst/rtsp/gstrtspmessage.h>
+#include <gst/rtsp/gstrtspurl.h>
+#include <gst/rtsp/gstrtsprange.h>
 #include <gio/gio.h>
 
 #include "gstrtspext.h"
@@ -103,7 +106,6 @@ struct _GstRTSPStream {
   gboolean      skipped;
   gboolean      eos;
   gboolean      discont;
-  gboolean      need_caps;
 
   /* for interleaved mode */
   guint8        channel[2];
@@ -145,9 +147,6 @@ struct _GstRTSPStream {
   /* session */
   GObject      *session;
 
-  /* srtp key management */
-  GstMIKEYMessage *mikey;
-
   /* bandwidth */
   guint         as_bandwidth;
   guint         rs_bandwidth;
@@ -158,7 +157,6 @@ struct _GstRTSPStream {
   gboolean      is_multicast;
   guint         ttl;
 
-  GstStructure     *rtx_pt_map;
 };
 
 /**
@@ -186,7 +184,7 @@ struct _GstRTSPSrc {
   gboolean         need_range;
   gboolean         skip;
   gint             free_channel;
-  gboolean         need_segment;
+  GstEvent        *start_segment;
   GstClockTime     base_time;
 
   /* UDP mode loop */
@@ -238,12 +236,6 @@ struct _GstRTSPSrc {
   GstStructure     *sdes;
   GTlsCertificateFlags tls_validation_flags;
   GTlsDatabase     *tls_database;
-  GTlsInteraction  *tls_interaction;
-  gboolean          do_retransmission;
-  gint              ntp_time_source;
-  gchar            *user_agent;
-  GstClockTime      max_rtcp_rtp_time_diff;
-  gboolean          rfc7273_sync;
 
   /* state */
   GstRTSPState       state;

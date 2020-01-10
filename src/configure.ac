@@ -1,16 +1,16 @@
-AC_PREREQ([2.69])
+AC_PREREQ([2.68])
 
 dnl please read gstreamer/docs/random/autotools before changing this file
 
 dnl initialize autoconf
 dnl releases only do -Wall, git and prerelease does -Werror too
 dnl use a three digit version number for releases, and four for git/pre
-AC_INIT([GStreamer Good Plug-ins],[1.10.4],[http://bugzilla.gnome.org/enter_bug.cgi?product=GStreamer],[gst-plugins-good])
+AC_INIT([GStreamer Good Plug-ins],[1.4.5],[http://bugzilla.gnome.org/enter_bug.cgi?product=GStreamer],[gst-plugins-good])
 
 AG_GST_INIT
 
 dnl initialize automake
-AM_INIT_AUTOMAKE([-Wno-portability 1.14 no-dist-gzip dist-xz tar-ustar subdir-objects])
+AM_INIT_AUTOMAKE([-Wno-portability 1.11 no-dist-gzip dist-xz tar-ustar subdir-objects])
 
 dnl define PACKAGE_VERSION_* variables
 AS_VERSION
@@ -43,11 +43,11 @@ AC_DEFINE_UNQUOTED(GST_API_VERSION, "$GST_API_VERSION",
   [GStreamer API Version])
 
 AG_GST_LIBTOOL_PREPARE
-AS_LIBTOOL(GST, 1004, 0, 1004)
+AS_LIBTOOL(GST, 405, 0, 405)
 
 dnl *** required versions of GStreamer stuff ***
-GST_REQ=1.10.0
-GSTPB_REQ=1.10.0
+GST_REQ=1.4.0
+GSTPB_REQ=1.4.0
 
 dnl *** autotools stuff ****
 
@@ -66,7 +66,6 @@ AG_GST_GETTEXT([gst-plugins-good-$GST_API_VERSION])
 dnl *** check for arguments to configure ***
 
 AG_GST_ARG_DISABLE_FATAL_WARNINGS
-AG_GST_ARG_ENABLE_EXTRA_CHECKS
 
 AG_GST_ARG_DEBUG
 AG_GST_ARG_PROFILING
@@ -84,8 +83,6 @@ AG_GST_ARG_WITH_PLUGINS
 AG_GST_ARG_ENABLE_EXTERNAL
 
 AG_GST_ARG_ENABLE_EXPERIMENTAL
-
-AG_GST_PKG_CONFIG_PATH
 
 dnl *** checks for platform ***
 
@@ -144,9 +141,6 @@ AC_CHECK_FUNCS(clock_gettime, [], [
     AC_SUBST([LIBRT])
   ])
 ])
-
-dnl check for pthreads
-AX_PTHREAD
 
 dnl *** checks for header files ***
 
@@ -209,7 +203,7 @@ dnl *** checks for dependency libraries ***
 
 
 dnl GLib
-GLIB_REQ=2.40.0
+GLIB_REQ=2.32.0
 AG_GST_GLIB_CHECK([$GLIB_REQ])
 
 dnl Orc
@@ -255,21 +249,6 @@ if test "x$BUILD_EXAMPLES" = "xyes"; then
 fi
 AM_CONDITIONAL(HAVE_GTK, test "x$HAVE_GTK" = "xyes")
 AM_CONDITIONAL(HAVE_GTK_X11, test "x$HAVE_GTK_X11" = "xyes")
-
-dnl Check for -Bsymbolic-functions linker flag used to avoid
-dnl intra-library PLT jumps, if available.
-AC_ARG_ENABLE(Bsymbolic,
-              [AS_HELP_STRING([--disable-Bsymbolic],[avoid linking with -Bsymbolic])],,
-              [SAVED_LDFLAGS="${LDFLAGS}" SAVED_LIBS="${LIBS}"
-               AC_MSG_CHECKING([for -Bsymbolic-functions linker flag])
-               LDFLAGS=-Wl,-Bsymbolic-functions
-               LIBS=
-               AC_TRY_LINK([], [return 0],
-                           AC_MSG_RESULT(yes)
-                           enable_Bsymbolic=yes,
-                           AC_MSG_RESULT(no)
-                           enable_Bsymbolic=no)
-               LDFLAGS="${SAVED_LDFLAGS}" LIBS="${SAVED_LIBS}"])
 
 dnl *** set variables based on configure arguments ***
 
@@ -409,7 +388,7 @@ AG_GST_CHECK_FEATURE(DIRECTSOUND, [DirectSound plug-in], directsoundsink, [
   save_LIBS="$LIBS"
   CFLAGS="$CFLAGS $DIRECTSOUND_CFLAGS"
   LDFLAGS="$LDFLAGS $DIRECTSOUND_LDFLAGS"
-  LIBS="$LIBS -ldsound -ldxerr9 -luser32 -lole32"
+  LIBS="$LIBS -ldsound -ldxerr9 -luser32"
   AC_MSG_CHECKING(for DirectSound LDFLAGS)
   AC_LINK_IFELSE([AC_LANG_PROGRAM([[
 #include <windows.h>
@@ -418,7 +397,6 @@ AG_GST_CHECK_FEATURE(DIRECTSOUND, [DirectSound plug-in], directsoundsink, [
 ]], [[
   DXGetErrorString9 (0);
   DirectSoundCreate(NULL, NULL, NULL);
-  CLSIDFromString(NULL, NULL);
 ]])
 ],
     [HAVE_DIRECTSOUND="yes"],
@@ -430,7 +408,7 @@ AG_GST_CHECK_FEATURE(DIRECTSOUND, [DirectSound plug-in], directsoundsink, [
 
   if test "x$HAVE_DIRECTSOUND" = "xyes";  then
     dnl this is much more than we want
-    DIRECTSOUND_LIBS="-ldsound -ldxerr9 -luser32 -lole32"
+    DIRECTSOUND_LIBS="-ldsound -ldxerr9 -luser32"
     AC_SUBST(DIRECTSOUND_CFLAGS)
     AC_SUBST(DIRECTSOUND_LDFLAGS)
     AC_SUBST(DIRECTSOUND_LIBS)
@@ -528,10 +506,7 @@ AG_GST_CHECK_FEATURE(GST_V4L2, [Video 4 Linux 2], video4linux2, [
   AC_MSG_CHECKING([Checking for video4linux2 header ...])
   AC_CHECK_HEADER(linux/videodev2.h, [ HAVE_GST_V4L2=yes ],
   [
-    AC_CHECK_HEADER(sys/videodev2.h, [ HAVE_GST_V4L2=yes ],
-    [
-      AC_CHECK_HEADER(sys/videoio.h, [ HAVE_GST_V4L2=yes ])
-    ])
+    AC_CHECK_HEADER(sys/videodev2.h, [ HAVE_GST_V4L2=yes ])
   ])
   if test "x$HAVE_VIDEODEV" = "xno"; then
      AC_MSG_WARN([video4linux2 was not found])
@@ -575,51 +550,59 @@ if test x$HAVE_GST_V4L2 = xyes; then
   fi
 fi
 
-dnl Allow enabling v4l2 device probing
-AS_CASE([$host],
-    [*-*linux*],
-      [AS_CASE([$host_cpu],
-        [arm*], [
-          enable_v4l2_probe="yes"],
-        [aarch64*], [
-          enable_v4l2_probe="yes"])])
-AC_ARG_ENABLE(
-  v4l2-probe,
-  AC_HELP_STRING(
-    [--enable-v4l2-probe],
-    [enable V4L2 plugin to probe devices @<:@default=no@:>@]))
-if test "x$enable_v4l2_probe" = "xyes"; then
-  AC_DEFINE(GST_V4L2_ENABLE_PROBE, 1,
-    [Define if Video4Linux probe shall be run at plugin load])
-fi
-
 dnl Check for X11
 translit(dnm, m, l) AM_CONDITIONAL(USE_X, true)
 AG_GST_CHECK_FEATURE(X, [X libraries and plugins],
                   [ximagesrc], [
-  PKG_CHECK_MODULES([X], [x11], [
-    HAVE_X="yes"
+  AG_GST_CHECK_X
+
+  if test "x$HAVE_X" = "xyes"
+  then
     dnl check for Xfixes
-    PKG_CHECK_MODULES([XFIXES], [ xfixes ], [
-      AC_DEFINE(HAVE_XFIXES, 1, [Defined if Xfixes is available])
-    ], [ HAVE_XFIXES="no" ])
+    PKG_CHECK_MODULES(XFIXES, xfixes, HAVE_XFIXES="yes", HAVE_XFIXES="no")
+    if test "x$HAVE_XFIXES" = "xyes"
+    then
+        XFIXES_CFLAGS="-DHAVE_XFIXES $XFIXES_CFLAGS"
+    fi
+    AC_SUBST(XFIXES_LIBS)
+    AC_SUBST(XFIXES_CFLAGS)
 
     dnl check for Xdamage
-    PKG_CHECK_MODULES([XDAMAGE], [ xdamage ], [
-      AC_DEFINE(HAVE_XDAMAGE, 1, [Defined if Xdamage is available])
-    ], [ HAVE_XDAMAGE="no" ])
+    PKG_CHECK_MODULES(XDAMAGE, xdamage, HAVE_XDAMAGE="yes", HAVE_XDAMAGE="no")
+    if test "x$HAVE_XDAMAGE" = "xyes"
+    then
+        XDAMAGE_CFLAGS="-DHAVE_XDAMAGE $XDAMAGE_CFLAGS"
+    fi
+    AC_SUBST(XDAMAGE_LIBS)
+    AC_SUBST(XDAMAGE_CFLAGS)
+  fi
+])
 
-    dnl check for X Shm
-    PKG_CHECK_MODULES([XEXT], [ xext ], [
-      AC_CHECK_LIB([Xext], [ XShmAttach ], [
-        AC_DEFINE(HAVE_XSHM, 1, [Defined if XShm is available])
-        XSHM_LIBS="$XEXT_LIBS"
-        XSHM_CFLAGS="$XEXT_CFLAGS"
-      ], [ HAVE_XEXT="no" ] , [ $X_LIBS ])
-    ])
-    AC_SUBST(XSHM_LIBS)
-    AC_SUBST(XSHM_CFLAGS)
-  ], [ HAVE_X="no" ])
+dnl FIXME: this should be rolled into the test above, it's just an additional
+dnl feature of the ximagesrc plug-in
+dnl This is the same as in gst-plugins-base
+dnl check for X Shm
+translit(dnm, m, l) AM_CONDITIONAL(USE_XSHM, true)
+AG_GST_CHECK_FEATURE(XSHM, [X Shared Memory extension], , [
+  if test x$HAVE_X = xyes; then
+    AC_CHECK_LIB(Xext, XShmAttach,
+                 HAVE_XSHM="yes", HAVE_XSHM="no",
+                 $X_LIBS)
+    if test "x$HAVE_XSHM" = "xyes"; then
+      XSHM_LIBS="-lXext"
+    else
+      dnl On AIX, it is in XextSam instead, but we still need -lXext
+      AC_CHECK_LIB(XextSam, XShmAttach,
+                   HAVE_XSHM="yes", HAVE_XSHM="no",
+                   $X_LIBS)
+      if test "x$HAVE_XSHM" = "xyes"; then
+        XSHM_LIBS="-lXext -lXextSam"
+      fi
+    fi
+  fi
+], ,[
+  AC_SUBST(HAVE_XSHM)
+  AC_SUBST(XSHM_LIBS)
 ])
 
 dnl *** ext plug-ins ***
@@ -781,15 +764,52 @@ AG_GST_CHECK_FEATURE(SHOUT2, [Shoutcast/Icecast client library], shout2, [
 dnl *** soup ***
 translit(dnm, m, l) AM_CONDITIONAL(USE_SOUP, true)
 AG_GST_CHECK_FEATURE(SOUP, [soup http client plugin (2.4)], souphttpsrc, [
-  PKG_CHECK_MODULES(SOUP, libsoup-2.4 >= 2.48, [HAVE_SOUP="yes"], [HAVE_SOUP="no"])
+  PKG_CHECK_MODULES(SOUP, libsoup-2.4 >= 2.40, [HAVE_SOUP="yes"], [HAVE_SOUP="no"])
   AC_SUBST(SOUP_CFLAGS)
   AC_SUBST(SOUP_LIBS)
 ])
 
-dnl *** speex ***
+dnl *** speex >= 1.0.4 or >= 1.1.5 ***
+dnl   1.1.4 and earlier were not API/ABI compatible with 1.0
+dnl   1.1.6 is the first to use a .pc/pkg-config file ***
+dnl   speex_jitter.h is 1.1.x only
 translit(dnm, m, l) AM_CONDITIONAL(USE_SPEEX, true)
 AG_GST_CHECK_FEATURE(SPEEX, [speex speech codec], speex, [
   AG_GST_PKG_CHECK_MODULES(SPEEX, speex >= 1.1.6)
+  if test $HAVE_SPEEX = no
+  then
+    AG_GST_CHECK_LIBHEADER(SPEEX, speex, speex_bits_init, , speex/speex.h, [
+      AC_CHECK_HEADER(speex/speex_jitter.h, [
+        dnl speex 1.1.x :
+        AG_GST_CHECK_LIBHEADER(SPEEX, speex, speex_encode_int, , speex/speex.h, [
+          dnl speex 1.1.5 or + :
+          HAVE_SPEEX="yes"
+          SPEEX_LIBS="-lspeex"
+          AC_SUBST(SPEEX_CFLAGS)
+          AC_SUBST(SPEEX_LIBS)
+        ],[
+          HAVE_SPEEX="no"
+        ])
+      ],[
+        dnl speex 1.0.x :
+          AC_CHECK_DECL(SPEEX_GET_LOOKAHEAD, [
+            dnl speex 1.0.4
+            HAVE_SPEEX="yes"
+            SPEEX_LIBS="-lspeex"
+            AC_SUBST(SPEEX_CFLAGS)
+            AC_SUBST(SPEEX_LIBS)
+
+            AC_DEFINE_UNQUOTED(SPEEX_1_0, 1,
+              [defined if speex 1.0.x API detected])
+        ],[
+            HAVE_SPEEX="no"
+            AC_MSG_NOTICE(You need at least 1.0.4 to compile the speex plugin)
+        ], [
+#include <speex/speex.h>
+        ])
+      ])
+    ])
+  fi
 ])
 
 dnl *** taglib ***
@@ -841,11 +861,6 @@ AG_GST_CHECK_FEATURE(VPX, [VPX decoder], vpx, [
         AC_DEFINE(HAVE_VP9_DECODER, 1, [Defined if the VP9 decoder is available])
       ])
     ], [true])
-
-    PKG_CHECK_MODULES(VPX_140, vpx >= 1.4.0, [
-      AC_DEFINE(HAVE_VPX_1_4, 1, [Defined if the VPX library version is 1.4 or bigger])
-    ], [true])
-
     LIBS="$OLD_LIBS"
     CFLAGS="$OLD_CFLAGS"
   fi
@@ -856,7 +871,16 @@ AG_GST_CHECK_FEATURE(VPX, [VPX decoder], vpx, [
 dnl *** wavpack ***
 translit(dnm, m, l) AM_CONDITIONAL(USE_WAVPACK, true)
 AG_GST_CHECK_FEATURE(WAVPACK, [wavpack plug-in], wavpack, [
-  AG_GST_PKG_CHECK_MODULES(WAVPACK, wavpack >= 4.60.0)
+  PKG_CHECK_MODULES(WAVPACK, wavpack >= 4.40.0, HAVE_WAVPACK=yes, [
+    PKG_CHECK_MODULES(WAVPACK, wavpack >= 4.20, [
+      HAVE_WAVPACK=yes
+      AC_DEFINE(WAVPACK_OLD_API, 1, [old wavpack API])
+    ],[
+      HAVE_WAVPACK=no
+    ])
+  ])
+  AC_SUBST(WAVPACK_CFLAGS)
+  AC_SUBST(WAVPACK_LIBS)
 ])
 
 dnl *** qtdemux & matroska prefer to have zlib ***
@@ -916,6 +940,7 @@ AM_CONDITIONAL(USE_VPX, false)
 AM_CONDITIONAL(USE_WAVEFORM, false)
 AM_CONDITIONAL(USE_WAVPACK, false)
 AM_CONDITIONAL(USE_X, false)
+AM_CONDITIONAL(USE_XSHM, false)
 AM_CONDITIONAL(USE_ZLIB, false)
 
 fi dnl of EXT plugins
@@ -972,9 +997,6 @@ AC_SUBST(GST_LIBS)
 dnl LDFLAGS really should only contain flags, not libs - they get added before
 dnl whatevertarget_LIBS and -L flags here affect the rest of the linking
 GST_ALL_LDFLAGS="-no-undefined"
-if test "x${enable_Bsymbolic}" = "xyes"; then
-  GST_ALL_LDFLAGS="$GST_ALL_LDFLAGS -Wl,-Bsymbolic-functions"
-fi
 AC_SUBST(GST_ALL_LDFLAGS)
 
 dnl this really should only contain flags, not libs - they get added before

@@ -25,7 +25,6 @@
 
 #include <string.h>
 #include "gstrtpmp1sdepay.h"
-#include "gstrtputils.h"
 
 /* RtpMP1SDepay signals and args */
 enum
@@ -67,7 +66,7 @@ G_DEFINE_TYPE (GstRtpMP1SDepay, gst_rtp_mp1s_depay,
 static gboolean gst_rtp_mp1s_depay_setcaps (GstRTPBaseDepayload * depayload,
     GstCaps * caps);
 static GstBuffer *gst_rtp_mp1s_depay_process (GstRTPBaseDepayload * depayload,
-    GstRTPBuffer * rtp);
+    GstBuffer * buf);
 
 static void
 gst_rtp_mp1s_depay_class_init (GstRtpMP1SDepayClass * klass)
@@ -78,13 +77,13 @@ gst_rtp_mp1s_depay_class_init (GstRtpMP1SDepayClass * klass)
   gstelement_class = (GstElementClass *) klass;
   gstrtpbasedepayload_class = (GstRTPBaseDepayloadClass *) klass;
 
-  gstrtpbasedepayload_class->process_rtp_packet = gst_rtp_mp1s_depay_process;
+  gstrtpbasedepayload_class->process = gst_rtp_mp1s_depay_process;
   gstrtpbasedepayload_class->set_caps = gst_rtp_mp1s_depay_setcaps;
 
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_mp1s_depay_src_template);
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_mp1s_depay_sink_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_mp1s_depay_src_template));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_mp1s_depay_sink_template));
 
   gst_element_class_set_static_metadata (gstelement_class,
       "RTP MPEG1 System Stream depayloader", "Codec/Depayloader/Network/RTP",
@@ -119,18 +118,18 @@ gst_rtp_mp1s_depay_setcaps (GstRTPBaseDepayload * depayload, GstCaps * caps)
 }
 
 static GstBuffer *
-gst_rtp_mp1s_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
+gst_rtp_mp1s_depay_process (GstRTPBaseDepayload * depayload, GstBuffer * buf)
 {
   GstBuffer *outbuf;
+  GstRTPBuffer rtp = { NULL };
 
-  outbuf = gst_rtp_buffer_get_payload_buffer (rtp);
+  gst_rtp_buffer_map (buf, GST_MAP_READ, &rtp);
+  outbuf = gst_rtp_buffer_get_payload_buffer (&rtp);
+  gst_rtp_buffer_unmap (&rtp);
 
-  if (outbuf) {
+  if (outbuf)
     GST_DEBUG ("gst_rtp_mp1s_depay_chain: pushing buffer of size %"
         G_GSIZE_FORMAT, gst_buffer_get_size (outbuf));
-
-    gst_rtp_drop_meta (GST_ELEMENT_CAST (depayload), outbuf, 0);
-  }
 
   return outbuf;
 }

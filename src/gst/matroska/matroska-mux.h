@@ -55,8 +55,6 @@ typedef struct _GstMatroskaMetaSeekIndex {
 
 typedef gboolean (*GstMatroskaCapsFunc) (GstPad *pad, GstCaps *caps);
 
-typedef struct _GstMatroskaMux GstMatroskaMux;
-
 /* all information needed for one matroska stream */
 typedef struct
 {
@@ -64,10 +62,7 @@ typedef struct
   GstMatroskaCapsFunc capsfunc;
   GstMatroskaTrackContext *track;
 
-  GstMatroskaMux *mux;
-
-  GstTagList *tags;
-
+  guint64 duration;
   GstClockTime start_ts;
   GstClockTime end_ts;    /* last timestamp + (if available) duration */
   guint64 default_duration_scaled;
@@ -75,7 +70,7 @@ typedef struct
 GstMatroskaPad;
 
 
-struct _GstMatroskaMux {
+typedef struct _GstMatroskaMux {
   GstElement     element;
   
   /* < private > */
@@ -104,6 +99,7 @@ struct _GstMatroskaMux {
   GstMatroskaIndex *index;
   guint          num_indexes;
   GstClockTimeDiff min_index_interval;
+  gboolean       streamable;
  
   /* timescale in the file */
   guint64        time_scale;
@@ -139,7 +135,7 @@ struct _GstMatroskaMux {
 
   /* used uids */
   GArray *used_uids;
-};
+} GstMatroskaMux;
 
 typedef struct _GstMatroskaMuxClass {
   GstElementClass parent;

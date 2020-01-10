@@ -34,6 +34,7 @@
 #include <gst/audio/gstaudiosink.h>
 
 #include <windows.h>
+#include <dxerr9.h>
 #include <dsound.h>
 #include <mmreg.h> 
 #include <ks.h> 
@@ -73,9 +74,6 @@ struct _GstDirectSoundSink
   /* current volume setup by mixer interface */
   glong volume;
   gboolean mute;
-  
-  /* current directsound device ID */
-  gchar * device_id;
 
   GstCaps *cached_caps;
   /* lock used to protect writes and resets */

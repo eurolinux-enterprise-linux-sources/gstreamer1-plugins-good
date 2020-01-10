@@ -27,6 +27,7 @@
  */
 
 #import <Cocoa/Cocoa.h>
+#import <QuickTime/QuickTime.h>
 #import <glib.h>
 #import <gst/video/navigation.h>
 
@@ -69,9 +70,7 @@ struct _GstOSXImage;
 - (void) addToSuperview: (NSView *)superview;
 - (void) removeFromSuperview: (id)unused;
 - (void) setNavigation: (GstNavigation *) nav;
-#ifndef GSTREAMER_GLIB_COCOA_NSAPPLICATION
 - (void) setMainThread: (NSThread *) thread;
-#endif
 
 @end
 

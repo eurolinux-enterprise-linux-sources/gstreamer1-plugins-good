@@ -2,13 +2,13 @@
 # Copyright (C) 2014 Free Software Foundation, Inc.
 # This file is distributed under the same license as the gst-plugins-good package.
 # Danilo Segan <dsegan@gmx.net>, 2004.
-# Мирослав Николић <miroslavnikolic@rocketmail.com>, 2011—2016.
+# Мирослав Николић <miroslavnikolic@rocketmail.com>, 2011—2014.
 msgid ""
 msgstr ""
-"Project-Id-Version: gst-plugins-good-1.7.2\n"
+"Project-Id-Version: gst-plugins-good-1.4.1\n"
 "Report-Msgid-Bugs-To: http://bugzilla.gnome.org/\n"
-"POT-Creation-Date: 2017-02-23 15:16+0200\n"
-"PO-Revision-Date: 2016-03-05 09:52+0200\n"
+"POT-Creation-Date: 2014-12-18 12:05+0100\n"
+"PO-Revision-Date: 2014-09-13 10:50+0200\n"
 "Last-Translator: Мирослав Николић <miroslavnikolic@rocketmail.com>\n"
 "Language-Team: Serbian <(nothing)>\n"
 "Language: sr\n"
@@ -48,11 +48,14 @@ msgid "Secure connection setup failed."
 msgstr "Подешавање безбедне везе није успело."
 
 msgid ""
-"A network error occurred, or the server closed the connection unexpectedly."
+"A network error occured, or the server closed the connection unexpectedly."
 msgstr "Дошло је до грешке на мрежи, или је сервер неочекивано затворио везу."
 
 msgid "Server sent bad data."
 msgstr "Сервер је послао лоше податке."
+
+msgid "Internal data stream error."
+msgstr "Унутрашња грешка тока података."
 
 msgid "No or invalid input audio, AVI stream will be corrupt."
 msgstr "Улазног звука нема или је неисправан, АВИ ток ће бити оштећен."
@@ -99,6 +102,9 @@ msgstr ""
 "протокола преноса или можда на неки други начин недостаје прави прикључак "
 "РТСП проширења ГСтримера."
 
+msgid "Internal data flow error."
+msgstr "Унутрaшња грешка протока података."
+
 msgid ""
 "Could not open audio device for playback. Device is being used by another "
 "application."
@@ -144,12 +150,6 @@ msgstr ""
 
 msgid "Could not open audio device for recording."
 msgstr "Не могу да покренем звучни уређај ради снимања."
-
-msgid "CoreAudio device not found"
-msgstr "Нисам нашао кључни уређај звука"
-
-msgid "CoreAudio device could not be opened"
-msgstr "Не могу да отворим кључни уређај звука"
 
 msgid "Record Source"
 msgstr "Извор снимања"
@@ -256,12 +256,10 @@ msgstr "Видео уређај не обезбеђује излазни зап�
 msgid "Video device returned invalid dimensions."
 msgstr "Видео уређај је вратио неисправне димензије."
 
-#, fuzzy
-msgid "Video device uses an unsupported interlacing method."
+msgid "Video devices uses an unsupported interlacing method."
 msgstr "Видео уређаји користе неподржани метод преплитања."
 
-#, fuzzy
-msgid "Video device uses an unsupported pixel format."
+msgid "Video devices uses an unsupported pixel format."
 msgstr "Видео уређаји користе неподржани запис сличице."
 
 msgid "Failed to configure internal buffer pool."
@@ -423,12 +421,6 @@ msgstr "Промена резолуције приликом извршавањ�
 
 msgid "Cannot operate without a clock"
 msgstr "Не могу да радим без сата"
-
-#~ msgid "Internal data stream error."
-#~ msgstr "Унутрашња грешка тока података."
-
-#~ msgid "Internal data flow error."
-#~ msgstr "Унутрaшња грешка протока података."
 
 #~ msgid "Device '%s' does not support video capture"
 #~ msgstr "Уређај „%s“ не подржава видео снимање"

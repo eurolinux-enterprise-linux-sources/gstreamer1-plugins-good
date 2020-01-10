@@ -86,7 +86,7 @@ struct _GstWavParse {
   guint16 blockalign;
   guint16 width;
   guint32 av_bps;
-  guint64 fact;
+  guint32 fact;
 
   /* real bps used or 0 when no bitrate is known */
   guint32 bps;

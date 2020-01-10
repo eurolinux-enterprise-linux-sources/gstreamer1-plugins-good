@@ -22,11 +22,9 @@
 #endif
 
 #include <gst/rtp/gstrtpbuffer.h>
-#include <gst/audio/audio.h>
 
 #include <string.h>
 #include "gstrtpmpadepay.h"
-#include "gstrtputils.h"
 
 GST_DEBUG_CATEGORY_STATIC (rtpmpadepay_debug);
 #define GST_CAT_DEFAULT (rtpmpadepay_debug)
@@ -44,11 +42,11 @@ static GstStaticPadTemplate gst_rtp_mpa_depay_sink_template =
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS ("application/x-rtp, "
         "media = (string) \"audio\", "
-        "payload = (int) " GST_RTP_PAYLOAD_MPA_STRING ", "
-        "clock-rate = (int) 90000 ;"
+        "clock-rate = (int) 90000, " "encoding-name = (string) \"MPA\";"
         "application/x-rtp, "
         "media = (string) \"audio\", "
-        "encoding-name = (string) \"MPA\", clock-rate = (int) [1, MAX]")
+        "payload = (int) " GST_RTP_PAYLOAD_MPA_STRING ", "
+        "clock-rate = (int) 90000")
     );
 
 #define gst_rtp_mpa_depay_parent_class parent_class
@@ -57,7 +55,7 @@ G_DEFINE_TYPE (GstRtpMPADepay, gst_rtp_mpa_depay, GST_TYPE_RTP_BASE_DEPAYLOAD);
 static gboolean gst_rtp_mpa_depay_setcaps (GstRTPBaseDepayload * depayload,
     GstCaps * caps);
 static GstBuffer *gst_rtp_mpa_depay_process (GstRTPBaseDepayload * depayload,
-    GstRTPBuffer * rtp);
+    GstBuffer * buf);
 
 static void
 gst_rtp_mpa_depay_class_init (GstRtpMPADepayClass * klass)
@@ -71,10 +69,10 @@ gst_rtp_mpa_depay_class_init (GstRtpMPADepayClass * klass)
   gstelement_class = (GstElementClass *) klass;
   gstrtpbasedepayload_class = (GstRTPBaseDepayloadClass *) klass;
 
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_mpa_depay_src_template);
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_mpa_depay_sink_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_mpa_depay_src_template));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_mpa_depay_sink_template));
 
   gst_element_class_set_static_metadata (gstelement_class,
       "RTP MPEG audio depayloader", "Codec/Depayloader/Network/RTP",
@@ -82,7 +80,7 @@ gst_rtp_mpa_depay_class_init (GstRtpMPADepayClass * klass)
       "Wim Taymans <wim.taymans@gmail.com>");
 
   gstrtpbasedepayload_class->set_caps = gst_rtp_mpa_depay_setcaps;
-  gstrtpbasedepayload_class->process_rtp_packet = gst_rtp_mpa_depay_process;
+  gstrtpbasedepayload_class->process = gst_rtp_mpa_depay_process;
 }
 
 static void
@@ -113,10 +111,11 @@ gst_rtp_mpa_depay_setcaps (GstRTPBaseDepayload * depayload, GstCaps * caps)
 }
 
 static GstBuffer *
-gst_rtp_mpa_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
+gst_rtp_mpa_depay_process (GstRTPBaseDepayload * depayload, GstBuffer * buf)
 {
   GstRtpMPADepay *rtpmpadepay;
   GstBuffer *outbuf;
+  GstRTPBuffer rtp = { NULL };
   gint payload_len;
 #if 0
   guint8 *payload;
@@ -126,7 +125,9 @@ gst_rtp_mpa_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
 
   rtpmpadepay = GST_RTP_MPA_DEPAY (depayload);
 
-  payload_len = gst_rtp_buffer_get_payload_len (rtp);
+  gst_rtp_buffer_map (buf, GST_MAP_READ, &rtp);
+
+  payload_len = gst_rtp_buffer_get_payload_len (&rtp);
 
   if (payload_len <= 4)
     goto empty_packet;
@@ -145,8 +146,8 @@ gst_rtp_mpa_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
 #endif
 
   /* subbuffer skipping the 4 header bytes */
-  outbuf = gst_rtp_buffer_get_payload_subbuffer (rtp, 4, -1);
-  marker = gst_rtp_buffer_get_marker (rtp);
+  outbuf = gst_rtp_buffer_get_payload_subbuffer (&rtp, 4, -1);
+  marker = gst_rtp_buffer_get_marker (&rtp);
 
   if (marker) {
     /* mark start of talkspurt with RESYNC */
@@ -156,10 +157,7 @@ gst_rtp_mpa_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
       "gst_rtp_mpa_depay_chain: pushing buffer of size %" G_GSIZE_FORMAT "",
       gst_buffer_get_size (outbuf));
 
-  if (outbuf) {
-    gst_rtp_drop_meta (GST_ELEMENT_CAST (rtpmpadepay), outbuf,
-        g_quark_from_static_string (GST_META_TAG_AUDIO_STR));
-  }
+  gst_rtp_buffer_unmap (&rtp);
 
   /* FIXME, we can push half mpeg frames when they are split over multiple
    * RTP packets */
@@ -170,6 +168,7 @@ empty_packet:
   {
     GST_ELEMENT_WARNING (rtpmpadepay, STREAM, DECODE,
         ("Empty Payload."), (NULL));
+    gst_rtp_buffer_unmap (&rtp);
     return NULL;
   }
 }

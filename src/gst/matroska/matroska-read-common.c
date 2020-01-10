@@ -106,27 +106,25 @@ gst_matroska_decompress_data (GstMatroskaTrackEncoding * enc,
 
     do {
       result = inflate (&zstream, Z_NO_FLUSH);
-      if (result == Z_STREAM_END) {
-        break;
-      } else if (result != Z_OK) {
-        GST_WARNING ("inflate() returned %d", result);
+      if (result != Z_OK && result != Z_STREAM_END) {
+        GST_WARNING ("zlib decompression failed.");
+        g_free (new_data);
+        inflateEnd (&zstream);
         break;
       }
-
-      new_size += 4096;
+      new_size += 4000;
       new_data = g_realloc (new_data, new_size);
       zstream.next_out = (Bytef *) (new_data + zstream.total_out);
-      zstream.avail_out += 4096;
-    } while (zstream.avail_in > 0);
+      zstream.avail_out += 4000;
+    } while (zstream.avail_in != 0 && result != Z_STREAM_END);
 
     if (result != Z_STREAM_END) {
       ret = FALSE;
-      g_free (new_data);
+      goto out;
     } else {
       new_size = zstream.total_out;
+      inflateEnd (&zstream);
     }
-    inflateEnd (&zstream);
-
 #else
     GST_WARNING ("zlib encoded tracks not supported.");
     ret = FALSE;
@@ -159,27 +157,25 @@ gst_matroska_decompress_data (GstMatroskaTrackEncoding * enc,
 
     do {
       result = BZ2_bzDecompress (&bzstream);
-      if (result == BZ_STREAM_END) {
-        break;
-      } else if (result != BZ_OK) {
-        GST_WARNING ("BZ2_bzDecompress() returned %d", result);
+      if (result != BZ_OK && result != BZ_STREAM_END) {
+        GST_WARNING ("bzip2 decompression failed.");
+        g_free (new_data);
+        BZ2_bzDecompressEnd (&bzstream);
         break;
       }
-
-      new_size += 4096;
+      new_size += 4000;
       new_data = g_realloc (new_data, new_size);
       bzstream.next_out = (char *) (new_data + bzstream.total_out_lo32);
-      bzstream.avail_out += 4096;
-    } while (bzstream.avail_in > 0);
+      bzstream.avail_out += 4000;
+    } while (bzstream.avail_in != 0 && result != BZ_STREAM_END);
 
     if (result != BZ_STREAM_END) {
       ret = FALSE;
-      g_free (new_data);
+      goto out;
     } else {
       new_size = bzstream.total_out_lo32;
+      BZ2_bzDecompressEnd (&bzstream);
     }
-    BZ2_bzDecompressEnd (&bzstream);
-
 #else
     GST_WARNING ("bzip2 encoded tracks not supported.");
     ret = FALSE;
@@ -202,7 +198,7 @@ gst_matroska_decompress_data (GstMatroskaTrackEncoding * enc,
       result = lzo1x_decode (new_data, &out_size, data, &orig_size);
 
       if (orig_size > 0) {
-        new_size += 4096;
+        new_size += 4000;
         new_data = g_realloc (new_data, new_size);
       }
     } while (orig_size > 0 && result == LZO_OUTPUT_FULL);
@@ -379,10 +375,13 @@ gst_matroska_index_seek_find (GstMatroskaIndex * i1, GstClockTime * time,
 GstMatroskaIndex *
 gst_matroska_read_common_do_index_seek (GstMatroskaReadCommon * common,
     GstMatroskaTrackContext * track, gint64 seek_pos, GArray ** _index,
-    gint * _entry_index, GstSearchMode snap_dir)
+    gint * _entry_index, gboolean next)
 {
   GstMatroskaIndex *entry = NULL;
   GArray *index;
+
+  if (!common->index || !common->index->len)
+    return NULL;
 
   /* find entry just before or at the requested position */
   if (track && track->index_table)
@@ -390,21 +389,16 @@ gst_matroska_read_common_do_index_seek (GstMatroskaReadCommon * common,
   else
     index = common->index;
 
-  if (!index || !index->len)
-    return NULL;
-
   entry =
       gst_util_array_binary_search (index->data, index->len,
       sizeof (GstMatroskaIndex),
-      (GCompareDataFunc) gst_matroska_index_seek_find, snap_dir, &seek_pos,
-      NULL);
+      (GCompareDataFunc) gst_matroska_index_seek_find,
+      next ? GST_SEARCH_MODE_AFTER : GST_SEARCH_MODE_BEFORE, &seek_pos, NULL);
 
   if (entry == NULL) {
-    if (snap_dir == GST_SEARCH_MODE_AFTER) {
-      /* Can only happen with a reverse seek past the end */
-      entry = &g_array_index (index, GstMatroskaIndex, index->len - 1);
+    if (next) {
+      return NULL;
     } else {
-      /* Can only happen with a forward seek before the start */
       entry = &g_array_index (index, GstMatroskaIndex, 0);
     }
   }
@@ -451,12 +445,26 @@ gst_matroska_read_common_found_global_tag (GstMatroskaReadCommon * common,
     GstElement * el, GstTagList * taglist)
 {
   if (common->global_tags) {
+    /* nothing sent yet, add to cache */
     gst_tag_list_insert (common->global_tags, taglist, GST_TAG_MERGE_APPEND);
     gst_tag_list_unref (taglist);
   } else {
-    common->global_tags = taglist;
+    GstEvent *tag_event = gst_event_new_tag (taglist);
+    gint i;
+
+    /* hm, already sent, no need to cache and wait anymore */
+    GST_DEBUG_OBJECT (common->sinkpad,
+        "Sending late global tags %" GST_PTR_FORMAT, taglist);
+
+    for (i = 0; i < common->src->len; i++) {
+      GstMatroskaTrackContext *stream;
+
+      stream = g_ptr_array_index (common->src, i);
+      gst_pad_push_event (stream->pad, gst_event_ref (tag_event));
+    }
+
+    gst_event_unref (tag_event);
   }
-  common->global_tags_changed = TRUE;
 }
 
 gint64
@@ -625,9 +633,10 @@ gst_matroska_read_common_parse_attached_file (GstMatroskaReadCommon * common,
       tagsample =
           gst_tag_image_data_to_image_sample (data, datalen, image_type);
 
-      if (!tagsample) {
+      if (!tagsample)
         image_type = GST_TAG_IMAGE_TYPE_NONE;
-      } else {
+      else {
+        data = NULL;
         tagbuffer = gst_buffer_ref (gst_sample_get_buffer (tagsample));
         caps = gst_caps_ref (gst_sample_get_caps (tagsample));
         info = gst_structure_copy (gst_sample_get_info (tagsample));
@@ -760,7 +769,6 @@ gst_matroska_read_common_parse_toc_tag (GstTocEntry * entry,
   }
 
   gst_toc_entry_merge_tags (entry, etags, GST_TAG_MERGE_APPEND);
-  gst_tag_list_unref (etags);
 
   cur = gst_toc_entry_get_sub_entries (entry);
   while (cur != NULL) {
@@ -818,7 +826,8 @@ gst_matroska_read_common_parse_metadata_targets (GstMatroskaReadCommon * common,
 
       case GST_MATROSKA_ID_TARGETTYPE:
         if ((ret = gst_ebml_read_ascii (ebml, &id, &str)) == GST_FLOW_OK) {
-          g_free (*target_type);
+          if (*target_type != NULL)
+            g_free (*target_type);
           *target_type = str;
         }
         break;
@@ -1260,7 +1269,8 @@ gst_matroska_read_common_parse_header (GstMatroskaReadCommon * common,
         GST_DEBUG_OBJECT (common->sinkpad, "EbmlDocType: %s",
             GST_STR_NULL (text));
 
-        g_free (doctype);
+        if (doctype)
+          g_free (doctype);
         doctype = text;
         break;
       }
@@ -1493,8 +1503,10 @@ gst_matroska_read_common_parse_index_pointentry (GstMatroskaReadCommon *
         /* position in the file + track to which it belongs */
       case GST_MATROSKA_ID_CUETRACKPOSITIONS:
       {
-        ret = gst_matroska_read_common_parse_index_cuetrack (common, ebml,
-            &nentries);
+        if ((ret =
+                gst_matroska_read_common_parse_index_cuetrack (common, ebml,
+                    &nentries)) != GST_FLOW_OK)
+          break;
         break;
       }
 
@@ -2036,7 +2048,6 @@ gst_matroska_read_common_parse_metadata_id_simple_tag (GstMatroskaReadCommon *
     key_val = g_strdup_printf ("%s=%s", name_with_parent, value);
     gst_tag_list_add (*p_taglist, GST_TAG_MERGE_APPEND,
         GST_TAG_EXTENDED_COMMENT, key_val, NULL);
-    g_free (key_val);
   } else if (tag && value && *value != '\0') {
     gboolean matched = FALSE;
     guint i;
@@ -2081,7 +2092,6 @@ gst_matroska_read_common_parse_metadata_id_simple_tag (GstMatroskaReadCommon *
       key_val = g_strdup_printf ("%s=%s", tag, value);
       gst_tag_list_add (*p_taglist, GST_TAG_MERGE_APPEND,
           GST_TAG_EXTENDED_COMMENT, key_val, NULL);
-      g_free (key_val);
     }
   }
 
@@ -2197,7 +2207,7 @@ gst_matroska_read_common_count_streams (GstMatroskaReadCommon * common,
   }
   *v = video_streams;
   *a = audio_streams;
-  *s = subtitle_streams;
+  *v = subtitle_streams;
 }
 
 
@@ -2214,67 +2224,71 @@ gst_matroska_read_common_apply_target_type_foreach (const GstTagList * list,
     return;
 
   for (i = 0; i < vallen; i++) {
+    GValue val = { 0 };
     const GValue *val_ref;
 
     val_ref = gst_tag_list_get_value_index (list, tag, i);
     if (val_ref == NULL)
       continue;
+    g_value_init (&val, G_VALUE_TYPE (val_ref));
+    g_value_copy (val_ref, &val);
 
     /* TODO: use the optional ctx->target_type somehow */
     if (strcmp (tag, GST_TAG_TITLE) == 0) {
       if (ctx->target_type_value >= 70 && !ctx->audio_only) {
         gst_tag_list_add_value (ctx->result, GST_TAG_MERGE_APPEND,
-            GST_TAG_SHOW_NAME, val_ref);
+            GST_TAG_SHOW_NAME, &val);
         continue;
       } else if (ctx->target_type_value >= 50) {
         gst_tag_list_add_value (ctx->result, GST_TAG_MERGE_APPEND,
-            GST_TAG_ALBUM, val_ref);
+            GST_TAG_ALBUM, &val);
         continue;
       }
     } else if (strcmp (tag, GST_TAG_TITLE_SORTNAME) == 0) {
       if (ctx->target_type_value >= 70 && !ctx->audio_only) {
         gst_tag_list_add_value (ctx->result, GST_TAG_MERGE_APPEND,
-            GST_TAG_SHOW_SORTNAME, val_ref);
+            GST_TAG_SHOW_SORTNAME, &val);
         continue;
       } else if (ctx->target_type_value >= 50) {
         gst_tag_list_add_value (ctx->result, GST_TAG_MERGE_APPEND,
-            GST_TAG_ALBUM_SORTNAME, val_ref);
+            GST_TAG_ALBUM_SORTNAME, &val);
         continue;
       }
     } else if (strcmp (tag, GST_TAG_ARTIST) == 0) {
       if (ctx->target_type_value >= 50) {
         gst_tag_list_add_value (ctx->result, GST_TAG_MERGE_APPEND,
-            GST_TAG_ALBUM_ARTIST, val_ref);
+            GST_TAG_ALBUM_ARTIST, &val);
         continue;
       }
     } else if (strcmp (tag, GST_TAG_ARTIST_SORTNAME) == 0) {
       if (ctx->target_type_value >= 50) {
         gst_tag_list_add_value (ctx->result, GST_TAG_MERGE_APPEND,
-            GST_TAG_ALBUM_ARTIST_SORTNAME, val_ref);
+            GST_TAG_ALBUM_ARTIST_SORTNAME, &val);
         continue;
       }
     } else if (strcmp (tag, GST_TAG_TRACK_COUNT) == 0) {
       if (ctx->target_type_value >= 60) {
         gst_tag_list_add_value (ctx->result, GST_TAG_MERGE_APPEND,
-            GST_TAG_ALBUM_VOLUME_COUNT, val_ref);
+            GST_TAG_ALBUM_VOLUME_COUNT, &val);
         continue;
       }
     } else if (strcmp (tag, GST_TAG_TRACK_NUMBER) == 0) {
       if (ctx->target_type_value >= 60 && !ctx->audio_only) {
         gst_tag_list_add_value (ctx->result, GST_TAG_MERGE_APPEND,
-            GST_TAG_SHOW_SEASON_NUMBER, val_ref);
+            GST_TAG_SHOW_SEASON_NUMBER, &val);
         continue;
       } else if (ctx->target_type_value >= 50 && !ctx->audio_only) {
         gst_tag_list_add_value (ctx->result, GST_TAG_MERGE_APPEND,
-            GST_TAG_SHOW_EPISODE_NUMBER, val_ref);
+            GST_TAG_SHOW_EPISODE_NUMBER, &val);
         continue;
       } else if (ctx->target_type_value >= 50) {
         gst_tag_list_add_value (ctx->result, GST_TAG_MERGE_APPEND,
-            GST_TAG_ALBUM_VOLUME_NUMBER, val_ref);
+            GST_TAG_ALBUM_VOLUME_NUMBER, &val);
         continue;
       }
     }
-    gst_tag_list_add_value (ctx->result, GST_TAG_MERGE_APPEND, tag, val_ref);
+    gst_tag_list_add_value (ctx->result, GST_TAG_MERGE_APPEND, tag, &val);
+    g_value_unset (&val);
   }
 }
 
@@ -2388,27 +2402,15 @@ gst_matroska_read_common_parse_metadata_id_tag (GstMatroskaReadCommon * common,
         GstMatroskaTrackContext *stream = g_ptr_array_index (common->src, j);
 
         if (stream->uid == tgt) {
-          gst_tag_list_insert (stream->tags, taglist, GST_TAG_MERGE_REPLACE);
-          stream->tags_changed = TRUE;
+          gst_tag_list_insert (stream->pending_tags, taglist,
+              GST_TAG_MERGE_REPLACE);
           found = TRUE;
         }
       }
       if (!found) {
-        /* Cache the track taglist: possibly belongs to a track that will be parsed
-           later in gst_matroska_demux.c:gst_matroska_demux_add_stream (...) */
-        gpointer track_uid = GUINT_TO_POINTER (tgt);
-        GstTagList *cached_taglist =
-            g_hash_table_lookup (common->cached_track_taglists, track_uid);
-        if (cached_taglist)
-          gst_tag_list_insert (cached_taglist, taglist, GST_TAG_MERGE_REPLACE);
-        else {
-          gst_tag_list_ref (taglist);
-          g_hash_table_insert (common->cached_track_taglists, track_uid,
-              taglist);
-        }
-        GST_DEBUG_OBJECT (common->sinkpad,
+        GST_WARNING_OBJECT (common->sinkpad,
             "Found track-specific tag(s), but track %" G_GUINT64_FORMAT
-            " is not known yet, caching", tgt);
+            " is not known (yet?)", tgt);
       }
     }
   } else
@@ -2431,6 +2433,8 @@ gst_matroska_read_common_parse_metadata (GstMatroskaReadCommon * common,
   guint32 id;
   GList *l;
   guint64 curpos;
+
+  curpos = gst_ebml_read_get_pos (ebml);
 
   /* Make sure we don't parse a tags element twice and
    * post it's tags twice */
@@ -2858,9 +2862,6 @@ gst_matroska_read_common_init (GstMatroskaReadCommon * ctx)
   ctx->index = NULL;
   ctx->global_tags = NULL;
   ctx->adapter = gst_adapter_new ();
-  ctx->cached_track_taglists =
-      g_hash_table_new_full (NULL, NULL, NULL,
-      (GDestroyNotify) gst_tag_list_unref);
 }
 
 void
@@ -2877,9 +2878,6 @@ gst_matroska_read_common_finalize (GstMatroskaReadCommon * ctx)
   }
 
   g_object_unref (ctx->adapter);
-  g_hash_table_remove_all (ctx->cached_track_taglists);
-  g_hash_table_unref (ctx->cached_track_taglists);
-
 }
 
 void
@@ -2937,7 +2935,6 @@ gst_matroska_read_common_reset (GstElement * element,
   ctx->chapters_parsed = FALSE;
 
   /* tags */
-  ctx->global_tags_changed = FALSE;
   g_list_foreach (ctx->tags_parsed,
       (GFunc) gst_matroska_read_common_free_parsed_el, NULL);
   g_list_free (ctx->tags_parsed);

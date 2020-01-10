@@ -54,6 +54,7 @@ struct _GstAudioFXBaseIIRFilter
   /* < private > */
   GstAudioFXBaseIIRFilterProcessFunc process;
 
+  gboolean have_coeffs;
   gdouble *a;
   guint na;
   gdouble *b;

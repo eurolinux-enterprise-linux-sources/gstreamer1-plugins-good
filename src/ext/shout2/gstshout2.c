@@ -27,7 +27,7 @@
  * <refsect2>
  * <title>Example launch line</title>
  * |[
- * gst-launch-1.0 uridecodebin uri=file:///path/to/audiofile ! audioconvert ! vorbisenc ! oggmux ! shout2send mount=/stream.ogg port=8000 username=source password=somepassword ip=server_IP_address_or_hostname
+ * gst-launch uridecodebin uri=file:///path/to/audiofile ! audioconvert ! vorbisenc ! oggmux ! shout2send mount=/stream.ogg port=8000 username=source password=somepassword ip=server_IP_address_or_hostname
  * ]| This pipeline demuxes, decodes, re-encodes and re-muxes an audio
  * media file into oggvorbis and sends the resulting stream to an Icecast
  * server. Properties mount, port, username and password are all server-config
@@ -223,7 +223,8 @@ gst_shout2send_class_init (GstShout2sendClass * klass)
   gstbasesink_class->event = GST_DEBUG_FUNCPTR (gst_shout2send_event);
   gstbasesink_class->set_caps = GST_DEBUG_FUNCPTR (gst_shout2send_setcaps);
 
-  gst_element_class_add_static_pad_template (gstelement_class, &sink_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&sink_template));
 
   gst_element_class_set_static_metadata (gstelement_class,
       "Icecast network sink",
@@ -240,7 +241,7 @@ gst_shout2send_init (GstShout2send * shout2send)
 {
   gst_base_sink_set_sync (GST_BASE_SINK (shout2send), FALSE);
 
-  shout2send->timer = gst_poll_new (TRUE);
+  shout2send->timer = gst_poll_new_timer ();
 
   shout2send->ip = g_strdup (DEFAULT_IP);
   shout2send->port = DEFAULT_PORT;
@@ -687,44 +688,52 @@ gst_shout2send_set_property (GObject * object, guint prop_id,
   switch (prop_id) {
 
     case ARG_IP:
-      g_free (shout2send->ip);
+      if (shout2send->ip)
+        g_free (shout2send->ip);
       shout2send->ip = g_strdup (g_value_get_string (value));
       break;
     case ARG_PORT:
       shout2send->port = g_value_get_int (value);
       break;
     case ARG_PASSWORD:
-      g_free (shout2send->password);
+      if (shout2send->password)
+        g_free (shout2send->password);
       shout2send->password = g_strdup (g_value_get_string (value));
       break;
     case ARG_USERNAME:
-      g_free (shout2send->username);
+      if (shout2send->username)
+        g_free (shout2send->username);
       shout2send->username = g_strdup (g_value_get_string (value));
       break;
     case ARG_PUBLIC:
       shout2send->ispublic = g_value_get_boolean (value);
       break;
     case ARG_STREAMNAME:       /* Name of the stream */
-      g_free (shout2send->streamname);
+      if (shout2send->streamname)
+        g_free (shout2send->streamname);
       shout2send->streamname = g_strdup (g_value_get_string (value));
       break;
     case ARG_DESCRIPTION:      /* Description of the stream */
-      g_free (shout2send->description);
+      if (shout2send->description)
+        g_free (shout2send->description);
       shout2send->description = g_strdup (g_value_get_string (value));
       break;
     case ARG_GENRE:            /* Genre of the stream */
-      g_free (shout2send->genre);
+      if (shout2send->genre)
+        g_free (shout2send->genre);
       shout2send->genre = g_strdup (g_value_get_string (value));
       break;
     case ARG_PROTOCOL:         /* protocol to connect with */
       shout2send->protocol = g_value_get_enum (value);
       break;
     case ARG_MOUNT:            /* mountpoint of stream (icecast only) */
-      g_free (shout2send->mount);
+      if (shout2send->mount)
+        g_free (shout2send->mount);
       shout2send->mount = g_strdup (g_value_get_string (value));
       break;
     case ARG_URL:              /* the stream's homepage URL */
-      g_free (shout2send->url);
+      if (shout2send->url)
+        g_free (shout2send->url);
       shout2send->url = g_strdup (g_value_get_string (value));
       break;
     default:

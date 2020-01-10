@@ -27,6 +27,7 @@ EXTRA_DIST = \
 	libfame.m4 \
 	lib-ld.m4 \
 	lib-link.m4 \
+	libmikmod.m4 \
 	lib-prefix.m4 \
 	ogg.m4 \
 	progtest.m4 \

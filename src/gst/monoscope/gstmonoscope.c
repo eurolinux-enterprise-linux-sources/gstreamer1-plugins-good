@@ -47,20 +47,18 @@
 GST_DEBUG_CATEGORY_STATIC (monoscope_debug);
 #define GST_CAT_DEFAULT monoscope_debug
 
-#if G_BYTE_ORDER == G_BIG_ENDIAN
-#define RGB_ORDER "xRGB"
-#else
-#define RGB_ORDER "BGRx"
-#endif
-
 static GstStaticPadTemplate src_template = GST_STATIC_PAD_TEMPLATE ("src",
     GST_PAD_SRC,
     GST_PAD_ALWAYS,
+#if G_BYTE_ORDER == G_BIG_ENDIAN
     GST_STATIC_CAPS ("video/x-raw, "
-        "format = (string) " RGB_ORDER ", "
-        "width = " G_STRINGIFY (scope_width) ", "
-        "height = " G_STRINGIFY (scope_height) ", "
-        "framerate = " GST_VIDEO_FPS_RANGE)
+        "format = (string) xRGB, "
+        "width = 256, " "height = 128, " "framerate = " GST_VIDEO_FPS_RANGE)
+#else
+    GST_STATIC_CAPS ("video/x-raw, "
+        "format = (string) BGRx, "
+        "width = 256, " "height = 128, " "framerate = " GST_VIDEO_FPS_RANGE)
+#endif
     );
 
 static GstStaticPadTemplate sink_template = GST_STATIC_PAD_TEMPLATE ("sink",
@@ -104,8 +102,10 @@ gst_monoscope_class_init (GstMonoscopeClass * klass)
   gstelement_class->change_state =
       GST_DEBUG_FUNCPTR (gst_monoscope_change_state);
 
-  gst_element_class_add_static_pad_template (gstelement_class, &src_template);
-  gst_element_class_add_static_pad_template (gstelement_class, &sink_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&src_template));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&sink_template));
   gst_element_class_set_static_metadata (gstelement_class, "Monoscope",
       "Visualization",
       "Displays a highly stabilised waveform of audio input",
@@ -133,8 +133,8 @@ gst_monoscope_init (GstMonoscope * monoscope)
   monoscope->bps = sizeof (gint16);
 
   /* reset the initial video state */
-  monoscope->width = scope_width;
-  monoscope->height = scope_height;
+  monoscope->width = 256;
+  monoscope->height = 128;
   monoscope->fps_num = 25;      /* desired frame rate */
   monoscope->fps_denom = 1;
   monoscope->visstate = NULL;
@@ -398,12 +398,13 @@ gst_monoscope_chain (GstPad * pad, GstObject * parent, GstBuffer * inbuf)
 
     samples = (gint16 *) gst_adapter_map (monoscope->adapter, bytesperframe);
 
-    if (monoscope->spf < convolver_big) {
-      gint16 in_data[convolver_big], i;
-      gdouble scale = (gdouble) monoscope->spf / (gdouble) convolver_big;
+    if (monoscope->spf < 512) {
+      gint16 in_data[512], i;
 
-      for (i = 0; i < convolver_big; ++i) {
-        gdouble off = (gdouble) i * scale;
+      for (i = 0; i < 512; ++i) {
+        gdouble off;
+
+        off = ((gdouble) i * (gdouble) monoscope->spf) / 512.0;
         in_data[i] = samples[MIN ((guint) off, monoscope->spf)];
       }
       pixels = monoscope_update (monoscope->visstate, in_data);

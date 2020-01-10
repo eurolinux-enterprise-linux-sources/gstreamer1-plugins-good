@@ -82,8 +82,6 @@ struct _GstFlvDemux
   GstEvent *new_seg_event;
 
   GstTagList *taglist;
-  GstTagList *audio_tags;
-  GstTagList *video_tags;
 
   GstFlvDemuxState state;
 
@@ -120,7 +118,7 @@ struct _GstFlvDemux
   gboolean got_par;
   GstBuffer * video_codec_data;
   GstClockTime video_start;
-  guint32 last_video_dts;
+  guint32 last_video_pts;
   GstClockTime video_time_offset;
   gdouble framerate;
 
@@ -128,15 +126,11 @@ struct _GstFlvDemux
   gboolean need_header;
   gboolean has_audio;
   gboolean has_video;
+  gboolean push_tags;
   gboolean strict;
   gboolean flushing;
 
   gboolean no_more_pads;
-
-#ifndef GST_DISABLE_DEBUG
-  gboolean no_audio_warned;
-  gboolean no_video_warned;
-#endif
 
   gboolean seeking;
   gboolean building_index;

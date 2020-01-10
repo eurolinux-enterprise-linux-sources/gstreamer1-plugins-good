@@ -27,7 +27,6 @@
 #include <gst/rtp/gstrtpbuffer.h>
 
 #include "gstrtpdvpay.h"
-#include "gstrtputils.h"
 
 GST_DEBUG_CATEGORY (rtpdvpay_debug);
 #define GST_CAT_DEFAULT (rtpdvpay_debug)
@@ -120,10 +119,10 @@ gst_rtp_dv_pay_class_init (GstRTPDVPayClass * klass)
           GST_TYPE_DV_PAY_MODE, DEFAULT_MODE,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_dv_pay_sink_template);
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_dv_pay_src_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_dv_pay_sink_template));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_dv_pay_src_template));
 
   gst_element_class_set_static_metadata (gstelement_class, "RTP DV Payloader",
       "Codec/Payloader/Network/RTP",
@@ -314,7 +313,7 @@ gst_rtp_dv_pay_handle_buffer (GstRTPBasePayload * basepayload,
       "DV RTP payloader got buffer of %" G_GSIZE_FORMAT
       " bytes, splitting in %u byte " "payload fragments, at time %"
       GST_TIME_FORMAT, size, max_payload_size,
-      GST_TIME_ARGS (GST_BUFFER_PTS (buffer)));
+      GST_TIME_ARGS (GST_BUFFER_TIMESTAMP (buffer)));
 
   if (!rtpdvpay->negotiated) {
     gst_dv_pay_negotiate (rtpdvpay, data, size);
@@ -331,7 +330,7 @@ gst_rtp_dv_pay_handle_buffer (GstRTPBasePayload * basepayload,
     /* Allocate a new buffer, set the timestamp */
     if (outbuf == NULL) {
       outbuf = gst_rtp_buffer_new_allocate (max_payload_size, 0, 0);
-      GST_BUFFER_PTS (outbuf) = GST_BUFFER_PTS (buffer);
+      GST_BUFFER_TIMESTAMP (outbuf) = GST_BUFFER_TIMESTAMP (buffer);
 
       if (!gst_rtp_buffer_map (outbuf, GST_MAP_WRITE, &rtp)) {
         gst_buffer_unref (outbuf);
@@ -373,7 +372,6 @@ gst_rtp_dv_pay_handle_buffer (GstRTPBasePayload * basepayload,
 
       /* Push out the created piece, and check for errors. */
       gst_rtp_buffer_unmap (&rtp);
-      gst_rtp_copy_meta (GST_ELEMENT_CAST (basepayload), outbuf, buffer, 0);
       ret = gst_rtp_base_payload_push (basepayload, outbuf);
       if (ret != GST_FLOW_OK)
         break;

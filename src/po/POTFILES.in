@@ -10,14 +10,12 @@ gst/audioparsers/gstwavpackparse.c
 gst/avi/gstavidemux.c
 gst/avi/gstavimux.c
 gst/isomp4/qtdemux.c
-gst/multifile/gstsplitmuxsrc.c
 gst/rtsp/gstrtspsrc.c
 gst/wavparse/gstwavparse.c
 sys/oss4/oss4-sink.c
 sys/oss4/oss4-source.c
 sys/oss/gstosssink.c
 sys/oss/gstosssrc.c
-sys/osxaudio/gstosxaudioringbuffer.c
 sys/sunaudio/gstsunaudiomixeroptions.c
 sys/sunaudio/gstsunaudiomixertrack.c
 sys/v4l2/gstv4l2bufferpool.c

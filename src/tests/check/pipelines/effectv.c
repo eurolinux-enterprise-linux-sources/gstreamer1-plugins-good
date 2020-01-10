@@ -72,6 +72,7 @@ run_test (const gchar * pipeline_string)
 
   g_signal_connect (bus, "message", (GCallback) on_message_cb, &omud);
 
+  gst_object_unref (bus);
 
   ret = gst_element_set_state (pipeline, GST_STATE_PLAYING);
   fail_unless (ret == GST_STATE_CHANGE_SUCCESS
@@ -84,8 +85,6 @@ run_test (const gchar * pipeline_string)
 
   fail_unless (omud.eos == TRUE);
 
-  gst_bus_remove_signal_watch (bus);
-  gst_object_unref (bus);
   gst_object_unref (pipeline);
   g_main_loop_unref (loop);
 }

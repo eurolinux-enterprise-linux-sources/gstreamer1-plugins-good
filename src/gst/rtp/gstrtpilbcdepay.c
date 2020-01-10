@@ -24,9 +24,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <gst/rtp/gstrtpbuffer.h>
-#include <gst/audio/audio.h>
 #include "gstrtpilbcdepay.h"
-#include "gstrtputils.h"
 
 /* RtpiLBCDepay signals and args */
 enum
@@ -50,8 +48,9 @@ GST_STATIC_PAD_TEMPLATE ("sink",
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS ("application/x-rtp, "
         "media = (string) \"audio\", "
-        "clock-rate = (int) 8000, " "encoding-name = (string) \"ILBC\"")
-    /* "mode = (string) { \"20\", \"30\" }" */
+        "clock-rate = (int) 8000, "
+        "encoding-name = (string) \"ILBC\"")
+     /* "mode = (string) { \"20\", \"30\" }" */
     );
 
 static GstStaticPadTemplate gst_rtp_ilbc_depay_src_template =
@@ -67,7 +66,7 @@ static void gst_ilbc_depay_get_property (GObject * object,
     guint prop_id, GValue * value, GParamSpec * pspec);
 
 static GstBuffer *gst_rtp_ilbc_depay_process (GstRTPBaseDepayload * depayload,
-    GstRTPBuffer * rtp);
+    GstBuffer * buf);
 static gboolean gst_rtp_ilbc_depay_setcaps (GstRTPBaseDepayload * depayload,
     GstCaps * caps);
 
@@ -112,17 +111,17 @@ gst_rtp_ilbc_depay_class_init (GstRTPiLBCDepayClass * klass)
           GST_TYPE_ILBC_MODE, DEFAULT_MODE,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_ilbc_depay_src_template);
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_ilbc_depay_sink_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_ilbc_depay_src_template));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_ilbc_depay_sink_template));
 
   gst_element_class_set_static_metadata (gstelement_class,
       "RTP iLBC depayloader", "Codec/Depayloader/Network/RTP",
       "Extracts iLBC audio from RTP packets (RFC 3952)",
       "Philippe Kalaf <philippe.kalaf@collabora.co.uk>");
 
-  gstrtpbasedepayload_class->process_rtp_packet = gst_rtp_ilbc_depay_process;
+  gstrtpbasedepayload_class->process = gst_rtp_ilbc_depay_process;
   gstrtpbasedepayload_class->set_caps = gst_rtp_ilbc_depay_setcaps;
 }
 
@@ -172,27 +171,27 @@ gst_rtp_ilbc_depay_setcaps (GstRTPBaseDepayload * depayload, GstCaps * caps)
 }
 
 static GstBuffer *
-gst_rtp_ilbc_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
+gst_rtp_ilbc_depay_process (GstRTPBaseDepayload * depayload, GstBuffer * buf)
 {
   GstBuffer *outbuf;
   gboolean marker;
+  GstRTPBuffer rtp = { NULL };
 
-  marker = gst_rtp_buffer_get_marker (rtp);
+  gst_rtp_buffer_map (buf, GST_MAP_READ, &rtp);
+
+  marker = gst_rtp_buffer_get_marker (&rtp);
 
   GST_DEBUG ("process : got %" G_GSIZE_FORMAT " bytes, mark %d ts %u seqn %d",
-      gst_buffer_get_size (rtp->buffer), marker,
-      gst_rtp_buffer_get_timestamp (rtp), gst_rtp_buffer_get_seq (rtp));
+      gst_buffer_get_size (buf), marker,
+      gst_rtp_buffer_get_timestamp (&rtp), gst_rtp_buffer_get_seq (&rtp));
 
-  outbuf = gst_rtp_buffer_get_payload_buffer (rtp);
+  outbuf = gst_rtp_buffer_get_payload_buffer (&rtp);
+
+  gst_rtp_buffer_unmap (&rtp);
 
   if (marker && outbuf) {
     /* mark start of talkspurt with RESYNC */
     GST_BUFFER_FLAG_SET (outbuf, GST_BUFFER_FLAG_RESYNC);
-  }
-
-  if (outbuf) {
-    gst_rtp_drop_meta (GST_ELEMENT_CAST (depayload), outbuf,
-        g_quark_from_static_string (GST_META_TAG_AUDIO_STR));
   }
 
   return outbuf;

@@ -64,7 +64,7 @@ gst_core_audio_get_samples_and_latency_impl (GstCoreAudio * core_audio,
     gdouble rate, guint * samples, gdouble * latency)
 {
   OSStatus status;
-  UInt32 size = sizeof (double);
+  UInt32 size;
 
   status = AudioUnitGetProperty (core_audio->audiounit, kAudioUnitProperty_Latency, kAudioUnitScope_Global, 0,  /* N/A for global */
       latency, &size);
@@ -84,22 +84,10 @@ gst_core_audio_initialize_impl (GstCoreAudio * core_audio,
     AudioStreamBasicDescription format, GstCaps * caps,
     gboolean is_passthrough, guint32 * frame_size)
 {
-  gboolean ret = FALSE;
-  OSStatus status;
-
-  /* Uninitialize the AudioUnit before changing formats */
-  status = AudioUnitUninitialize (core_audio->audiounit);
-  if (status) {
-    GST_ERROR_OBJECT (core_audio, "Failed to uninitialize AudioUnit: %d",
-        (int) status);
-    return FALSE;
-  }
-
   core_audio->is_passthrough = is_passthrough;
   core_audio->stream_idx = 0;
-
   if (!gst_core_audio_set_format (core_audio, format))
-    goto done;
+    return FALSE;
 
   /* FIXME: Use kAudioSessionProperty_CurrentHardwareSampleRate and
    * kAudioSessionProperty_CurrentHardwareIOBufferDuration with property
@@ -108,24 +96,25 @@ gst_core_audio_initialize_impl (GstCoreAudio * core_audio,
   *frame_size = 4196;
 
   GST_DEBUG_OBJECT (core_audio, "osxbuf ring buffer acquired");
-  ret = TRUE;
+  return TRUE;
+}
 
-done:
-  /* Format changed, initialise the AudioUnit again */
-  status = AudioUnitInitialize (core_audio->audiounit);
-  if (status) {
-    GST_ERROR_OBJECT (core_audio, "Failed to initialize AudioUnit: %d",
-        (int) status);
-    ret = FALSE;
-  }
-
-  return ret;
+AudioChannelLayout *
+gst_core_audio_audio_device_get_channel_layout (AudioDeviceID device_id)
+{
+  return NULL;
 }
 
 static gboolean
-gst_core_audio_select_device_impl (GstCoreAudio * core_audio)
+gst_core_audio_select_device_impl (AudioDeviceID * device_id)
 {
   /* No device selection in iOS */
+  return TRUE;
+}
+
+static gboolean
+gst_core_audio_select_source_device_impl (AudioDeviceID * device_id)
+{
   return TRUE;
 }
 

@@ -24,10 +24,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <gst/rtp/gstrtpbuffer.h>
-#include <gst/audio/audio.h>
 
 #include "gstrtpceltpay.h"
-#include "gstrtputils.h"
 
 GST_DEBUG_CATEGORY_STATIC (rtpceltpay_debug);
 #define GST_CAT_DEFAULT (rtpceltpay_debug)
@@ -85,10 +83,10 @@ gst_rtp_celt_pay_class_init (GstRtpCELTPayClass * klass)
 
   gstelement_class->change_state = gst_rtp_celt_pay_change_state;
 
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_celt_pay_sink_template);
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_celt_pay_src_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_celt_pay_sink_template));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_celt_pay_src_template));
 
   gst_element_class_set_static_metadata (gstelement_class, "RTP CELT payloader",
       "Codec/Payloader/Network/RTP",
@@ -198,16 +196,6 @@ gst_rtp_celt_pay_getcaps (GstRTPBasePayload * payload, GstPad * pad,
           clock_rate, frame_size, channels);
     }
     gst_caps_unref (otherpadcaps);
-  }
-
-  if (filter) {
-    GstCaps *tmp;
-
-    GST_DEBUG_OBJECT (payload, "Intersect %" GST_PTR_FORMAT " and filter %"
-        GST_PTR_FORMAT, caps, filter);
-    tmp = gst_caps_intersect_full (filter, caps, GST_CAPS_INTERSECT_FIRST);
-    gst_caps_unref (caps);
-    caps = tmp;
   }
 
   return caps;
@@ -346,8 +334,8 @@ gst_rtp_celt_pay_flush_queued (GstRtpCELTPay * rtpceltpay)
     guint size;
 
     /* copy first timestamp to output */
-    if (GST_BUFFER_PTS (outbuf) == -1)
-      GST_BUFFER_PTS (outbuf) = GST_BUFFER_PTS (buf);
+    if (GST_BUFFER_TIMESTAMP (outbuf) == -1)
+      GST_BUFFER_TIMESTAMP (outbuf) = GST_BUFFER_TIMESTAMP (buf);
 
     /* write the size to the header */
     size = gst_buffer_get_size (buf);
@@ -361,9 +349,6 @@ gst_rtp_celt_pay_flush_queued (GstRtpCELTPay * rtpceltpay)
     size = gst_buffer_get_size (buf);
     gst_buffer_extract (buf, 0, payload, size);
     payload += size;
-
-    gst_rtp_copy_meta (GST_ELEMENT_CAST (rtpceltpay), outbuf, buf,
-        g_quark_from_static_string (GST_META_TAG_AUDIO_STR));
 
     gst_buffer_unref (buf);
   }

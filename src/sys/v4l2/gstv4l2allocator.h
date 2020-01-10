@@ -141,18 +141,19 @@ gboolean             gst_v4l2_allocator_import_dmabuf  (GstV4l2Allocator * alloc
 gboolean             gst_v4l2_allocator_import_userptr (GstV4l2Allocator * allocator,
                                                         GstV4l2MemoryGroup *group,
                                                         gsize img_size, int n_planes,
-                                                        gpointer * data, gsize * size);
+                                                        gpointer * data, gsize * offset);
 
 void                 gst_v4l2_allocator_flush          (GstV4l2Allocator * allocator);
 
 gboolean             gst_v4l2_allocator_qbuf           (GstV4l2Allocator * allocator,
                                                         GstV4l2MemoryGroup * group);
 
-GstFlowReturn        gst_v4l2_allocator_dqbuf          (GstV4l2Allocator * allocator,
-                                                        GstV4l2MemoryGroup ** group);
+GstV4l2MemoryGroup*  gst_v4l2_allocator_dqbuf          (GstV4l2Allocator * allocator);
 
 void                 gst_v4l2_allocator_reset_group    (GstV4l2Allocator * allocator,
                                                         GstV4l2MemoryGroup * group);
+
+gsize                gst_v4l2_allocator_num_allocated  (GstV4l2Allocator * allocator);
 
 G_END_DECLS
 

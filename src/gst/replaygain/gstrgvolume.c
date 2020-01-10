@@ -271,8 +271,10 @@ gst_rg_volume_class_init (GstRgVolumeClass * klass)
   bin_class->add_element = NULL;
   bin_class->remove_element = NULL;
 
-  gst_element_class_add_static_pad_template (element_class, &src_template);
-  gst_element_class_add_static_pad_template (element_class, &sink_template);
+  gst_element_class_add_pad_template (element_class,
+      gst_static_pad_template_get (&src_template));
+  gst_element_class_add_pad_template (element_class,
+      gst_static_pad_template_get (&sink_template));
   gst_element_class_set_static_metadata (element_class, "ReplayGain volume",
       "Filter/Effect/Audio",
       "Apply ReplayGain volume adjustment",
@@ -557,7 +559,9 @@ gst_rg_volume_tag_event (GstRgVolume * self, GstEvent * event)
   self->has_album_gain |= has_album_gain;
   self->has_album_peak |= has_album_peak;
 
-  tag_list = gst_tag_list_copy (tag_list);
+  event = (GstEvent *) gst_mini_object_make_writable (GST_MINI_OBJECT (event));
+  gst_event_parse_tag (event, &tag_list);
+
   gst_tag_list_remove_tag (tag_list, GST_TAG_TRACK_GAIN);
   gst_tag_list_remove_tag (tag_list, GST_TAG_TRACK_PEAK);
   gst_tag_list_remove_tag (tag_list, GST_TAG_ALBUM_GAIN);
@@ -566,13 +570,12 @@ gst_rg_volume_tag_event (GstRgVolume * self, GstEvent * event)
 
   gst_rg_volume_update_gain (self);
 
-  gst_event_unref (event);
   if (gst_tag_list_is_empty (tag_list)) {
-    gst_tag_list_unref (tag_list);
-    return NULL;
+    gst_event_unref (event);
+    event = NULL;
   }
 
-  return gst_event_new_tag (tag_list);
+  return event;
 }
 
 static void

@@ -215,10 +215,12 @@ gst_shagadelictv_finalize (GObject * object)
 {
   GstShagadelicTV *filter = GST_SHAGADELICTV (object);
 
-  g_free (filter->ripple);
+  if (filter->ripple)
+    g_free (filter->ripple);
   filter->ripple = NULL;
 
-  g_free (filter->spiral);
+  if (filter->spiral)
+    g_free (filter->spiral);
   filter->spiral = NULL;
 
   G_OBJECT_CLASS (parent_class)->finalize (object);
@@ -238,10 +240,10 @@ gst_shagadelictv_class_init (GstShagadelicTVClass * klass)
       "Oh behave, ShagedelicTV makes images shagadelic!",
       "Wim Taymans <wim.taymans@chello.be>");
 
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_shagadelictv_sink_template);
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_shagadelictv_src_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_shagadelictv_sink_template));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_shagadelictv_src_template));
 
   vfilter_class->set_info = GST_DEBUG_FUNCPTR (gst_shagadelictv_set_info);
   vfilter_class->transform_frame =

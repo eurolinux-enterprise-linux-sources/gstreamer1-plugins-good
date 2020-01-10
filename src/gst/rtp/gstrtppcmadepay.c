@@ -25,9 +25,7 @@
 
 #include <string.h>
 #include <gst/rtp/gstrtpbuffer.h>
-#include <gst/audio/audio.h>
 #include "gstrtppcmadepay.h"
-#include "gstrtputils.h"
 
 /* RtpPcmaDepay signals and args */
 enum
@@ -38,7 +36,7 @@ enum
 
 enum
 {
-  PROP_0
+  ARG_0
 };
 
 static GstStaticPadTemplate gst_rtp_pcma_depay_sink_template =
@@ -62,7 +60,7 @@ GST_STATIC_PAD_TEMPLATE ("src",
     );
 
 static GstBuffer *gst_rtp_pcma_depay_process (GstRTPBaseDepayload * depayload,
-    GstRTPBuffer * rtp);
+    GstBuffer * buf);
 static gboolean gst_rtp_pcma_depay_setcaps (GstRTPBaseDepayload * depayload,
     GstCaps * caps);
 
@@ -79,17 +77,17 @@ gst_rtp_pcma_depay_class_init (GstRtpPcmaDepayClass * klass)
   gstelement_class = (GstElementClass *) klass;
   gstrtpbasedepayload_class = (GstRTPBaseDepayloadClass *) klass;
 
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_pcma_depay_src_template);
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_pcma_depay_sink_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_pcma_depay_src_template));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_pcma_depay_sink_template));
 
   gst_element_class_set_static_metadata (gstelement_class,
       "RTP PCMA depayloader", "Codec/Depayloader/Network/RTP",
       "Extracts PCMA audio from RTP packets",
       "Edgard Lima <edgard.lima@indt.org.br>, Zeeshan Ali <zeenix@gmail.com>");
 
-  gstrtpbasedepayload_class->process_rtp_packet = gst_rtp_pcma_depay_process;
+  gstrtpbasedepayload_class->process = gst_rtp_pcma_depay_process;
   gstrtpbasedepayload_class->set_caps = gst_rtp_pcma_depay_setcaps;
 }
 
@@ -126,20 +124,24 @@ gst_rtp_pcma_depay_setcaps (GstRTPBaseDepayload * depayload, GstCaps * caps)
 }
 
 static GstBuffer *
-gst_rtp_pcma_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
+gst_rtp_pcma_depay_process (GstRTPBaseDepayload * depayload, GstBuffer * buf)
 {
   GstBuffer *outbuf = NULL;
   gboolean marker;
   guint len;
+  GstRTPBuffer rtp = { NULL };
 
-  marker = gst_rtp_buffer_get_marker (rtp);
+  gst_rtp_buffer_map (buf, GST_MAP_READ, &rtp);
+
+  marker = gst_rtp_buffer_get_marker (&rtp);
 
   GST_DEBUG ("process : got %" G_GSIZE_FORMAT " bytes, mark %d ts %u seqn %d",
-      gst_buffer_get_size (rtp->buffer), marker,
-      gst_rtp_buffer_get_timestamp (rtp), gst_rtp_buffer_get_seq (rtp));
+      gst_buffer_get_size (buf), marker,
+      gst_rtp_buffer_get_timestamp (&rtp), gst_rtp_buffer_get_seq (&rtp));
 
-  len = gst_rtp_buffer_get_payload_len (rtp);
-  outbuf = gst_rtp_buffer_get_payload_buffer (rtp);
+  len = gst_rtp_buffer_get_payload_len (&rtp);
+  outbuf = gst_rtp_buffer_get_payload_buffer (&rtp);
+  gst_rtp_buffer_unmap (&rtp);
 
   if (outbuf) {
     GST_BUFFER_DURATION (outbuf) =
@@ -149,10 +151,8 @@ gst_rtp_pcma_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
       /* mark start of talkspurt with RESYNC */
       GST_BUFFER_FLAG_SET (outbuf, GST_BUFFER_FLAG_RESYNC);
     }
-
-    gst_rtp_drop_meta (GST_ELEMENT_CAST (depayload), outbuf,
-        g_quark_from_static_string (GST_META_TAG_AUDIO_STR));
   }
+
 
   return outbuf;
 }

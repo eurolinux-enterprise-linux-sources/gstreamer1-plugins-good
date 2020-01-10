@@ -49,7 +49,6 @@ static gboolean gst_iir_equalizer_setup (GstAudioFilter * filter,
     const GstAudioInfo * info);
 static GstFlowReturn gst_iir_equalizer_transform_ip (GstBaseTransform * btrans,
     GstBuffer * buf);
-static void set_passthrough (GstIirEqualizer * equ);
 
 #define ALLOWED_CAPS \
     "audio/x-raw,"                                                \
@@ -160,7 +159,6 @@ gst_iir_equalizer_band_set_property (GObject * object, guint prop_id,
         BANDS_LOCK (equ);
         equ->need_new_coefficients = TRUE;
         band->gain = gain;
-        set_passthrough (equ);
         BANDS_UNLOCK (equ);
         GST_DEBUG_OBJECT (band, "changed gain = %lf ", band->gain);
       }
@@ -375,8 +373,7 @@ static void
 gst_iir_equalizer_init (GstIirEqualizer * eq)
 {
   g_mutex_init (&eq->bands_lock);
-  /* Band gains are 0 by default, passthrough until they are changed */
-  gst_base_transform_set_passthrough (GST_BASE_TRANSFORM (eq), TRUE);
+  eq->need_new_coefficients = TRUE;
 }
 
 static void
@@ -855,6 +852,7 @@ gst_iir_equalizer_transform_ip (GstBaseTransform * btrans, GstBuffer * buf)
   BANDS_LOCK (equ);
   if (need_new_coefficients) {
     update_coefficients (equ);
+    set_passthrough (equ);
   }
   BANDS_UNLOCK (equ);
 

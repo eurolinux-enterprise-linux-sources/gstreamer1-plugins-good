@@ -62,6 +62,7 @@ typedef struct _GstMatroskaParse {
 
   /* state */
   //gboolean                 streaming;
+  guint                    level_up;
   guint64                  seek_block;
   gboolean                 seek_first;
 

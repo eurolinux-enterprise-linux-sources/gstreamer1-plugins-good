@@ -8,14 +8,15 @@
 %endif
 
 Name:           gstreamer1-plugins-good
-Version:        1.10.4
+Version:        1.4.5
 Release:        2%{?dist}
 Summary:        GStreamer plugins with good code and licensing
 
 License:        LGPLv2+
 URL:            http://gstreamer.freedesktop.org/
-
 Source0:        http://gstreamer.freedesktop.org/src/gst-plugins-good/gst-plugins-good-%{version}.tar.xz
+Patch1:         0001-jitterbuffer-Allow-rtp-caps-without-clock-rate.patch
+Patch2:         0001-tests-souphttpsrc-update-ssl-key-cert-pair.patch
 
 BuildRequires:  gstreamer1-devel >= %{version}
 BuildRequires:  gstreamer1-plugins-base-devel >= %{version}
@@ -27,9 +28,6 @@ BuildRequires:  libpng-devel >= 1.2.0
 BuildRequires:  libshout-devel
 BuildRequires:  libsoup-devel
 BuildRequires:  libX11-devel
-BuildRequires:  libXext-devel
-BuildRequires:  libXdamage-devel
-BuildRequires:  libXfixes-devel
 BuildRequires:  orc-devel
 BuildRequires:  pulseaudio-libs-devel
 BuildRequires:  speex-devel
@@ -88,11 +86,13 @@ to be installed.
 
 %prep
 %setup -q -n gst-plugins-good-%{version}
+%patch1 -p1
+%patch2 -p1
 
 %build
-%configure --disable-silent-rules --disable-fatal-warnings \
-  --with-package-name='GStreamer-plugins-good package' \
-  --with-package-origin='http://www.redhat.com' \
+%configure \
+  --with-package-name='Fedora GStreamer-plugins-good package' \
+  --with-package-origin='http://download.fedoraproject.org' \
   --enable-experimental \
   --enable-gtk-doc \
   --enable-orc \
@@ -100,7 +100,6 @@ to be installed.
   --disable-aalib \
   --disable-cairo \
   --disable-libcaca \
-  --disable-flx \
 %if %{with extras}
   --enable-jack \
 %else
@@ -111,58 +110,8 @@ make %{?_smp_mflags} V=1
 
 
 %install
+rm -rf $RPM_BUILD_ROOT
 make install DESTDIR=$RPM_BUILD_ROOT
-
-# Register as an AppStream component to be visible in the software center
-#
-# NOTE: It would be *awesome* if this file was maintained by the upstream
-# project, translated and installed into the right place during `make install`.
-#
-# See http://www.freedesktop.org/software/appstream/docs/ for more details.
-#
-mkdir -p $RPM_BUILD_ROOT%{_datadir}/appdata
-cat > $RPM_BUILD_ROOT%{_datadir}/appdata/gstreamer-good.appdata.xml <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!-- Copyright 2013 Richard Hughes <richard@hughsie.com> -->
-<component type="codec">
-  <id>gstreamer-good</id>
-  <metadata_license>CC0-1.0</metadata_license>
-  <name>GStreamer Multimedia Codecs</name>
-  <summary>Multimedia playback for APE, AVI, DV, FLAC, FLX, Flash, MKV, MP4, Speex, VP8, VP9 and WAV</summary>
-  <description>
-    <p>
-      This addon includes several good quality codecs that are well tested.
-      These codecs can be used to encode and decode media files where the
-      format is not patent encumbered.
-    </p>
-    <p>
-      A codec decodes audio and video for for playback or editing and is also
-      used for transmission or storage.
-      Different codecs are used in video-conferencing, streaming media and
-      video editing applications.
-    </p>
-  </description>
-  <keywords>
-    <keyword>APE</keyword>
-    <keyword>AVI</keyword>
-    <keyword>DV</keyword>
-    <keyword>FLAC</keyword>
-    <keyword>FLX</keyword>
-    <keyword>Flash</keyword>
-    <keyword>MKV</keyword>
-    <keyword>MP4</keyword>
-    <keyword>Speex</keyword>
-    <keyword>VP8</keyword>
-    <keyword>VP9</keyword>
-    <keyword>WAV</keyword>
-  </keywords>
-  <url type="homepage">http://gstreamer.freedesktop.org/</url>
-  <url type="bugtracker">https://bugzilla.gnome.org/enter_bug.cgi?product=GStreamer</url>
-  <url type="donation">http://www.gnome.org/friends/</url>
-  <url type="help">http://gstreamer.freedesktop.org/documentation/</url>
-  <update_contact><!-- upstream-contact_at_email.com --></update_contact>
-</component>
-EOF
 
 %find_lang gst-plugins-good-%{majorminor}
 
@@ -170,17 +119,14 @@ find $RPM_BUILD_ROOT -name '*.la' -exec rm -f {} ';'
 
 
 %files -f gst-plugins-good-%{majorminor}.lang
-%license COPYING
-%doc AUTHORS README REQUIREMENTS
-%{_datadir}/appdata/*.appdata.xml
+%doc AUTHORS COPYING README REQUIREMENTS
 %doc %{_datadir}/gtk-doc/html/gst-plugins-good-plugins-%{majorminor}
 
-# presets
+# Equaliser presets
 %dir %{_datadir}/gstreamer-%{majorminor}/presets/
 %{_datadir}/gstreamer-%{majorminor}/presets/GstVP8Enc.prs
 %{_datadir}/gstreamer-%{majorminor}/presets/GstIirEqualizer10Bands.prs
 %{_datadir}/gstreamer-%{majorminor}/presets/GstIirEqualizer3Bands.prs
-%{_datadir}/gstreamer-%{majorminor}/presets/GstQTMux.prs
 
 # non-core plugins without external dependencies
 %{_libdir}/gstreamer-%{majorminor}/libgstalaw.so
@@ -199,6 +145,7 @@ find $RPM_BUILD_ROOT -name '*.la' -exec rm -f {} ';'
 %{_libdir}/gstreamer-%{majorminor}/libgsteffectv.so
 %{_libdir}/gstreamer-%{majorminor}/libgstequalizer.so
 %{_libdir}/gstreamer-%{majorminor}/libgstflv.so
+%{_libdir}/gstreamer-%{majorminor}/libgstflxdec.so
 %{_libdir}/gstreamer-%{majorminor}/libgstgoom2k1.so
 %{_libdir}/gstreamer-%{majorminor}/libgstgoom.so
 %{_libdir}/gstreamer-%{majorminor}/libgsticydemux.so
@@ -259,18 +206,6 @@ find $RPM_BUILD_ROOT -name '*.la' -exec rm -f {} ';'
 
 
 %changelog
-* Thu Mar 09 2017 Wim Taymans <wtaymans@redhat.com> - 1.10.4-2
-- Fix origin
-  Resolves: #1429577
-
-* Mon Mar 06 2017 Wim Taymans <wtaymans@redhat.com> - 1.10.4-1
-- Update to 1.10.4
-  Resolves: #1429577
-
-* Tue Dec 06 2016 Wim Taymans <wtaymans@redhat.com> - 1.4.5-3
-- Remove insecure FLX plugin
-Resolves: rhbz#1400893
-
 * Tue Jun 23 2015 Wim Taymans <wtaymans@redhat.com> - 1.4.5-2
 - update SSL certificates in unit test
 - Resolves: #1174398

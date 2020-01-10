@@ -30,7 +30,7 @@
  * gst-launch-1.0 audiotestsrc num-buffers=100 ! taginject tags="title=testsrc,artist=gstreamer" ! vorbisenc ! oggmux ! filesink location=test.ogg
  * ]| set title and artist
  * |[
- * gst-launch-1.0 audiotestsrc num-buffers=100 ! taginject tags="keywords=\{\"testone\",\"audio\"\},title=\"audio\ testtone\"" ! vorbisenc ! oggmux ! filesink location=test.ogg
+ * gst-launch-1.0 audiotestsrc num-buffers=100 ! taginject tags="keywords=\{\"testone\",\"audio\"\},title=\"audio testtone\"" ! vorbisenc ! oggmux ! filesink location=test.ogg
  * ]| set keywords and title demonstrating quoting of special chars and handling lists
  * </refsect2>
  */
@@ -116,8 +116,10 @@ gst_tag_inject_class_init (GstTagInjectClass * klass)
   gst_element_class_set_static_metadata (gstelement_class,
       "TagInject",
       "Generic", "inject metadata tags", "Stefan Kost <ensonic@users.sf.net>");
-  gst_element_class_add_static_pad_template (gstelement_class, &srctemplate);
-  gst_element_class_add_static_pad_template (gstelement_class, &sinktemplate);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&srctemplate));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&sinktemplate));
 
   gstbasetrans_class->transform_ip =
       GST_DEBUG_FUNCPTR (gst_tag_inject_transform_ip);

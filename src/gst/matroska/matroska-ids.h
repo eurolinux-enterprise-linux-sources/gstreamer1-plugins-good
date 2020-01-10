@@ -23,7 +23,6 @@
 #define __GST_MATROSKA_IDS_H__
 
 #include <gst/gst.h>
-#include <gst/video/video-info.h>
 
 #include "ebml-ids.h"
 
@@ -109,8 +108,6 @@
 #define GST_MATROSKA_ID_CODECDOWNLOADURL           0x26B240
 /* semi-draft */
 #define GST_MATROSKA_ID_CODECDECODEALL             0xAA
-#define GST_MATROSKA_ID_SEEKPREROLL                0x56BB
-#define GST_MATROSKA_ID_CODECDELAY                 0x56AA
 
 /* IDs in the TrackTranslate master */
 #define GST_MATROSKA_ID_TRACKTRANSLATEEDITIONUID   0x66FC
@@ -251,7 +248,6 @@
 /* semi-draft */
 #define GST_MATROSKA_ID_CODECSTATE                 0xA4
 #define GST_MATROSKA_ID_SLICES                     0x8E
-#define GST_MATROSKA_ID_DISCARDPADDING             0x75A2
 
 /* IDs in the BlockAdditions master */
 #define GST_MATROSKA_ID_BLOCKMORE                  0xA6
@@ -351,7 +347,6 @@
 #define GST_MATROSKA_CODEC_ID_VIDEO_VP8          "V_VP8"
 #define GST_MATROSKA_CODEC_ID_VIDEO_VP9          "V_VP9"
 #define GST_MATROSKA_CODEC_ID_VIDEO_MPEGH_HEVC   "V_MPEGH/ISO/HEVC"
-#define GST_MATROSKA_CODEC_ID_VIDEO_PRORES       "V_PRORES"
 
 #define GST_MATROSKA_CODEC_ID_AUDIO_MPEG1_L1       "A_MPEG/L1"
 #define GST_MATROSKA_CODEC_ID_AUDIO_MPEG1_L2       "A_MPEG/L2"
@@ -494,16 +489,6 @@ typedef enum {
   GST_MATROSKA_VIDEOTRACK_INTERLACED = (GST_MATROSKA_TRACK_SHIFT<<0)
 } GstMatroskaVideoTrackFlags;
 
-typedef enum {
-  GST_MATROSKA_STEREO_MODE_SBS_LR      = 0x1,
-  GST_MATROSKA_STEREO_MODE_TB_RL       = 0x2,
-  GST_MATROSKA_STEREO_MODE_TB_LR       = 0x3,
-  GST_MATROSKA_STEREO_MODE_CHECKER_RL  = 0x4,
-  GST_MATROSKA_STEREO_MODE_CHECKER_LR  = 0x5,
-  GST_MATROSKA_STEREO_MODE_SBS_RL      = 0x9,
-  GST_MATROSKA_STEREO_MODE_FBF_LR      = 0xD,
-  GST_MATROSKA_STEREO_MODE_FBF_RL      = 0xE
-} GstMatroskaStereoMode;
 
 typedef struct _GstMatroskaTrackContext GstMatroskaTrackContext;
 
@@ -533,8 +518,6 @@ struct _GstMatroskaTrackContext {
   guint64       default_duration;
   guint64       pos;
   gdouble       timecodescale;
-  guint64       seek_preroll;
-  guint64       codec_delay;
 
   gboolean      set_discont; /* TRUE = set DISCONT flag on next buffer */
 
@@ -556,10 +539,8 @@ struct _GstMatroskaTrackContext {
                                       GstMatroskaTrackContext *context,
 				      GstBuffer **buffer);
 
-  /* List of tags for this stream */
-  GstTagList   *tags;
-  /* Tags changed and should be pushed again */
-  gboolean      tags_changed;
+  /* Tags to send after newsegment event */
+  GstTagList   *pending_tags;
 
   /* A GArray of GstMatroskaTrackEncoding structures which contain the
    * encoding (compression/encryption) settings for this track, if any */
@@ -570,12 +551,6 @@ struct _GstMatroskaTrackContext {
 
   /* any alignment we need our output buffers to have */
   gint          alignment;
-  
-  /* for compatibility with VFW files, where timestamp represents DTS */
-  gboolean      dts_only;
-  
-  /* indicate that the track is raw (jpeg,raw variants) and so pts=dts */
-  gboolean		intra_only;
 };
 
 typedef struct _GstMatroskaTrackVideoContext {
@@ -586,9 +561,6 @@ typedef struct _GstMatroskaTrackVideoContext {
   gdouble       default_fps;
   GstMatroskaAspectRatioMode asr_mode;
   guint32       fourcc;
-
-  GstVideoMultiviewMode multiview_mode;
-  GstVideoMultiviewFlags multiview_flags;
 
   /* QoS */
   GstClockTime  earliest_time;
@@ -668,12 +640,8 @@ GstBufferList * gst_matroska_parse_xiph_stream_headers  (gpointer codec_data,
 GstBufferList * gst_matroska_parse_speex_stream_headers (gpointer codec_data,
                                                          gsize codec_data_size);
 
-GstBufferList * gst_matroska_parse_opus_stream_headers  (gpointer codec_data,
-                                                         gsize codec_data_size);
-
 GstBufferList * gst_matroska_parse_flac_stream_headers  (gpointer codec_data,
                                                          gsize codec_data_size);
 void gst_matroska_track_free (GstMatroskaTrackContext * track);
-GstClockTime gst_matroska_track_get_buffer_timestamp (GstMatroskaTrackContext * track, GstBuffer *buf);
 
 #endif /* __GST_MATROSKA_IDS_H__ */

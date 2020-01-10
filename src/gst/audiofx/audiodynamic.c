@@ -29,8 +29,8 @@
  * <refsect2>
  * <title>Example launch line</title>
  * |[
- * gst-launch-1.0 audiotestsrc wave=saw ! audiodynamic characteristics=soft-knee mode=compressor threshold=0.5 ratio=0.5 ! alsasink
- * gst-launch-1.0 filesrc location="melo1.ogg" ! oggdemux ! vorbisdec ! audioconvert ! audiodynamic characteristics=hard-knee mode=expander threshold=0.2 ratio=4.0 ! alsasink
+ * gst-launch-1.0 audiotestsrc wave=saw ! audiodynamic characteristics=soft-knee mode=compressor threshold=0.5 rate=0.5 ! alsasink
+ * gst-launch-1.0 filesrc location="melo1.ogg" ! oggdemux ! vorbisdec ! audioconvert ! audiodynamic characteristics=hard-knee mode=expander threshold=0.2 rate=4.0 ! alsasink
  * gst-launch-1.0 audiotestsrc wave=saw ! audioconvert ! audiodynamic ! audioconvert ! alsasink
  * ]|
  * </refsect2>
@@ -110,7 +110,7 @@ static void
 gst_audio_dynamic_transform_soft_knee_expander_float (GstAudioDynamic * filter,
     gfloat * data, guint num_samples);
 
-static const GstAudioDynamicProcessFunc process_functions[] = {
+static GstAudioDynamicProcessFunc process_functions[] = {
   (GstAudioDynamicProcessFunc)
       gst_audio_dynamic_transform_hard_knee_compressor_int,
   (GstAudioDynamicProcessFunc)
@@ -180,19 +180,25 @@ gst_audio_dynamic_mode_get_type (void)
   return gtype;
 }
 
-static void
+static gboolean
 gst_audio_dynamic_set_process_function (GstAudioDynamic * filter,
     const GstAudioInfo * info)
 {
   gint func_index;
 
+  if (GST_AUDIO_INFO_FORMAT (info) == GST_AUDIO_FORMAT_UNKNOWN)
+    return FALSE;
+
   func_index = (filter->mode == MODE_COMPRESSOR) ? 0 : 4;
   func_index += (filter->characteristics == CHARACTERISTICS_HARD_KNEE) ? 0 : 2;
   func_index += (GST_AUDIO_INFO_FORMAT (info) == GST_AUDIO_FORMAT_F32) ? 1 : 0;
 
-  g_assert (func_index >= 0 && func_index < G_N_ELEMENTS (process_functions));
+  if (func_index >= 0 && func_index < 8) {
+    filter->process = process_functions[func_index];
+    return TRUE;
+  }
 
-  filter->process = process_functions[func_index];
+  return FALSE;
 }
 
 /* GObject vmethod implementations */
@@ -327,9 +333,11 @@ static gboolean
 gst_audio_dynamic_setup (GstAudioFilter * base, const GstAudioInfo * info)
 {
   GstAudioDynamic *filter = GST_AUDIO_DYNAMIC (base);
+  gboolean ret = TRUE;
 
-  gst_audio_dynamic_set_process_function (filter, info);
-  return TRUE;
+  ret = gst_audio_dynamic_set_process_function (filter, info);
+
+  return ret;
 }
 
 static void

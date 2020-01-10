@@ -270,7 +270,7 @@ gst_v4l2src_fixate (GstBaseSrc * basesrc, GstCaps * caps)
 
     if (gst_structure_has_field (structure, "framerate"))
       gst_structure_fixate_field_nearest_fraction (structure, "framerate",
-          100, 1);
+          G_MAXINT, 1);
 
     if (gst_structure_has_field (structure, "format"))
       gst_structure_fixate_field (structure, "format");
@@ -290,10 +290,19 @@ gst_v4l2src_fixate (GstBaseSrc * basesrc, GstCaps * caps)
 static gboolean
 gst_v4l2src_negotiate (GstBaseSrc * basesrc)
 {
+  GstV4l2Src *v4l2src;
+  GstV4l2Object *obj;
   GstCaps *thiscaps;
   GstCaps *caps = NULL;
   GstCaps *peercaps = NULL;
   gboolean result = FALSE;
+
+  v4l2src = GST_V4L2SRC (basesrc);
+  obj = v4l2src->v4l2object;
+
+  /* We don't allow renegotiation, just return TRUE in that case */
+  if (GST_V4L2_IS_ACTIVE (obj))
+    return TRUE;
 
   /* first see what is possible on our source pad */
   thiscaps = gst_pad_query_caps (GST_BASE_SRC_PAD (basesrc), NULL);
@@ -308,13 +317,27 @@ gst_v4l2src_negotiate (GstBaseSrc * basesrc)
   peercaps = gst_pad_peer_query_caps (GST_BASE_SRC_PAD (basesrc), NULL);
   GST_DEBUG_OBJECT (basesrc, "caps of peer: %" GST_PTR_FORMAT, peercaps);
   LOG_CAPS (basesrc, peercaps);
-
   if (peercaps && !gst_caps_is_any (peercaps)) {
     GstCaps *icaps = NULL;
+    int i;
 
     /* Prefer the first caps we are compatible with that the peer proposed */
-    icaps = gst_caps_intersect_full (peercaps, thiscaps,
-        GST_CAPS_INTERSECT_FIRST);
+    for (i = 0; i < gst_caps_get_size (peercaps); i++) {
+      /* get intersection */
+      GstCaps *ipcaps = gst_caps_copy_nth (peercaps, i);
+
+      GST_DEBUG_OBJECT (basesrc, "peer: %" GST_PTR_FORMAT, ipcaps);
+      LOG_CAPS (basesrc, ipcaps);
+
+      icaps = gst_caps_intersect (thiscaps, ipcaps);
+      gst_caps_unref (ipcaps);
+
+      if (!gst_caps_is_empty (icaps))
+        break;
+
+      gst_caps_unref (icaps);
+      icaps = NULL;
+    }
 
     GST_DEBUG_OBJECT (basesrc, "intersect: %" GST_PTR_FORMAT, icaps);
     LOG_CAPS (basesrc, icaps);
@@ -329,7 +352,6 @@ gst_v4l2src_negotiate (GstBaseSrc * basesrc)
 
         if (gst_structure_get_int (s, "width", &twidth)
             && gst_structure_get_int (s, "height", &theight)) {
-          int i;
 
           /* Walk the structure backwards to get the first entry of the
            * smallest resolution bigger (or equal to) the preferred resolution)
@@ -410,25 +432,6 @@ gst_v4l2src_get_caps (GstBaseSrc * src, GstCaps * filter)
 }
 
 static gboolean
-gst_v4l2src_set_format (GstV4l2Src * v4l2src, GstCaps * caps)
-{
-  GstV4l2Error error = GST_V4L2_ERROR_INIT;
-  GstV4l2Object *obj;
-
-  obj = v4l2src->v4l2object;
-
-  g_signal_emit (v4l2src, gst_v4l2_signals[SIGNAL_PRE_SET_FORMAT], 0,
-      v4l2src->v4l2object->video_fd, caps);
-
-  if (!gst_v4l2_object_set_format (obj, caps, &error)) {
-    gst_v4l2_error (v4l2src, &error);
-    return FALSE;
-  }
-
-  return TRUE;
-}
-
-static gboolean
 gst_v4l2src_set_caps (GstBaseSrc * src, GstCaps * caps)
 {
   GstV4l2Src *v4l2src;
@@ -441,28 +444,16 @@ gst_v4l2src_set_caps (GstBaseSrc * src, GstCaps * caps)
   if (gst_v4l2_object_caps_equal (obj, caps))
     return TRUE;
 
-  if (GST_V4L2_IS_ACTIVE (obj)) {
-    GstV4l2Error error = GST_V4L2_ERROR_INIT;
-    /* Just check if the format is acceptable, once we know
-     * no buffers should be outstanding we try S_FMT.
-     *
-     * Basesrc will do an allocation query that
-     * should indirectly reclaim buffers, after that we can
-     * set the format and then configure our pool */
-    if (gst_v4l2_object_try_format (obj, caps, &error)) {
-      v4l2src->renegotiation_adjust = v4l2src->offset + 1;
-      v4l2src->pending_set_fmt = TRUE;
-    } else {
-      gst_v4l2_error (v4l2src, &error);
-      return FALSE;
-    }
-  } else {
-    /* make sure we stop capturing and dealloc buffers */
-    if (!gst_v4l2_object_stop (obj))
-      return FALSE;
+  /* make sure we stop capturing and dealloc buffers */
+  if (!gst_v4l2_object_stop (obj))
+    return FALSE;
 
-    return gst_v4l2src_set_format (v4l2src, caps);
-  }
+  g_signal_emit (v4l2src, gst_v4l2_signals[SIGNAL_PRE_SET_FORMAT], 0,
+      v4l2src->v4l2object->video_fd, caps);
+
+  if (!gst_v4l2_object_set_format (obj, caps))
+    /* error already posted */
+    return FALSE;
 
   return TRUE;
 }
@@ -471,51 +462,10 @@ static gboolean
 gst_v4l2src_decide_allocation (GstBaseSrc * bsrc, GstQuery * query)
 {
   GstV4l2Src *src = GST_V4L2SRC (bsrc);
-  gboolean ret = TRUE;
+  gboolean ret = FALSE;
 
-  if (src->pending_set_fmt) {
-    GstCaps *caps = gst_pad_get_current_caps (GST_BASE_SRC_PAD (bsrc));
-
-    if (!gst_v4l2_object_stop (src->v4l2object))
-      return FALSE;
-    ret = gst_v4l2src_set_format (src, caps);
-    gst_caps_unref (caps);
-    src->pending_set_fmt = FALSE;
-  } else if (gst_buffer_pool_is_active (src->v4l2object->pool)) {
-    /* Trick basesrc into not deactivating the active pool. Renegotiating here
-     * would otherwise turn off and on the camera. */
-    GstAllocator *allocator;
-    GstAllocationParams params;
-    GstBufferPool *pool;
-
-    gst_base_src_get_allocator (bsrc, &allocator, &params);
-    pool = gst_base_src_get_buffer_pool (bsrc);
-
-    if (gst_query_get_n_allocation_params (query))
-      gst_query_set_nth_allocation_param (query, 0, allocator, &params);
-    else
-      gst_query_add_allocation_param (query, allocator, &params);
-
-    if (gst_query_get_n_allocation_pools (query))
-      gst_query_set_nth_allocation_pool (query, 0, pool,
-          src->v4l2object->info.size, 1, 0);
-    else
-      gst_query_add_allocation_pool (query, pool, src->v4l2object->info.size, 1,
-          0);
-
-    if (pool)
-      gst_object_unref (pool);
-    if (allocator)
-      gst_object_unref (allocator);
-
-    return GST_BASE_SRC_CLASS (parent_class)->decide_allocation (bsrc, query);
-  }
-
-  if (ret) {
-    ret = gst_v4l2_object_decide_allocation (src->v4l2object, query);
-    if (ret)
-      ret = GST_BASE_SRC_CLASS (parent_class)->decide_allocation (bsrc, query);
-  }
+  if (gst_v4l2_object_decide_allocation (src->v4l2object, query))
+    ret = GST_BASE_SRC_CLASS (parent_class)->decide_allocation (bsrc, query);
 
   if (ret) {
     if (!gst_buffer_pool_set_active (src->v4l2object->pool, TRUE))
@@ -609,14 +559,10 @@ gst_v4l2src_start (GstBaseSrc * src)
   GstV4l2Src *v4l2src = GST_V4L2SRC (src);
 
   v4l2src->offset = 0;
-  v4l2src->renegotiation_adjust = 0;
 
   /* activate settings for first frame */
   v4l2src->ctrl_time = 0;
   gst_object_sync_values (GST_OBJECT (src), v4l2src->ctrl_time);
-
-  v4l2src->has_bad_timestamp = FALSE;
-  v4l2src->last_timestamp = 0;
 
   return TRUE;
 }
@@ -632,9 +578,6 @@ static gboolean
 gst_v4l2src_unlock_stop (GstBaseSrc * src)
 {
   GstV4l2Src *v4l2src = GST_V4L2SRC (src);
-
-  v4l2src->last_timestamp = 0;
-
   return gst_v4l2_object_unlock_stop (v4l2src->v4l2object);
 }
 
@@ -648,9 +591,6 @@ gst_v4l2src_stop (GstBaseSrc * src)
     if (!gst_v4l2_object_stop (obj))
       return FALSE;
   }
-
-  v4l2src->pending_set_fmt = FALSE;
-
   return TRUE;
 }
 
@@ -697,7 +637,6 @@ gst_v4l2src_create (GstPushSrc * src, GstBuffer ** buf)
   GstClock *clock;
   GstClockTime abs_time, base_time, timestamp, duration;
   GstClockTime delay;
-  GstMessage *qos_msg;
 
   do {
     ret = GST_BASE_SRC_CLASS (parent_class)->alloc (GST_BASE_SRC (src), 0,
@@ -737,8 +676,7 @@ gst_v4l2src_create (GstPushSrc * src, GstBuffer ** buf)
     abs_time = GST_CLOCK_TIME_NONE;
   }
 
-retry:
-  if (!v4l2src->has_bad_timestamp && timestamp != GST_CLOCK_TIME_NONE) {
+  if (timestamp != GST_CLOCK_TIME_NONE) {
     struct timespec now;
     GstClockTime gstnow;
 
@@ -748,7 +686,7 @@ retry:
     clock_gettime (CLOCK_MONOTONIC, &now);
     gstnow = GST_TIMESPEC_TO_TIME (now);
 
-    if (timestamp > gstnow || (gstnow - timestamp) > (10 * GST_SECOND)) {
+    if (gstnow < timestamp && (timestamp - gstnow) > (10 * GST_SECOND)) {
       GTimeVal now;
 
       /* very large diff, fall back to system time */
@@ -756,38 +694,11 @@ retry:
       gstnow = GST_TIMEVAL_TO_TIME (now);
     }
 
-    /* Detect buggy drivers here, and stop using their timestamp. Failing any
-     * of these condition would imply a very buggy driver:
-     *   - Timestamp in the future
-     *   - Timestamp is going backward compare to last seen timestamp
-     *   - Timestamp is jumping forward for less then a frame duration
-     *   - Delay is bigger then the actual timestamp
-     * */
-    if (timestamp > gstnow) {
-      GST_WARNING_OBJECT (v4l2src,
-          "Timestamp in the future detected, ignoring driver timestamps");
-      v4l2src->has_bad_timestamp = TRUE;
-      goto retry;
+    if (gstnow > timestamp) {
+      delay = gstnow - timestamp;
+    } else {
+      delay = 0;
     }
-
-    if (v4l2src->last_timestamp > timestamp) {
-      GST_WARNING_OBJECT (v4l2src,
-          "Timestamp going backward, ignoring driver timestamps");
-      v4l2src->has_bad_timestamp = TRUE;
-      goto retry;
-    }
-
-    delay = gstnow - timestamp;
-
-    if (delay > timestamp) {
-      GST_WARNING_OBJECT (v4l2src,
-          "Timestamp does not correlate with any clock, ignoring driver timestamps");
-      v4l2src->has_bad_timestamp = TRUE;
-      goto retry;
-    }
-
-    /* Save last timestamp for sanity checks */
-    v4l2src->last_timestamp = timestamp;
 
     GST_DEBUG_OBJECT (v4l2src, "ts: %" GST_TIME_FORMAT " now %" GST_TIME_FORMAT
         " delay %" GST_TIME_FORMAT, GST_TIME_ARGS (timestamp),
@@ -801,6 +712,8 @@ retry:
   }
 
   /* set buffer metadata */
+  GST_BUFFER_OFFSET (*buf) = v4l2src->offset++;
+  GST_BUFFER_OFFSET_END (*buf) = v4l2src->offset;
 
   if (G_LIKELY (abs_time != GST_CLOCK_TIME_NONE)) {
     /* the time now is the time of the clock minus the base time */
@@ -829,35 +742,6 @@ retry:
   GST_INFO_OBJECT (src, "sync to %" GST_TIME_FORMAT " out ts %" GST_TIME_FORMAT,
       GST_TIME_ARGS (v4l2src->ctrl_time), GST_TIME_ARGS (timestamp));
 
-  /* use generated offset values only if there are not already valid ones
-   * set by the v4l2 device */
-  if (!GST_BUFFER_OFFSET_IS_VALID (*buf)
-      || !GST_BUFFER_OFFSET_END_IS_VALID (*buf)) {
-    GST_BUFFER_OFFSET (*buf) = v4l2src->offset++;
-    GST_BUFFER_OFFSET_END (*buf) = v4l2src->offset;
-  } else {
-    /* adjust raw v4l2 device sequence, will restart at null in case of renegotiation
-     * (streamoff/streamon) */
-    GST_BUFFER_OFFSET (*buf) += v4l2src->renegotiation_adjust;
-    GST_BUFFER_OFFSET_END (*buf) += v4l2src->renegotiation_adjust;
-    /* check for frame loss with given (from v4l2 device) buffer offset */
-    if ((v4l2src->offset != 0)
-        && (GST_BUFFER_OFFSET (*buf) != (v4l2src->offset + 1))) {
-      guint64 lost_frame_count = GST_BUFFER_OFFSET (*buf) - v4l2src->offset - 1;
-      GST_WARNING_OBJECT (v4l2src,
-          "lost frames detected: count = %" G_GUINT64_FORMAT " - ts: %"
-          GST_TIME_FORMAT, lost_frame_count, GST_TIME_ARGS (timestamp));
-
-      qos_msg = gst_message_new_qos (GST_OBJECT_CAST (v4l2src), TRUE,
-          GST_CLOCK_TIME_NONE, GST_CLOCK_TIME_NONE, timestamp,
-          GST_CLOCK_TIME_IS_VALID (duration) ? lost_frame_count *
-          duration : GST_CLOCK_TIME_NONE);
-      gst_element_post_message (GST_ELEMENT_CAST (v4l2src), qos_msg);
-
-    }
-    v4l2src->offset = GST_BUFFER_OFFSET (*buf);
-  }
-
   GST_BUFFER_TIMESTAMP (*buf) = timestamp;
   GST_BUFFER_DURATION (*buf) = duration;
 
@@ -873,7 +757,6 @@ alloc_failed:
   }
 error:
   {
-    gst_buffer_replace (buf, NULL);
     if (ret == GST_V4L2_FLOW_LAST_BUFFER) {
       GST_ELEMENT_ERROR (src, RESOURCE, FAILED,
           ("Driver returned a buffer with no payload, this most likely "

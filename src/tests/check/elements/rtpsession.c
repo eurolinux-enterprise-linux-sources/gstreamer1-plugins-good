@@ -20,15 +20,12 @@
  * Free Software Foundation, Inc., 51 Franklin St, Fifth Floor,
  * Boston, MA 02110-1301, USA.
  */
-#define GLIB_DISABLE_DEPRECATION_WARNINGS
 
-#include <gst/check/gstharness.h>
 #include <gst/check/gstcheck.h>
 #include <gst/check/gsttestclock.h>
 
 #include <gst/rtp/gstrtpbuffer.h>
 #include <gst/rtp/gstrtcpbuffer.h>
-#include <gst/net/gstnetaddressmeta.h>
 
 static const guint payload_size = 160;
 static const guint clock_rate = 8000;
@@ -235,12 +232,8 @@ GST_START_TEST (test_multiple_ssrc_rr)
       gst_clock_id_unref (tid);
   }
 
-  out_buf = g_async_queue_try_pop (data.rtcp_queue);
-  if (out_buf)
-    gst_buffer_unref (out_buf);
-
   gst_test_clock_set_time (GST_TEST_CLOCK (data.clock),
-      gst_clock_id_get_time (id) + (5 * GST_SECOND));
+      gst_clock_id_get_time (id) + (2 * GST_SECOND));
   gst_test_clock_wait_for_next_pending_id (GST_TEST_CLOCK (data.clock), &id);
   tid = gst_test_clock_process_next_clock_id (GST_TEST_CLOCK (data.clock));
   gst_clock_id_unref (id);
@@ -453,7 +446,6 @@ GST_START_TEST (test_internal_sources_timeout)
   GstRTCPPacket rtcp_packet;
   GstFlowReturn res;
   gint i, j;
-  GstCaps *caps;
 
   setup_testharness (&data, TRUE);
   g_object_get (data.session, "internal-session", &internal_session, NULL);
@@ -485,12 +477,6 @@ GST_START_TEST (test_internal_sources_timeout)
   gst_buffer_unref (buf);
 
   /* ok, now let's push some RTP packets */
-  caps =
-      gst_caps_new_simple ("application/x-rtp", "ssrc", G_TYPE_UINT, 0x01BADBAD,
-      NULL);
-  gst_pad_set_caps (data.src, caps);
-  gst_caps_unref (caps);
-
   for (i = 1; i < 4; i++) {
     gst_test_clock_advance_time (GST_TEST_CLOCK (data.clock),
         200 * GST_MSECOND);
@@ -579,239 +565,8 @@ GST_START_TEST (test_internal_sources_timeout)
 
 GST_END_TEST;
 
-typedef struct
-{
-  guint8 subtype;
-  guint32 ssrc;
-  gchar *name;
-  GstBuffer *data;
-} RTCPAppResult;
-
-static void
-on_app_rtcp_cb (GObject * session, guint subtype, guint ssrc,
-    const gchar * name, GstBuffer * data, RTCPAppResult * result)
-{
-  result->subtype = subtype;
-  result->ssrc = ssrc;
-  result->name = g_strdup (name);
-  result->data = data ? gst_buffer_ref (data) : NULL;
-}
-
-GST_START_TEST (test_receive_rtcp_app_packet)
-{
-  GstHarness *h;
-  GstBuffer *buffer;
-  GstRTCPBuffer rtcp = GST_RTCP_BUFFER_INIT;
-  GstRTCPPacket packet;
-  RTCPAppResult result = { 0 };
-  GstElement *internal_session;
-  guint8 data[] = { 0x11, 0x22, 0x33, 0x44 };
-
-  h = gst_harness_new_with_padnames ("rtpsession", "recv_rtcp_sink", NULL);
-  g_object_get (h->element, "internal-session", &internal_session, NULL);
-
-  g_signal_connect (internal_session, "on-app-rtcp",
-      G_CALLBACK (on_app_rtcp_cb), &result);
-
-  /* Push APP buffer with no data */
-  buffer = gst_rtcp_buffer_new (1000);
-  fail_unless (gst_rtcp_buffer_map (buffer, GST_MAP_READWRITE, &rtcp));
-  fail_unless (gst_rtcp_buffer_add_packet (&rtcp, GST_RTCP_TYPE_APP, &packet));
-  gst_rtcp_packet_app_set_subtype (&packet, 21);
-  gst_rtcp_packet_app_set_ssrc (&packet, 0x11111111);
-  gst_rtcp_packet_app_set_name (&packet, "Test");
-  gst_rtcp_buffer_unmap (&rtcp);
-
-  gst_harness_set_src_caps_str (h, "application/x-rtcp");
-  fail_unless_equals_int (gst_harness_push (h, buffer), GST_FLOW_OK);
-
-  fail_unless_equals_int (result.subtype, 21);
-  fail_unless_equals_int (result.ssrc, 0x11111111);
-  fail_unless_equals_string (result.name, "Test");
-  fail_unless_equals_pointer (result.data, NULL);
-
-  g_free (result.name);
-
-  /* Push APP buffer with data */
-  memset (&result, 0, sizeof (result));
-  buffer = gst_rtcp_buffer_new (1000);
-  fail_unless (gst_rtcp_buffer_map (buffer, GST_MAP_READWRITE, &rtcp));
-  fail_unless (gst_rtcp_buffer_add_packet (&rtcp, GST_RTCP_TYPE_APP, &packet));
-  gst_rtcp_packet_app_set_subtype (&packet, 22);
-  gst_rtcp_packet_app_set_ssrc (&packet, 0x22222222);
-  gst_rtcp_packet_app_set_name (&packet, "Test");
-  gst_rtcp_packet_app_set_data_length (&packet, sizeof (data) / 4);
-  memcpy (gst_rtcp_packet_app_get_data (&packet), data, sizeof (data));
-  gst_rtcp_buffer_unmap (&rtcp);
-
-  fail_unless_equals_int (gst_harness_push (h, buffer), GST_FLOW_OK);
-
-  fail_unless_equals_int (result.subtype, 22);
-  fail_unless_equals_int (result.ssrc, 0x22222222);
-  fail_unless_equals_string (result.name, "Test");
-  fail_unless (gst_buffer_memcmp (result.data, 0, data, sizeof (data)) == 0);
-
-  g_free (result.name);
-  gst_buffer_unref (result.data);
-
-  gst_object_unref (internal_session);
-  gst_harness_teardown (h);
-}
-
-GST_END_TEST;
-
-static void
-stats_test_cb (GObject * object, GParamSpec * spec, gpointer data)
-{
-  guint num_sources = 0;
-  gboolean *cb_called = data;
-  g_assert (*cb_called == FALSE);
-  *cb_called = TRUE;
-
-  /* We should be able to get a rtpsession property
-     without introducing the deadlock */
-  g_object_get (object, "num-sources", &num_sources, NULL);
-}
-
-GST_START_TEST (test_dont_lock_on_stats)
-{
-  GstHarness *h_rtcp;
-  GstHarness *h_send;
-  GstClock *clock = gst_test_clock_new ();
-  GstTestClock *testclock = GST_TEST_CLOCK (clock);
-  gboolean cb_called = FALSE;
-
-  /* use testclock as the systemclock to capture the rtcp thread waits */
-  gst_system_clock_set_default (GST_CLOCK (testclock));
-
-  h_rtcp =
-      gst_harness_new_with_padnames ("rtpsession", "recv_rtcp_sink",
-      "send_rtcp_src");
-  h_send =
-      gst_harness_new_with_element (h_rtcp->element, "send_rtp_sink",
-      "send_rtp_src");
-
-  /* connect to the stats-reporting */
-  g_signal_connect (h_rtcp->element, "notify::stats",
-      G_CALLBACK (stats_test_cb), &cb_called);
-
-  /* "crank" and check the stats */
-  g_assert (gst_test_clock_crank (testclock));
-  gst_buffer_unref (gst_harness_pull (h_rtcp));
-  fail_unless (cb_called);
-
-  gst_harness_teardown (h_send);
-  gst_harness_teardown (h_rtcp);
-  gst_object_unref (clock);
-}
-
-GST_END_TEST;
-
-static void
-suspicious_bye_cb (GObject * object, GParamSpec * spec, gpointer data)
-{
-  GValueArray *stats_arr;
-  GstStructure *stats, *internal_stats;
-  gboolean *cb_called = data;
-  gboolean internal = FALSE, sent_bye = TRUE;
-  guint ssrc = 0;
-  guint i;
-
-  g_assert (*cb_called == FALSE);
-  *cb_called = TRUE;
-
-  g_object_get (object, "stats", &stats, NULL);
-  stats_arr =
-      g_value_get_boxed (gst_structure_get_value (stats, "source-stats"));
-  g_assert (stats_arr != NULL);
-  fail_unless (stats_arr->n_values >= 1);
-
-  for (i = 0; i < stats_arr->n_values; i++) {
-    internal_stats = g_value_get_boxed (g_value_array_get_nth (stats_arr, i));
-    g_assert (internal_stats != NULL);
-
-    gst_structure_get (internal_stats,
-        "ssrc", G_TYPE_UINT, &ssrc,
-        "internal", G_TYPE_BOOLEAN, &internal,
-        "received-bye", G_TYPE_BOOLEAN, &sent_bye, NULL);
-
-    if (ssrc == 0xDEADBEEF) {
-      fail_unless (internal);
-      fail_unless (!sent_bye);
-      break;
-    }
-  }
-  fail_unless_equals_int (ssrc, 0xDEADBEEF);
-
-  gst_structure_free (stats);
-}
-
-static GstBuffer *
-create_bye_rtcp (guint32 ssrc)
-{
-  GstRTCPPacket packet;
-  GstRTCPBuffer rtcp = GST_RTCP_BUFFER_INIT;
-  GSocketAddress *saddr;
-  GstBuffer *buffer = gst_rtcp_buffer_new (1000);
-
-  fail_unless (gst_rtcp_buffer_map (buffer, GST_MAP_READWRITE, &rtcp));
-  fail_unless (gst_rtcp_buffer_add_packet (&rtcp, GST_RTCP_TYPE_BYE, &packet));
-  gst_rtcp_packet_bye_add_ssrc (&packet, ssrc);
-  gst_rtcp_buffer_unmap (&rtcp);
-
-  /* Need to add meta to trigger collision detection */
-  saddr = g_inet_socket_address_new_from_string ("127.0.0.1", 3490);
-  gst_buffer_add_net_address_meta (buffer, saddr);
-  g_object_unref (saddr);
-  return buffer;
-}
-
-GST_START_TEST (test_ignore_suspicious_bye)
-{
-  GstHarness *h_rtcp = NULL;
-  GstHarness *h_send = NULL;
-  gboolean cb_called = FALSE;
-  GstTestClock *testclock = GST_TEST_CLOCK (gst_test_clock_new ());
-
-  /* use testclock as the systemclock to capture the rtcp thread waits */
-  gst_system_clock_set_default (GST_CLOCK (testclock));
-
-  h_rtcp =
-      gst_harness_new_with_padnames ("rtpsession", "recv_rtcp_sink",
-      "send_rtcp_src");
-  h_send =
-      gst_harness_new_with_element (h_rtcp->element, "send_rtp_sink",
-      "send_rtp_src");
-
-  /* connect to the stats-reporting */
-  g_signal_connect (h_rtcp->element, "notify::stats",
-      G_CALLBACK (suspicious_bye_cb), &cb_called);
-
-  /* Push RTP buffer making our internal SSRC=0xDEADBEEF */
-  gst_harness_set_src_caps_str (h_send,
-      "application/x-rtp,ssrc=(uint)0xDEADBEEF,"
-      "clock-rate=90000,seqnum-offset=(uint)12345");
-  gst_harness_push (h_send,
-      generate_test_buffer (0, FALSE, 12345, 0, 0xDEADBEEF));
-
-  /* Push BYE RTCP with internal SSRC (0xDEADBEEF) */
-  gst_harness_set_src_caps_str (h_rtcp, "application/x-rtcp");
-  gst_harness_push (h_rtcp, create_bye_rtcp (0xDEADBEEF));
-
-  /* "crank" and check the stats */
-  g_assert (gst_test_clock_crank (testclock));
-  gst_buffer_unref (gst_harness_pull (h_rtcp));
-  fail_unless (cb_called);
-
-  gst_harness_teardown (h_send);
-  gst_harness_teardown (h_rtcp);
-  gst_object_unref (testclock);
-}
-
-GST_END_TEST;
-
 static Suite *
-rtpsession_suite (void)
+gstrtpsession_suite (void)
 {
   Suite *s = suite_create ("rtpsession");
   TCase *tc_chain = tcase_create ("general");
@@ -820,11 +575,23 @@ rtpsession_suite (void)
   tcase_add_test (tc_chain, test_multiple_ssrc_rr);
   tcase_add_test (tc_chain, test_multiple_senders_roundrobin_rbs);
   tcase_add_test (tc_chain, test_internal_sources_timeout);
-  tcase_add_test (tc_chain, test_receive_rtcp_app_packet);
-  tcase_add_test (tc_chain, test_dont_lock_on_stats);
-  tcase_add_test (tc_chain, test_ignore_suspicious_bye);
 
   return s;
 }
 
-GST_CHECK_MAIN (rtpsession);
+int
+main (int argc, char **argv)
+{
+  int nf;
+
+  Suite *s = gstrtpsession_suite ();
+  SRunner *sr = srunner_create (s);
+
+  gst_check_init (&argc, &argv);
+
+  srunner_run_all (sr, CK_NORMAL);
+  nf = srunner_ntests_failed (sr);
+  srunner_free (sr);
+
+  return nf;
+}

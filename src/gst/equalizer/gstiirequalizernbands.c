@@ -46,7 +46,7 @@
  * ...
  * 
  *   GstElement *equalizer;
- *   GObject *band;
+ *   GstObject *band;
  *   gint i;
  *   GstEqualizerBandState state[] = {
  *     { 120.0,   50.0, - 3.0},

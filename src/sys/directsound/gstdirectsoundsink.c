@@ -101,15 +101,9 @@ static gdouble gst_directsound_sink_get_volume (GstDirectSoundSink * sink);
 static void gst_directsound_sink_set_mute (GstDirectSoundSink * sink,
     gboolean mute);
 static gboolean gst_directsound_sink_get_mute (GstDirectSoundSink * sink);
-static const gchar *gst_directsound_sink_get_device (GstDirectSoundSink *
-    dsoundsink);
-static void gst_directsound_sink_set_device (GstDirectSoundSink * dsoundsink,
-    const gchar * device_id);
 
 static gboolean gst_directsound_sink_is_spdif_format (GstAudioRingBufferSpec *
     spec);
-
-static gchar *gst_hres_to_string (HRESULT hRes);
 
 static GstStaticPadTemplate directsoundsink_sink_factory =
     GST_STATIC_PAD_TEMPLATE ("sink",
@@ -130,8 +124,7 @@ enum
 {
   PROP_0,
   PROP_VOLUME,
-  PROP_MUTE,
-  PROP_DEVICE
+  PROP_MUTE
 };
 
 #define gst_directsound_sink_parent_class parent_class
@@ -143,9 +136,6 @@ static void
 gst_directsound_sink_finalize (GObject * object)
 {
   GstDirectSoundSink *dsoundsink = GST_DIRECTSOUND_SINK (object);
-
-  g_free (dsoundsink->device_id);
-  dsoundsink->device_id = NULL;
 
   g_mutex_clear (&dsoundsink->dsound_lock);
 
@@ -199,19 +189,13 @@ gst_directsound_sink_class_init (GstDirectSoundSinkClass * klass)
           "Mute state of this stream", DEFAULT_MUTE,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
-  g_object_class_install_property (gobject_class,
-      PROP_DEVICE,
-      g_param_spec_string ("device", "Device",
-          "DirectSound playback device as a GUID string",
-          NULL, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
-
   gst_element_class_set_static_metadata (element_class,
       "Direct Sound Audio Sink", "Sink/Audio",
       "Output to a sound card via Direct Sound",
       "Sebastien Moutte <sebastien@moutte.net>");
 
-  gst_element_class_add_static_pad_template (element_class,
-      &directsoundsink_sink_factory);
+  gst_element_class_add_pad_template (element_class,
+      gst_static_pad_template_get (&directsoundsink_sink_factory));
 }
 
 static void
@@ -219,7 +203,6 @@ gst_directsound_sink_init (GstDirectSoundSink * dsoundsink)
 {
   dsoundsink->volume = 100;
   dsoundsink->mute = FALSE;
-  dsoundsink->device_id = NULL;
   dsoundsink->pDS = NULL;
   dsoundsink->cached_caps = NULL;
   dsoundsink->pDSBSecondary = NULL;
@@ -243,9 +226,6 @@ gst_directsound_sink_set_property (GObject * object,
     case PROP_MUTE:
       gst_directsound_sink_set_mute (sink, g_value_get_boolean (value));
       break;
-    case PROP_DEVICE:
-      gst_directsound_sink_set_device (sink, g_value_get_string (value));
-      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -264,9 +244,6 @@ gst_directsound_sink_get_property (GObject * object,
       break;
     case PROP_MUTE:
       g_value_set_boolean (value, gst_directsound_sink_get_mute (sink));
-      break;
-    case PROP_DEVICE:
-      g_value_set_string (value, gst_directsound_sink_get_device (sink));
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -401,67 +378,27 @@ gst_directsound_sink_query (GstBaseSink * sink, GstQuery * query)
   return res;
 }
 
-static LPGUID
-string_to_guid (const gchar * str)
-{
-  HRESULT ret;
-  gunichar2 *wstr;
-  LPGUID out;
-
-  wstr = g_utf8_to_utf16 (str, -1, NULL, NULL, NULL);
-  if (!wstr)
-    return NULL;
-
-  out = g_new (GUID, 1);
-  ret = CLSIDFromString ((LPOLESTR) wstr, out);
-  g_free (wstr);
-  if (ret != NOERROR) {
-    g_free (out);
-    return NULL;
-  }
-
-  return out;
-}
-
 static gboolean
 gst_directsound_sink_open (GstAudioSink * asink)
 {
   GstDirectSoundSink *dsoundsink;
   HRESULT hRes;
-  LPGUID lpGuid = NULL;
 
   dsoundsink = GST_DIRECTSOUND_SINK (asink);
 
-  if (dsoundsink->device_id) {
-    lpGuid = string_to_guid (dsoundsink->device_id);
-    if (lpGuid == NULL) {
-      GST_ELEMENT_ERROR (dsoundsink, RESOURCE, OPEN_READ,
-          ("gst_directsound_sink_open: device set, but guid not found: %s",
-              dsoundsink->device_id), (NULL));
-      return FALSE;
-    }
-  }
-
   /* create and initialize a DirecSound object */
-  if (FAILED (hRes = DirectSoundCreate (lpGuid, &dsoundsink->pDS, NULL))) {
-    gchar *error_text = gst_hres_to_string (hRes);
+  if (FAILED (hRes = DirectSoundCreate (NULL, &dsoundsink->pDS, NULL))) {
     GST_ELEMENT_ERROR (dsoundsink, RESOURCE, OPEN_READ,
         ("gst_directsound_sink_open: DirectSoundCreate: %s",
-            error_text), (NULL));
-    g_free (lpGuid);
-    g_free (error_text);
+            DXGetErrorString9 (hRes)), (NULL));
     return FALSE;
   }
 
-  g_free (lpGuid);
-
   if (FAILED (hRes = IDirectSound_SetCooperativeLevel (dsoundsink->pDS,
               GetDesktopWindow (), DSSCL_PRIORITY))) {
-    gchar *error_text = gst_hres_to_string (hRes);
     GST_ELEMENT_ERROR (dsoundsink, RESOURCE, OPEN_READ,
         ("gst_directsound_sink_open: IDirectSound_SetCooperativeLevel: %s",
-            error_text), (NULL));
-    g_free (error_text);
+            DXGetErrorString9 (hRes)), (NULL));
     return FALSE;
   }
 
@@ -507,12 +444,12 @@ gst_directsound_sink_prepare (GstAudioSink * asink,
         gst_util_uint64_scale_int (wfx.nAvgBytesPerSec, spec->buffer_time,
         GST_MSECOND);
     /* Make sure we make those numbers multiple of our sample size in bytes */
-    dsoundsink->buffer_size -= dsoundsink->buffer_size % spec->info.bpf;
+    dsoundsink->buffer_size += dsoundsink->buffer_size % spec->info.bpf;
 
     spec->segsize =
         gst_util_uint64_scale_int (wfx.nAvgBytesPerSec, spec->latency_time,
         GST_MSECOND);
-    spec->segsize -= spec->segsize % spec->info.bpf;
+    spec->segsize += spec->segsize % spec->info.bpf;
     spec->segtotal = dsoundsink->buffer_size / spec->segsize;
   } else {
 #ifdef WAVE_FORMAT_DOLBY_AC3_SPDIF
@@ -554,16 +491,13 @@ gst_directsound_sink_prepare (GstAudioSink * asink,
   hRes = IDirectSound_CreateSoundBuffer (dsoundsink->pDS, &descSecondary,
       &dsoundsink->pDSBSecondary, NULL);
   if (FAILED (hRes)) {
-    gchar *error_text = gst_hres_to_string (hRes);
     GST_ELEMENT_ERROR (dsoundsink, RESOURCE, OPEN_READ,
         ("gst_directsound_sink_prepare: IDirectSound_CreateSoundBuffer: %s",
-            error_text), (NULL));
-    g_free (error_text);
+            DXGetErrorString9 (hRes)), (NULL));
     return FALSE;
   }
 
   gst_directsound_sink_set_volume (dsoundsink, dsoundsink->volume, FALSE);
-  gst_directsound_sink_set_mute (dsoundsink, dsoundsink->mute);
 
   return TRUE;
 }
@@ -605,8 +539,8 @@ static gint
 gst_directsound_sink_write (GstAudioSink * asink, gpointer data, guint length)
 {
   GstDirectSoundSink *dsoundsink;
-  DWORD dwStatus = 0;
-  HRESULT hRes, hRes2;
+  DWORD dwStatus;
+  HRESULT hRes;
   LPVOID pLockedBuffer1 = NULL, pLockedBuffer2 = NULL;
   DWORD dwSizeBuffer1, dwSizeBuffer2;
   DWORD dwCurrentPlayCursor;
@@ -619,12 +553,11 @@ gst_directsound_sink_write (GstAudioSink * asink, gpointer data, guint length)
   hRes = IDirectSoundBuffer_GetStatus (dsoundsink->pDSBSecondary, &dwStatus);
 
   /* get current play cursor position */
-  hRes2 = IDirectSoundBuffer_GetCurrentPosition (dsoundsink->pDSBSecondary,
+  hRes = IDirectSoundBuffer_GetCurrentPosition (dsoundsink->pDSBSecondary,
       &dwCurrentPlayCursor, NULL);
 
-  if (SUCCEEDED (hRes) && SUCCEEDED (hRes2) && (dwStatus & DSBSTATUS_PLAYING)) {
-    DWORD dwFreeBufferSize = 0;
-    DWORD sleepTime = 0;
+  if (SUCCEEDED (hRes) && (dwStatus & DSBSTATUS_PLAYING)) {
+    DWORD dwFreeBufferSize;
 
   calculate_freesize:
     /* calculate the free size of the circular buffer */
@@ -637,40 +570,18 @@ gst_directsound_sink_write (GstAudioSink * asink, gpointer data, guint length)
           dwCurrentPlayCursor - dsoundsink->current_circular_offset;
 
     if (length >= dwFreeBufferSize) {
-      sleepTime =
-          ((length -
-              dwFreeBufferSize) * 1000) / (dsoundsink->bytes_per_sample *
-          GST_AUDIO_BASE_SINK (asink)->ringbuffer->spec.info.rate);
-      if (sleepTime > 0) {
-        GST_DEBUG_OBJECT (dsoundsink,
-            "gst_directsound_sink_write: length:%i, FreeBufSiz: %ld, sleepTime: %ld, bps: %i, rate: %i",
-            length, dwFreeBufferSize, sleepTime, dsoundsink->bytes_per_sample,
-            GST_AUDIO_BASE_SINK (asink)->ringbuffer->spec.info.rate);
-        Sleep (sleepTime);
-      }
+      Sleep (100);
       hRes = IDirectSoundBuffer_GetCurrentPosition (dsoundsink->pDSBSecondary,
           &dwCurrentPlayCursor, NULL);
 
-      hRes2 =
+      hRes =
           IDirectSoundBuffer_GetStatus (dsoundsink->pDSBSecondary, &dwStatus);
-      if (SUCCEEDED (hRes) && SUCCEEDED (hRes2)
-          && (dwStatus & DSBSTATUS_PLAYING))
+      if (SUCCEEDED (hRes) && (dwStatus & DSBSTATUS_PLAYING))
         goto calculate_freesize;
       else {
-        gchar *err1, *err2;
-
         dsoundsink->first_buffer_after_reset = FALSE;
         GST_DSOUND_UNLOCK (dsoundsink);
-
-        err1 = gst_hres_to_string (hRes);
-        err2 = gst_hres_to_string (hRes2);
-        GST_ELEMENT_ERROR (dsoundsink, RESOURCE, OPEN_WRITE,
-            ("gst_directsound_sink_write: IDirectSoundBuffer_GetStatus %s, "
-                "IDirectSoundBuffer_GetCurrentPosition: %s, dwStatus: %lu",
-                err2, err1, dwStatus), (NULL));
-        g_free (err1);
-        g_free (err2);
-        return -1;
+        return 0;
       }
     }
   }
@@ -729,7 +640,7 @@ gst_directsound_sink_delay (GstAudioSink * asink)
   /* get current buffer status */
   hRes = IDirectSoundBuffer_GetStatus (dsoundsink->pDSBSecondary, &dwStatus);
 
-  if (SUCCEEDED (hRes) && (dwStatus & DSBSTATUS_PLAYING)) {
+  if (dwStatus & DSBSTATUS_PLAYING) {
     /*evaluate the number of samples in queue in the circular buffer */
     hRes = IDirectSoundBuffer_GetCurrentPosition (dsoundsink->pDSBSecondary,
         &dwCurrentPlayCursor, NULL);
@@ -834,10 +745,9 @@ gst_directsound_probe_supported_formats (GstDirectSoundSink * dsoundsink,
   hRes = IDirectSound_CreateSoundBuffer (dsoundsink->pDS, &descSecondary,
       &tmpBuffer, NULL);
   if (FAILED (hRes)) {
-    gchar *error_text = gst_hres_to_string (hRes);
     GST_INFO_OBJECT (dsoundsink, "AC3 passthrough not supported "
-        "(IDirectSound_CreateSoundBuffer returned: %s)\n", error_text);
-    g_free (error_text);
+        "(IDirectSound_CreateSoundBuffer returned: %s)\n",
+        DXGetErrorString9 (hRes));
     tmp = gst_caps_new_empty_simple ("audio/x-ac3");
     tmp2 = gst_caps_subtract (caps, tmp);
     gst_caps_unref (tmp);
@@ -852,10 +762,9 @@ gst_directsound_probe_supported_formats (GstDirectSoundSink * dsoundsink,
     GST_INFO_OBJECT (dsoundsink, "AC3 passthrough supported");
     hRes = IDirectSoundBuffer_Release (tmpBuffer);
     if (FAILED (hRes)) {
-      gchar *error_text = gst_hres_to_string (hRes);
       GST_DEBUG_OBJECT (dsoundsink,
-          "(IDirectSoundBuffer_Release returned: %s)\n", error_text);
-      g_free (error_text);
+          "(IDirectSoundBuffer_Release returned: %s)\n",
+          DXGetErrorString9 (hRes));
     }
   }
 #else
@@ -932,15 +841,15 @@ gst_directsound_sink_set_volume (GstDirectSoundSink * dsoundsink,
      * here, so remap.
      */
     long dsVolume;
-    if (volume == 0 || dsoundsink->mute)
+    if (dsoundsink->volume == 0)
       dsVolume = -10000;
     else
-      dsVolume = 100 * (long) (20 * log10 ((double) volume / 100.));
+      dsVolume = 100 * (long) (20 * log10 ((double) dsoundsink->volume / 100.));
     dsVolume = CLAMP (dsVolume, -10000, 0);
 
     GST_DEBUG_OBJECT (dsoundsink,
         "Setting volume on secondary buffer to %d from %d", (int) dsVolume,
-        (int) volume);
+        (int) dsoundsink->volume);
     IDirectSoundBuffer_SetVolume (dsoundsink->pDSBSecondary, dsVolume);
   }
 }
@@ -954,58 +863,14 @@ gst_directsound_sink_get_volume (GstDirectSoundSink * dsoundsink)
 static void
 gst_directsound_sink_set_mute (GstDirectSoundSink * dsoundsink, gboolean mute)
 {
-  if (mute) {
+  if (mute)
     gst_directsound_sink_set_volume (dsoundsink, 0, FALSE);
-    dsoundsink->mute = TRUE;
-  } else {
-    gst_directsound_sink_set_volume (dsoundsink,
-        gst_directsound_sink_get_volume (dsoundsink), FALSE);
-    dsoundsink->mute = FALSE;
-  }
-
+  else
+    gst_directsound_sink_set_volume (dsoundsink, dsoundsink->volume, FALSE);
 }
 
 static gboolean
 gst_directsound_sink_get_mute (GstDirectSoundSink * dsoundsink)
 {
-  return dsoundsink->mute;
-}
-
-static const gchar *
-gst_directsound_sink_get_device (GstDirectSoundSink * dsoundsink)
-{
-  return dsoundsink->device_id;
-}
-
-static void
-gst_directsound_sink_set_device (GstDirectSoundSink * dsoundsink,
-    const gchar * device_id)
-{
-  g_free (dsoundsink->device_id);
-  dsoundsink->device_id = g_strdup (device_id);
-}
-
-/* Converts a HRESULT error to a text string
- * LPTSTR is either a */
-static gchar *
-gst_hres_to_string (HRESULT hRes)
-{
-  DWORD flags;
-  gchar *ret_text;
-  LPTSTR error_text = NULL;
-
-  flags = FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_ALLOCATE_BUFFER
-      | FORMAT_MESSAGE_IGNORE_INSERTS;
-  FormatMessage (flags, NULL, hRes, MAKELANGID (LANG_NEUTRAL, SUBLANG_DEFAULT),
-      (LPTSTR) & error_text, 0, NULL);
-
-#ifdef UNICODE
-  /* If UNICODE is defined, LPTSTR is LPWSTR which is UTF-16 */
-  ret_text = g_utf16_to_utf8 (error_text, 0, NULL, NULL, NULL);
-#else
-  ret_text = g_strdup (error_text);
-#endif
-
-  LocalFree (error_text);
-  return ret_text;
+  return FALSE;
 }

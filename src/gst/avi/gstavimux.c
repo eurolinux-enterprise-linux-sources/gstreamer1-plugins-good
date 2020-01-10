@@ -76,8 +76,8 @@ GST_DEBUG_CATEGORY_STATIC (avimux_debug);
 
 enum
 {
-  PROP_0,
-  PROP_BIGFILE
+  ARG_0,
+  ARG_BIGFILE
 };
 
 #define DEFAULT_BIGFILE TRUE
@@ -146,10 +146,7 @@ static GstStaticPadTemplate video_sink_factory =
         "video/x-vp8, "
         "width = (int) [ 1, 2147483647 ], "
         "height = (int) [ 1, 2147483647 ], "
-        "framerate = (fraction) [ 0, MAX ];"
-        "image/png, "
-        "width = (int) [ 16, 4096 ], "
-        "height = (int) [ 16, 4096 ], framerate = (fraction) [ 0, MAX ]")
+        "framerate = (fraction) [ 0, MAX ]")
     );
 
 static GstStaticPadTemplate audio_sink_factory =
@@ -245,7 +242,7 @@ gst_avi_mux_class_init (GstAviMuxClass * klass)
   gobject_class->set_property = gst_avi_mux_set_property;
   gobject_class->finalize = gst_avi_mux_finalize;
 
-  g_object_class_install_property (gobject_class, PROP_BIGFILE,
+  g_object_class_install_property (gobject_class, ARG_BIGFILE,
       g_param_spec_boolean ("bigfile", "Bigfile Support (>2GB)",
           "Support for openDML-2.0 (big) AVI files", DEFAULT_BIGFILE,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
@@ -255,16 +252,17 @@ gst_avi_mux_class_init (GstAviMuxClass * klass)
   gstelement_class->release_pad = GST_DEBUG_FUNCPTR (gst_avi_mux_release_pad);
   gstelement_class->change_state = GST_DEBUG_FUNCPTR (gst_avi_mux_change_state);
 
-  gst_element_class_add_static_pad_template (gstelement_class, &src_factory);
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &audio_sink_factory);
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &video_sink_factory);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&src_factory));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&audio_sink_factory));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&video_sink_factory));
 
   gst_element_class_set_static_metadata (gstelement_class, "Avi muxer",
       "Codec/Muxer",
       "Muxes audio and video into an avi stream",
-      "GStreamer maintainers <gstreamer-devel@lists.freedesktop.org>");
+      "GStreamer maintainers <gstreamer-devel@lists.sourceforge.net>");
 }
 
 /* reset pad to initial state
@@ -605,8 +603,6 @@ gst_avi_mux_vidsink_set_caps (GstPad * pad, GstCaps * vscaps)
       avipad->vids.compression = GST_MAKE_FOURCC ('M', 'J', '2', 'C');
     } else if (!strcmp (mimetype, "video/x-vp8")) {
       avipad->vids.compression = GST_MAKE_FOURCC ('V', 'P', '8', '0');
-    } else if (!strcmp (mimetype, "image/png")) {
-      avipad->vids.compression = GST_MAKE_FOURCC ('p', 'n', 'g', ' ');
     } else {
       valid_caps = FALSE;
     }
@@ -647,9 +643,6 @@ refuse_caps:
     return FALSE;
   }
 }
-
-static void gst_avi_mux_audsink_set_fields (GstAviMux * avimux,
-    GstAviAudioPad * avipad);
 
 static GstFlowReturn
 gst_avi_mux_audsink_scan_mpeg_audio (GstAviMux * avimux, GstAviPad * avipad,
@@ -695,10 +688,9 @@ gst_avi_mux_audsink_scan_mpeg_audio (GstAviMux * avimux, GstAviPad * avipad,
     spf = 576;
   }
 
-  if (G_UNLIKELY (avipad->hdr.scale <= 1)) {
+  if (G_UNLIKELY (avipad->hdr.scale <= 1))
     avipad->hdr.scale = spf;
-    gst_avi_mux_audsink_set_fields (avimux, (GstAviAudioPad *) avipad);
-  } else if (G_UNLIKELY (avipad->hdr.scale != spf)) {
+  else if (G_UNLIKELY (avipad->hdr.scale != spf)) {
     GST_WARNING_OBJECT (avimux, "input mpeg audio has varying frame size");
     goto cbr_fallback;
   }
@@ -717,7 +709,6 @@ cbr_fallback:
   {
     GST_WARNING_OBJECT (avimux, "falling back to CBR muxing");
     avipad->hdr.scale = 1;
-    gst_avi_mux_audsink_set_fields (avimux, (GstAviAudioPad *) avipad);
     /* no need to check further */
     avipad->hook = NULL;
     goto done;
@@ -1006,14 +997,14 @@ gst_avi_mux_request_new_pad (GstElement * element,
 
   newpad = gst_pad_new_from_template (templ, pad_name);
 
+  g_free (name);
+
   avipad->collect = gst_collect_pads_add_pad (avimux->collect,
       newpad, sizeof (GstAviCollectData), NULL, TRUE);
   ((GstAviCollectData *) (avipad->collect))->avipad = avipad;
 
   if (!gst_element_add_pad (element, newpad))
     goto pad_add_failed;
-
-  g_free (name);
 
   GST_DEBUG_OBJECT (newpad, "Added new request pad");
 
@@ -1043,7 +1034,6 @@ too_many_video_pads:
 pad_add_failed:
   {
     GST_WARNING_OBJECT (avimux, "Adding the new pad '%s' failed", pad_name);
-    g_free (name);
     gst_object_unref (newpad);
     return NULL;
   }
@@ -1086,15 +1076,16 @@ static inline guint
 gst_avi_mux_start_chunk (GstByteWriter * bw, const gchar * tag, guint32 fourcc)
 {
   guint chunk_offset;
+  gboolean hdl = TRUE;
 
   if (tag)
-    gst_byte_writer_put_data (bw, (const guint8 *) tag, 4);
+    hdl &= gst_byte_writer_put_data (bw, (const guint8 *) tag, 4);
   else
-    gst_byte_writer_put_uint32_le (bw, fourcc);
+    hdl &= gst_byte_writer_put_uint32_le (bw, fourcc);
 
   chunk_offset = gst_byte_writer_get_pos (bw);
   /* real chunk size comes later */
-  gst_byte_writer_put_uint32_le (bw, 0);
+  hdl &= gst_byte_writer_put_uint32_le (bw, 0);
 
   return chunk_offset;
 }
@@ -1103,16 +1094,17 @@ static inline void
 gst_avi_mux_end_chunk (GstByteWriter * bw, guint chunk_offset)
 {
   guint size;
+  gboolean hdl = TRUE;
 
   size = gst_byte_writer_get_pos (bw);
 
   gst_byte_writer_set_pos (bw, chunk_offset);
-  gst_byte_writer_put_uint32_le (bw, size - chunk_offset - 4);
+  hdl &= gst_byte_writer_put_uint32_le (bw, size - chunk_offset - 4);
   gst_byte_writer_set_pos (bw, size);
 
   /* arrange for even padding */
   if (size & 1)
-    gst_byte_writer_put_uint8 (bw, 0);
+    hdl &= gst_byte_writer_put_uint8 (bw, 0);
 }
 
 /* maybe some of these functions should be moved to riff.h? */
@@ -1789,10 +1781,6 @@ gst_avi_mux_stop_file (GstAviMux * avimux)
   GSList *node;
   GstSegment segment;
 
-  /* Do not write index and header, if the index has no data */
-  if (avimux->idx == NULL)
-    return GST_FLOW_OK;
-
   /* if bigfile, rewrite header, else write indexes */
   /* don't bail out at once if error, still try to re-write header */
   if (avimux->video_pads > 0) {
@@ -1837,11 +1825,7 @@ gst_avi_mux_stop_file (GstAviMux * avimux)
       /* housekeeping for vbr case */
       if (audpad->max_audio_chunk)
         audpad->auds.blockalign = audpad->max_audio_chunk;
-      if (audpad->auds.blockalign == 0)
-        audpad->auds.blockalign = 1;
-      /* note that hdr.rate is actually used by demux in cbr case */
-      if (avipad->hdr.scale <= 1)
-        avipad->hdr.rate = audpad->auds.av_bps / audpad->auds.blockalign;
+      gst_avi_mux_audsink_set_fields (avimux, audpad);
       avimux->avi_hdr.max_bps += audpad->auds.av_bps;
       avipad->hdr.length = gst_util_uint64_scale (audpad->audio_time,
           avipad->hdr.rate, avipad->hdr.scale * GST_SECOND);
@@ -2234,7 +2218,7 @@ gst_avi_mux_get_property (GObject * object,
   avimux = GST_AVI_MUX (object);
 
   switch (prop_id) {
-    case PROP_BIGFILE:
+    case ARG_BIGFILE:
       g_value_set_boolean (value, avimux->enable_large_avi);
       break;
     default:
@@ -2252,7 +2236,7 @@ gst_avi_mux_set_property (GObject * object,
   avimux = GST_AVI_MUX (object);
 
   switch (prop_id) {
-    case PROP_BIGFILE:
+    case ARG_BIGFILE:
       avimux->enable_large_avi = g_value_get_boolean (value);
       break;
     default:

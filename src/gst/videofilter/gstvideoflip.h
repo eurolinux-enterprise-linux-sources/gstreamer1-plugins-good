@@ -75,9 +75,9 @@ struct _GstVideoFlip {
   GstVideoFilter videofilter;
 
   /* < private > */
-  GstVideoOrientationMethod method;
-  GstVideoOrientationMethod tag_method;
-  GstVideoOrientationMethod active_method;
+  GstVideoFlipMethod method;
+  GstVideoFlipMethod tag_method;
+  GstVideoFlipMethod active_method;
   void (*process) (GstVideoFlip *videoflip, GstVideoFrame *dest, const GstVideoFrame *src);
 };
 

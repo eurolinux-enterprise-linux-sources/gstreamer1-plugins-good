@@ -45,7 +45,8 @@ gst_fake_audio_sink_class_init (GstFakeAudioSinkClass * klass)
 
   gst_element_class_set_static_metadata (gstelement_class, "Fake Audio Sink",
       "Sink/Audio", "Audio sink fake for testing", "Stefan Sauer");
-  gst_element_class_add_static_pad_template (gstelement_class, &pad_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&pad_template));
 }
 
 static void
@@ -69,7 +70,8 @@ gst_fake_video_sink_class_init (GstFakeVideoSinkClass * klass)
 
   gst_element_class_set_static_metadata (gstelement_class, "Fake Video Sink",
       "Sink/Video", "Video sink fake for testing", "Stefan Sauer");
-  gst_element_class_add_static_pad_template (gstelement_class, &pad_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&pad_template));
 }
 
 static void

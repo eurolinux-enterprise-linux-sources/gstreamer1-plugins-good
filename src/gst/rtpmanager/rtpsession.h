@@ -71,6 +71,7 @@ typedef GstFlowReturn (*RTPSessionSendRTP) (RTPSession *sess, RTPSource *src, gp
  * @sess: an #RTPSession
  * @src: the #RTPSource
  * @buffer: the RTCP buffer ready for sending
+ * @eos: if an EOS event should be pushed
  * @user_data: user data specified when registering
  *
  * This callback will be called when @sess has @buffer ready for sending to
@@ -79,7 +80,7 @@ typedef GstFlowReturn (*RTPSessionSendRTP) (RTPSession *sess, RTPSource *src, gp
  * Returns: a #GstFlowReturn.
  */
 typedef GstFlowReturn (*RTPSessionSendRTCP) (RTPSession *sess, RTPSource *src, GstBuffer *buffer,
-    gpointer user_data);
+    gboolean eos, gpointer user_data);
 
 /**
  * RTPSessionSyncRTCP:
@@ -218,12 +219,6 @@ struct _RTPSession {
   GstStructure *sdes;
 
   guint         probation;
-  guint32       max_dropout_time;
-  guint32       max_misorder_time;
-
-  GstRTPProfile rtp_profile;
-
-  gboolean      reduced_size_rtcp;
 
   /* bandwidths */
   gboolean     recalc_bandwidth;
@@ -233,8 +228,6 @@ struct _RTPSession {
   guint        rtcp_rs_bandwidth;
 
   guint32       suggested_ssrc;
-  gboolean      internal_ssrc_set;
-  gboolean      internal_ssrc_from_caps_or_property;
 
   /* for sender/receiver counting */
   guint32       key;
@@ -244,10 +237,8 @@ struct _RTPSession {
   guint         total_sources;
 
   guint16       generation;
-  GstClockTime  next_rtcp_check_time; /* tn */
-  GstClockTime  last_rtcp_check_time; /* tp */
-  GstClockTime  last_rtcp_send_time;  /* t_rr_last */
-  GstClockTime  last_rtcp_interval;   /* T_rr */
+  GstClockTime  next_rtcp_check_time;
+  GstClockTime  last_rtcp_send_time;
   GstClockTime  start_time;
   gboolean      first_rtcp;
   gboolean      allow_early;
@@ -308,14 +299,9 @@ struct _RTPSessionClass {
   void (*on_sender_timeout) (RTPSession *sess, RTPSource *source);
   gboolean (*on_sending_rtcp) (RTPSession *sess, GstBuffer *buffer,
       gboolean early);
-  void (*on_app_rtcp)       (RTPSession *sess, guint subtype, guint ssrc,
-      const gchar *name, GstBuffer *data);
   void (*on_feedback_rtcp)  (RTPSession *sess, guint type, guint fbtype,
       guint sender_ssrc, guint media_ssrc, GstBuffer *fci);
-  gboolean (*send_rtcp)     (RTPSession *sess, GstClockTime max_delay);
-  void (*on_receiving_rtcp) (RTPSession *sess, GstBuffer *buffer);
-  void (*on_new_sender_ssrc)     (RTPSession *sess, RTPSource *source);
-  void (*on_sender_ssrc_active)  (RTPSession *sess, RTPSource *source);
+  void (*send_rtcp)         (RTPSession *sess, GstClockTime max_delay);
 };
 
 GType rtp_session_get_type (void);
@@ -356,7 +342,7 @@ GstStructure *  rtp_session_get_sdes_struct        (RTPSession *sess);
 void            rtp_session_set_sdes_struct        (RTPSession *sess, const GstStructure *sdes);
 
 /* handling sources */
-guint32         rtp_session_suggest_ssrc           (RTPSession *sess, gboolean *is_random);
+guint32         rtp_session_suggest_ssrc           (RTPSession *sess);
 
 gboolean        rtp_session_add_source             (RTPSession *sess, RTPSource *src);
 guint           rtp_session_get_num_sources        (RTPSession *sess);
@@ -388,7 +374,7 @@ GstFlowReturn   rtp_session_on_timeout             (RTPSession *sess, GstClockTi
                                                     guint64 ntpnstime, GstClockTime running_time);
 
 /* request the transmittion of an early RTCP packet */
-gboolean        rtp_session_request_early_rtcp     (RTPSession * sess, GstClockTime current_time,
+void            rtp_session_request_early_rtcp     (RTPSession * sess, GstClockTime current_time,
                                                     GstClockTime max_delay);
 
 /* Notify session of a request for a new key unit */

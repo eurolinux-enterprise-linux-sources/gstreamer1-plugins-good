@@ -26,7 +26,6 @@
 #include <gst/rtp/gstrtpbuffer.h>
 
 #include "gstrtpgstpay.h"
-#include "gstrtputils.h"
 
 GST_DEBUG_CATEGORY_STATIC (gst_rtp_pay_debug);
 #define GST_CAT_DEFAULT gst_rtp_pay_debug
@@ -77,7 +76,8 @@ GST_STATIC_PAD_TEMPLATE ("src",
 enum
 {
   PROP_0,
-  PROP_CONFIG_INTERVAL
+  PROP_CONFIG_INTERVAL,
+  PROP_LAST
 };
 
 #define DEFAULT_CONFIG_INTERVAL		      0
@@ -126,10 +126,10 @@ gst_rtp_gst_pay_class_init (GstRtpGSTPayClass * klass)
 
   gstelement_class->change_state = gst_rtp_gst_pay_change_state;
 
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_gst_pay_src_template);
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_gst_pay_sink_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_gst_pay_src_template));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_gst_pay_sink_template));
 
   gst_element_class_set_static_metadata (gstelement_class,
       "RTP GStreamer payloader", "Codec/Payloader/Network/RTP",
@@ -171,7 +171,8 @@ gst_rtp_gst_pay_reset (GstRtpGSTPay * rtpgstpay, gboolean full)
     if (rtpgstpay->taglist)
       gst_tag_list_unref (rtpgstpay->taglist);
     rtpgstpay->taglist = NULL;
-    g_free (rtpgstpay->stream_id);
+    if (rtpgstpay->stream_id)
+      g_free (rtpgstpay->stream_id);
     rtpgstpay->stream_id = NULL;
     rtpgstpay->current_CV = 0;
     rtpgstpay->next_CV = 0;
@@ -336,10 +337,9 @@ gst_rtp_gst_pay_create_from_adapter (GstRtpGSTPay * rtpgstpay,
     paybuf = gst_adapter_take_buffer_fast (rtpgstpay->adapter, payload_len);
 
     /* create a new group to hold the rtp header and the payload */
-    gst_rtp_copy_meta (GST_ELEMENT_CAST (rtpgstpay), outbuf, paybuf, 0);
-    outbuf = gst_buffer_append (outbuf, paybuf);
+    gst_buffer_append (outbuf, paybuf);
 
-    GST_BUFFER_PTS (outbuf) = timestamp;
+    GST_BUFFER_TIMESTAMP (outbuf) = timestamp;
 
     /* and add to list */
     gst_buffer_list_insert (list, -1, outbuf);
@@ -544,7 +544,8 @@ gst_rtp_gst_pay_sink_event (GstRTPBasePayload * payload, GstEvent * event)
 
       gst_event_parse_stream_start (event, &stream_id);
       if (stream_id) {
-        g_free (rtpgstpay->stream_id);
+        if (rtpgstpay->stream_id)
+          g_free (rtpgstpay->stream_id);
         rtpgstpay->stream_id = g_strdup (stream_id);
       }
       etype = 4;
@@ -614,7 +615,7 @@ gst_rtp_gst_pay_handle_buffer (GstRTPBasePayload * basepayload,
 
   rtpgstpay = GST_RTP_GST_PAY (basepayload);
 
-  timestamp = GST_BUFFER_PTS (buffer);
+  timestamp = GST_BUFFER_TIMESTAMP (buffer);
 
   /* check if we need to send the caps and taglist now */
   if (rtpgstpay->config_interval > 0) {

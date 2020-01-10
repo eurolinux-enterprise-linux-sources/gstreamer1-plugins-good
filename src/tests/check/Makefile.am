@@ -6,7 +6,7 @@ TEST_FILES_DIRECTORY = $(top_srcdir)/tests/files
 REGISTRY_ENVIRONMENT = \
 	GST_REGISTRY_1_0=$(CHECK_REGISTRY)
 
-AM_TESTS_ENVIRONMENT += \
+TESTS_ENVIRONMENT = \
 	$(REGISTRY_ENVIRONMENT)					\
 	GST_PLUGIN_SYSTEM_PATH_1_0=				\
 	GST_PLUGIN_PATH_1_0=$(top_builddir)/gst:$(top_builddir)/ext:$(top_builddir)/sys:$(GSTPB_PLUGINS_DIR):$(GST_PLUGINS_DIR)			\
@@ -15,8 +15,7 @@ AM_TESTS_ENVIRONMENT += \
 		cacasink cairotextoverlay \
 		halaudiosrc halaudiosink jackaudiosrc jackaudiosink \
 		osssrc osssink osxaudiosink osxaudiosrc osxvideosrc osxvideosink \
-		pulsesink pulsesrc pulsemixer v4l2src" \
-	GSETTINGS_BACKEND="memory"
+		pulsesink pulsesrc pulsemixer v4l2src"
 
 # fake device drivers: we could run hardware element tests against dummy drivers
 # v4l2: vivo (part of normal kernel)
@@ -38,9 +37,7 @@ clean-local: clean-local-check
 distclean-local: distclean-local-orc
 
 if USE_PLUGIN_ALPHA
-check_alpha = \
-	elements/alphacolor \
-	elements/alpha
+check_alpha = elements/alphacolor
 else
 check_alpha =
 endif
@@ -133,9 +130,7 @@ check_flv =
 endif
 
 if USE_PLUGIN_ISOMP4
-check_isomp4 = \
-	elements/qtmux \
-	elements/qtdemux
+check_isomp4 = elements/qtmux
 else
 check_isomp4 =
 endif
@@ -149,7 +144,7 @@ check_law =
 endif
 
 if USE_GDK_PIXBUF
-check_gdkpixbuf = elements/gdkpixbufsink elements/gdkpixbufoverlay
+check_gdkpixbuf = elements/gdkpixbufsink
 else
 check_gdkpixbuf =
 endif
@@ -196,7 +191,6 @@ endif
 
 if USE_PLUGIN_MATROSKA
 check_matroska = \
-	elements/matroskademux \
 	elements/matroskamux \
 	elements/matroskaparse
 else
@@ -204,7 +198,7 @@ check_matroska =
 endif
 
 if USE_PLUGIN_MULTIFILE
-check_multifile = elements/multifile elements/splitmux
+check_multifile = elements/multifile
 else
 check_multifile =
 endif
@@ -219,11 +213,7 @@ check_replaygain =
 endif
 
 if USE_PLUGIN_RTP
-check_rtp = \
-	elements/rtp-payloading \
-	elements/rtph261 \
-	elements/rtph263 \
-	elements/rtpvp9
+check_rtp = elements/rtp-payloading
 else
 check_rtp =
 endif
@@ -309,7 +299,7 @@ check_videomixer =
 endif
 
 if USE_VPX
-check_vpx=elements/vp8enc elements/vp8dec elements/vp9enc
+check_vpx=elements/vp8enc elements/vp8dec
 else
 check_vpx=
 endif
@@ -402,8 +392,7 @@ TESTS = $(check_PROGRAMS)
 
 AM_CFLAGS = $(GST_OBJ_CFLAGS) $(GST_CHECK_CFLAGS) $(CHECK_CFLAGS) \
 	$(GST_OPTION_CFLAGS) $(GST_CFLAGS) -DGST_TEST_FILES_PATH="\"$(TEST_FILES_DIRECTORY)\"" \
-	-DGST_CHECK_TEST_ENVIRONMENT_BEACON="\"GST_PLUGIN_LOADING_WHITELIST\"" \
-	-UG_DISABLE_ASSERT -UG_DISABLE_CAST_CHECKS $(PTHREAD_CFLAGS)
+	-UG_DISABLE_ASSERT -UG_DISABLE_CAST_CHECKS
 LDADD = $(GST_OBJ_LIBS) $(GST_CHECK_LIBS) $(CHECK_LIBS)
 
 # valgrind testing
@@ -428,9 +417,6 @@ elements_ac3parse_LDADD = libparser.la $(LDADD)
 elements_amrparse_LDADD = libparser.la $(LDADD)
 
 elements_flacparse_LDADD = libparser.la $(LDADD)
-
-elements_flvdemux_CFLAGS = $(GST_PLUGINS_BASE_CFLAGS) $(CFLAGS) $(AM_CFLAGS)
-elements_flvdemux_LDADD = $(GST_PLUGINS_BASE_LIBS) -lgsttag-$(GST_API_VERSION) $(LDADD)
 
 elements_mpegaudioparse_LDADD = libparser.la $(LDADD)
 
@@ -486,7 +472,6 @@ elements_spectrum_CFLAGS = $(GST_PLUGINS_BASE_CFLAGS) $(CFLAGS) $(AM_CFLAGS)
 elements_spectrum_LDADD = $(GST_PLUGINS_BASE_LIBS) -lgstaudio-$(GST_API_VERSION) $(LDADD)
 
 elements_alphacolor_CFLAGS = $(GST_PLUGINS_BASE_CFLAGS) $(CFLAGS) $(AM_CFLAGS)
-elements_alpha_CFLAGS = $(GST_PLUGINS_BASE_CFLAGS) $(CFLAGS) $(AM_CFLAGS)
 
 elements_deinterlace_CFLAGS = $(GST_PLUGINS_BASE_CFLAGS) $(CFLAGS) $(AM_CFLAGS)
 elements_deinterlace_LDADD = $(GST_PLUGINS_BASE_LIBS) -lgstvideo-$(GST_API_VERSION) $(LDADD)
@@ -515,10 +500,6 @@ elements_jpegenc_LDADD = $(GST_PLUGINS_BASE_LIBS) -lgstapp-$(GST_API_VERSION) $(
 
 elements_matroskamux_LDADD = $(GST_BASE_LIBS) $(LDADD) $(LIBM)
 
-elements_mulawdec_CFLAGS = $(GST_PLUGINS_BASE_CFLAGS) $(GST_CFLAGS) $(AM_CFLAGS)
-
-elements_mulawenc_CFLAGS = $(GST_PLUGINS_BASE_CFLAGS) $(GST_CFLAGS) $(AM_CFLAGS)
-
 elements_multifile_CFLAGS = $(GST_PLUGINS_BASE_CFLAGS) $(GST_CFLAGS) $(AM_CFLAGS)
 elements_multifile_LDADD = $(GST_PLUGINS_BASE_LIBS) -lgstvideo-$(GST_API_VERSION) $(GST_LIBS) $(LDADD) $(LIBM)
 
@@ -532,12 +513,6 @@ elements_rtpbin_buffer_list_LDADD = $(GST_PLUGINS_BASE_LIBS) \
              -lgstrtp-$(GST_API_VERSION) \
              $(GST_BASE_LIBS) $(GST_LIBS) $(GST_CHECK_LIBS) $(LDADD)
 elements_rtpbin_buffer_list_SOURCES = elements/rtpbin_buffer_list.c
-
-elements_rtph261_CFLAGS = $(GST_PLUGINS_BASE_CFLAGS) $(GST_BASE_CFLAGS) $(AM_CFLAGS)
-elements_rtph261_LDADD = $(GST_PLUGINS_BASE_LIBS) -lgstrtp-$(GST_API_VERSION) $(GST_BASE_LIBS) $(LDADD)
-
-elements_rtph263_CFLAGS = $(GST_PLUGINS_BASE_CFLAGS) $(GST_BASE_CFLAGS) $(AM_CFLAGS)
-elements_rtph263_LDADD = $(GST_PLUGINS_BASE_LIBS) -lgstrtp-$(GST_API_VERSION) $(GST_BASE_LIBS) $(LDADD)
 
 elements_rtpmux_CFLAGS = $(GST_PLUGINS_BASE_CFLAGS) $(GST_BASE_CFLAGS) $(AM_CFLAGS)
 elements_rtpmux_LDADD = $(GST_PLUGINS_BASE_LIBS) -lgstrtp-$(GST_API_VERSION) $(GST_BASE_LIBS) $(LDADD)
@@ -568,10 +543,10 @@ elements_rtprtx_CFLAGS = $(GST_PLUGINS_BASE_CFLAGS) $(CFLAGS) $(AM_CFLAGS)
 elements_rtprtx_LDADD = $(GST_PLUGINS_BASE_LIBS) -lgstrtp-$(GST_API_VERSION) $(LDADD)
 
 elements_rtpsession_CFLAGS = $(GST_PLUGINS_BASE_CFLAGS) $(CFLAGS) $(AM_CFLAGS)
-elements_rtpsession_LDADD = $(GST_PLUGINS_BASE_LIBS) $(GST_NET_LIBS) -lgstrtp-$(GST_API_VERSION) $(GIO_LIBS) $(LDADD)
+elements_rtpsession_LDADD = $(GST_PLUGINS_BASE_LIBS) -lgstrtp-$(GST_API_VERSION) $(LDADD)
 
 elements_rtpcollision_CFLAGS = $(GST_PLUGINS_BASE_CFLAGS) $(CFLAGS) $(AM_CFLAGS)
-elements_rtpcollision_LDADD = $(GST_PLUGINS_BASE_LIBS) $(GST_NET_LIBS) -lgstrtp-$(GST_API_VERSION) $(GIO_LIBS) $(LDADD)
+elements_rtpcollision_LDADD = $(GST_PLUGINS_BASE_LIBS) -lgstnet-$(GST_API_VERSION) -lgstrtp-$(GST_API_VERSION) $(GIO_LIBS) $(LDADD)
 
 elements_rtpaux_CFLAGS = $(GST_PLUGINS_BASE_CFLAGS) $(CFLAGS) $(AM_CFLAGS)
 elements_rtpaux_LDADD = $(GST_PLUGINS_BASE_LIBS) -lgstrtp-$(GST_API_VERSION) $(LDADD)
@@ -588,9 +563,6 @@ elements_videomixer_CFLAGS = $(GST_BASE_CFLAGS) $(CFLAGS) $(AM_CFLAGS)
 
 pipelines_flacdec_CFLAGS = $(GST_PLUGINS_BASE_CFLAGS) $(CFLAGS) $(AM_CFLAGS)
 pipelines_flacdec_LDADD  = $(GST_PLUGINS_BASE_LIBS) -lgstaudio-$(GST_API_VERSION) $(LDADD)
-
-elements_vp9enc_CFLAGS = $(GST_PLUGINS_BASE_CFLAGS) $(CFLAGS) $(AM_CFLAGS)
-elements_vp9enc_LDADD = $(GST_PLUGINS_BASE_LIBS) -lgstvideo-$(GST_API_VERSION) $(LDADD)
 
 pipelines_wavenc_CFLAGS = $(GST_PLUGINS_BASE_CFLAGS) $(CFLAGS) $(AM_CFLAGS)
 pipelines_wavenc_LDADD  = $(GST_PLUGINS_BASE_LIBS) -lgstaudio-$(GST_API_VERSION) $(LDADD)
@@ -623,6 +595,4 @@ orc/videobox.c: $(top_srcdir)/gst/videobox/gstvideoboxorc.orc
 distclean-local-orc:
 	rm -rf orc
 
-EXTRA_DIST = \
-	gst-plugins-good.supp	\
-	elements/qtdemux.h
+EXTRA_DIST = gst-plugins-good.supp

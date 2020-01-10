@@ -151,7 +151,8 @@ gst_streaktv_set_info (GstVideoFilter * vfilter, GstCaps * incaps,
   width = GST_VIDEO_INFO_WIDTH (in_info);
   height = GST_VIDEO_INFO_HEIGHT (in_info);
 
-  g_free (filter->planebuffer);
+  if (filter->planebuffer)
+    g_free (filter->planebuffer);
 
   filter->planebuffer = g_new0 (guint32, width * height * 4 * PLANES);
 
@@ -246,10 +247,10 @@ gst_streaktv_class_init (GstStreakTVClass * klass)
       "FUKUCHI, Kentarou <fukuchi@users.sourceforge.net>, "
       "Sebastian Dröge <sebastian.droege@collabora.co.uk>");
 
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_streaktv_sink_template);
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_streaktv_src_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_streaktv_sink_template));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_streaktv_src_template));
 
   trans_class->start = GST_DEBUG_FUNCPTR (gst_streaktv_start);
 

@@ -157,8 +157,6 @@ EXTRA_HFILES = \
 	$(top_srcdir)/gst/multifile/gstmultifilesink.h \
 	$(top_srcdir)/gst/multifile/gstmultifilesrc.h \
 	$(top_srcdir)/gst/multifile/gstsplitfilesrc.h \
-	$(top_srcdir)/gst/multifile/gstsplitmuxsrc.h \
-	$(top_srcdir)/gst/multifile/gstsplitmuxsink.h \
 	$(top_srcdir)/gst/multipart/multipartdemux.h \
 	$(top_srcdir)/gst/multipart/multipartmux.h \
 	$(top_srcdir)/gst/isomp4/qtdemux.h \
@@ -208,8 +206,6 @@ EXTRA_HFILES = \
 	$(top_srcdir)/sys/osxvideo/osxvideosink.h \
 	$(top_srcdir)/sys/v4l2/gstv4l2src.h \
 	$(top_srcdir)/sys/v4l2/gstv4l2sink.h \
-	$(top_srcdir)/sys/v4l2/gstv4l2transform.h \
-	$(top_srcdir)/sys/v4l2/gstv4l2videodec.h \
 	$(top_srcdir)/sys/v4l2/gstv4l2radio.h \
 	$(top_srcdir)/sys/waveform/gstwaveformsink.h \
 	$(top_srcdir)/sys/ximage/gstximagesrc.h
@@ -234,6 +230,9 @@ extra_files =
 # contains GtkObjects/GObjects and you want to document signals and properties.
 GTKDOC_CFLAGS = $(GST_BASE_CFLAGS) -I$(top_builddir)
 GTKDOC_LIBS = $(GST_BASE_LIBS)
+
+GTKDOC_CC=$(LIBTOOL) --tag=CC --mode=compile $(CC)
+GTKDOC_LD=$(LIBTOOL) --tag=CC --mode=link $(CC)
 
 # If you need to override some of the declarations, place them in this file
 # and uncomment this line.

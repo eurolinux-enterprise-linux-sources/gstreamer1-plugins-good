@@ -56,10 +56,6 @@ struct _GstVideoCrop
   gint prop_right;
   gint prop_top;
   gint prop_bottom;
-  gboolean need_update;
-
-  GstVideoInfo in_info;
-  GstVideoInfo out_info;
 
   gint crop_left;
   gint crop_right;
@@ -68,6 +64,8 @@ struct _GstVideoCrop
 
   VideoCropPixelFormat  packing;
   gint macro_y_off;
+
+  GMutex lock;
 };
 
 struct _GstVideoCropClass

@@ -69,10 +69,10 @@ gst_rtp_ilbc_pay_class_init (GstRTPILBCPayClass * klass)
   gstelement_class = (GstElementClass *) klass;
   gstrtpbasepayload_class = (GstRTPBasePayloadClass *) klass;
 
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_ilbc_pay_sink_template);
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_ilbc_pay_src_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_ilbc_pay_sink_template));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_ilbc_pay_src_template));
 
   gst_element_class_set_static_metadata (gstelement_class, "RTP iLBC Payloader",
       "Codec/Payloader/Network/RTP",
@@ -206,17 +206,6 @@ gst_rtp_ilbc_pay_sink_getcaps (GstRTPBasePayload * rtppayload, GstPad * pad,
     }
     gst_caps_unref (otherpadcaps);
   }
-
-  if (filter) {
-    GstCaps *tmp;
-
-    GST_DEBUG_OBJECT (rtppayload, "Intersect %" GST_PTR_FORMAT " and filter %"
-        GST_PTR_FORMAT, caps, filter);
-    tmp = gst_caps_intersect_full (filter, caps, GST_CAPS_INTERSECT_FIRST);
-    gst_caps_unref (caps);
-    caps = tmp;
-  }
-
   return caps;
 }
 

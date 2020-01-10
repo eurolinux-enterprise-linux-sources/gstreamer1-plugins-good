@@ -40,11 +40,14 @@ typedef struct _GstALawDec GstALawDec;
 typedef struct _GstALawDecClass GstALawDecClass;
 
 struct _GstALawDec {
-  GstAudioDecoder element;
+  GstElement element;
+
+  GstPad *sinkpad,*srcpad;
+  GstAudioInfo info;
 };
 
 struct _GstALawDecClass {
-  GstAudioDecoderClass parent_class;
+  GstElementClass parent_class;
 };
 
 GType gst_alaw_dec_get_type(void);

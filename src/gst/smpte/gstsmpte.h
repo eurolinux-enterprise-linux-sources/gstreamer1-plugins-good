@@ -61,8 +61,10 @@ struct _GstSMPTE {
   gboolean       invert;
 
   /* negotiated format */
+  gint           format;
   gint           width;
   gint           height;
+  gdouble        fps;
   gint           fps_num;
   gint           fps_denom;
   GstVideoInfo   vinfo1;

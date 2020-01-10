@@ -50,7 +50,6 @@ struct _GstRtpVorbisPay
 
   /* queues of buffers along with some stats. */
   GstBuffer    *packet;
-  GList        *packet_buffers;
   guint         payload_pos;
   guint         payload_left;
   guint32       payload_ident;

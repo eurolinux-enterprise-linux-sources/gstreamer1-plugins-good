@@ -3,15 +3,15 @@
 # This file is distributed under the same license as the gst-plugins-good package.
 #
 # Laszlo Dvornik <dvornik@invitel.hu>, 2004.
-# Gabor Kelemen <kelemeng@gnome.hu>, 2007, 2008, 2009, 2010, 2012, 2014, 2016.
-# Balázs Úr <urbalazs@gmail.com>, 2014, 2015.
+# Gabor Kelemen <kelemeng@gnome.hu>, 2007, 2008, 2009, 2010, 2012, 2014.
+# Balázs Úr <urbalazs@gmail.com>, 2014.
 msgid ""
 msgstr ""
-"Project-Id-Version: gst-plugins-good 1.7.2\n"
+"Project-Id-Version: gst-plugins-good 1.3.90\n"
 "Report-Msgid-Bugs-To: http://bugzilla.gnome.org/\n"
-"POT-Creation-Date: 2017-02-23 15:16+0200\n"
-"PO-Revision-Date: 2016-03-14 18:35+0100\n"
-"Last-Translator: Gabor Kelemen <kelemeng@gnome.hu>\n"
+"POT-Creation-Date: 2014-12-18 12:05+0100\n"
+"PO-Revision-Date: 2014-06-29 12:56+0200\n"
+"Last-Translator: Balázs Úr <urbalazs@gmail.com>\n"
 "Language-Team: Hungarian <translation-team-hu@lists.sourceforge.net>\n"
 "Language: hu\n"
 "MIME-Version: 1.0\n"
@@ -52,12 +52,15 @@ msgid "Secure connection setup failed."
 msgstr "A biztonságos kapcsolat kialakítása meghiúsult."
 
 msgid ""
-"A network error occurred, or the server closed the connection unexpectedly."
+"A network error occured, or the server closed the connection unexpectedly."
 msgstr ""
 "Hálózati hiba történt, vagy a kiszolgáló váratlanul lezárta a kapcsolatot."
 
 msgid "Server sent bad data."
 msgstr "A kiszolgáló hibás adatokat küldött."
+
+msgid "Internal data stream error."
+msgstr "Belső adatfolyam-hiba."
 
 msgid "No or invalid input audio, AVI stream will be corrupt."
 msgstr "Nincs vagy érvénytelen bemeneti hang, az AVI-folyam sérült lesz."
@@ -104,6 +107,9 @@ msgstr ""
 "Nem található támogatott adatfolyam. Lehet, hogy több átviteli protokollt "
 "kell engedélyezni, vagy hiányzik a megfelelő GStreamer RTSP bővítmény."
 
+msgid "Internal data flow error."
+msgstr "Belső adatfolyam-hiba."
+
 msgid ""
 "Could not open audio device for playback. Device is being used by another "
 "application."
@@ -149,12 +155,6 @@ msgstr ""
 
 msgid "Could not open audio device for recording."
 msgstr "Nem nyitható meg hangeszköz a felvételhez."
-
-msgid "CoreAudio device not found"
-msgstr "A CoreAudio eszköz nem található"
-
-msgid "CoreAudio device could not be opened"
-msgstr "A CoreAudio eszköz nem nyitható meg"
 
 msgid "Record Source"
 msgstr "Felvétel forrása"
@@ -262,12 +262,10 @@ msgstr "A videoeszköz nem szolgáltatott kimeneti formátumot."
 msgid "Video device returned invalid dimensions."
 msgstr "A videoeszköz érvénytelen dimenziókkal tért vissza."
 
-#, fuzzy
-msgid "Video device uses an unsupported interlacing method."
+msgid "Video devices uses an unsupported interlacing method."
 msgstr "A videoeszközök nem támogatott váltottsoros módot használnak."
 
-#, fuzzy
-msgid "Video device uses an unsupported pixel format."
+msgid "Video devices uses an unsupported pixel format."
 msgstr "A videoeszközök nem támogatott képpontformátumot használnak."
 
 msgid "Failed to configure internal buffer pool."
@@ -433,12 +431,6 @@ msgstr "A felbontás módosítása futás közben még nem támogatott."
 
 msgid "Cannot operate without a clock"
 msgstr "Óra nélkül lehetetlen a működés"
-
-#~ msgid "Internal data stream error."
-#~ msgstr "Belső adatfolyam-hiba."
-
-#~ msgid "Internal data flow error."
-#~ msgstr "Belső adatfolyam-hiba."
 
 #~ msgid "Device '%s' does not support video capture"
 #~ msgstr "A(z) „%s” eszköz nem támogatja a videofelvételt"

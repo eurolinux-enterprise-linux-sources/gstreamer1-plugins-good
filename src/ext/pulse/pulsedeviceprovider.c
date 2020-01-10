@@ -1,7 +1,7 @@
 /* GStreamer
  * Copyright (C) 2012 Olivier Crete <olivier.crete@collabora.com>
  *
- * pulsedeviceprovider.c: pulseaudio device probing and monitoring
+ * gstv4l2deviceprovider.c: V4l2 device probing and monitoring
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -40,7 +40,7 @@ GST_DEBUG_CATEGORY_EXTERN (pulse_debug);
 
 static GstDevice *gst_pulse_device_new (guint id,
     const gchar * device_name, GstCaps * caps, const gchar * internal_name,
-    GstPulseDeviceType type, GstStructure * properties);
+    GstPulseDeviceType type);
 
 G_DEFINE_TYPE (GstPulseDeviceProvider, gst_pulse_device_provider,
     GST_TYPE_DEVICE_PROVIDER);
@@ -189,7 +189,6 @@ static GstDevice *
 new_source (const pa_source_info * info)
 {
   GstCaps *caps;
-  GstStructure *props;
   guint i;
 
   caps = gst_caps_new_empty ();
@@ -197,17 +196,14 @@ new_source (const pa_source_info * info)
   for (i = 0; i < info->n_formats; i++)
     gst_caps_append (caps, gst_pulse_format_info_to_caps (info->formats[i]));
 
-  props = gst_pulse_make_structure (info->proplist);
-
   return gst_pulse_device_new (info->index, info->description,
-      caps, info->name, GST_PULSE_DEVICE_TYPE_SOURCE, props);
+      caps, info->name, GST_PULSE_DEVICE_TYPE_SOURCE);
 }
 
 static GstDevice *
 new_sink (const pa_sink_info * info)
 {
   GstCaps *caps;
-  GstStructure *props;
   guint i;
 
   caps = gst_caps_new_empty ();
@@ -215,10 +211,8 @@ new_sink (const pa_sink_info * info)
   for (i = 0; i < info->n_formats; i++)
     gst_caps_append (caps, gst_pulse_format_info_to_caps (info->formats[i]));
 
-  props = gst_pulse_make_structure (info->proplist);
-
   return gst_pulse_device_new (info->index, info->description,
-      caps, info->name, GST_PULSE_DEVICE_TYPE_SINK, props);
+      caps, info->name, GST_PULSE_DEVICE_TYPE_SINK);
 }
 
 static void
@@ -607,11 +601,9 @@ gst_pulse_device_reconfigure_element (GstDevice * device, GstElement * element)
   return TRUE;
 }
 
-/* Takes ownership of @caps and @props */
 static GstDevice *
 gst_pulse_device_new (guint device_index, const gchar * device_name,
-    GstCaps * caps, const gchar * internal_name, GstPulseDeviceType type,
-    GstStructure * props)
+    GstCaps * caps, const gchar * internal_name, GstPulseDeviceType type)
 {
   GstPulseDevice *gstdev;
   const gchar *element = NULL;
@@ -639,14 +631,11 @@ gst_pulse_device_new (guint device_index, const gchar * device_name,
 
   gstdev = g_object_new (GST_TYPE_PULSE_DEVICE,
       "display-name", device_name, "caps", caps, "device-class", klass,
-      "internal-name", internal_name, "properties", props, NULL);
+      "internal-name", internal_name, NULL);
 
   gstdev->type = type;
   gstdev->device_index = device_index;
   gstdev->element = element;
-
-  gst_structure_free (props);
-  gst_caps_unref (caps);
 
   return GST_DEVICE (gstdev);
 }

@@ -3,13 +3,13 @@
 # This file is distributed under the same license as the gst-plugins-good package.
 #
 # Maxim V. Dziumanenko <dziumanenko@gmail.com>, 2004-2007.
-# Yuri Chornoivan <yurchor@ukr.net>, 2011, 2012, 2013, 2014, 2015, 2016.
+# Yuri Chornoivan <yurchor@ukr.net>, 2011, 2012, 2013, 2014.
 msgid ""
 msgstr ""
-"Project-Id-Version: gst-plugins-good 1.7.2\n"
+"Project-Id-Version: gst-plugins-good 1.3.90\n"
 "Report-Msgid-Bugs-To: http://bugzilla.gnome.org/\n"
-"POT-Creation-Date: 2017-02-23 15:16+0200\n"
-"PO-Revision-Date: 2016-02-20 17:27+0200\n"
+"POT-Creation-Date: 2014-12-18 12:05+0100\n"
+"PO-Revision-Date: 2014-06-29 11:40+0300\n"
 "Last-Translator: Yuri Chornoivan <yurchor@ukr.net>\n"
 "Language-Team: Ukrainian <translation-team-uk@lists.sourceforge.net>\n"
 "Language: uk\n"
@@ -49,13 +49,16 @@ msgid "Secure connection setup failed."
 msgstr "Помилка під час спроби налаштування безпечного з’єднання."
 
 msgid ""
-"A network error occurred, or the server closed the connection unexpectedly."
+"A network error occured, or the server closed the connection unexpectedly."
 msgstr ""
 "Сталася помилка роботи з мережею або з’єднання було несподівано розірвано з "
 "боку сервера."
 
 msgid "Server sent bad data."
 msgstr "Сервером надіслано помилкові дані."
+
+msgid "Internal data stream error."
+msgstr "Внутрішня помилка потоку даних."
 
 msgid "No or invalid input audio, AVI stream will be corrupt."
 msgstr ""
@@ -105,6 +108,9 @@ msgstr ""
 "Не знайдено підтримуваних потоків. Ймовірно, вам слід увімкнути додаткові "
 "протоколи передавання даних або встановити додатковий модуль RTSP GStreamer."
 
+msgid "Internal data flow error."
+msgstr "Помилка внутрішнього перенесення даних."
+
 msgid ""
 "Could not open audio device for playback. Device is being used by another "
 "application."
@@ -150,12 +156,6 @@ msgstr ""
 
 msgid "Could not open audio device for recording."
 msgstr "Не вдалося відкрити пристрій для запису."
-
-msgid "CoreAudio device not found"
-msgstr "Пристрій CoreAudio не знайдено"
-
-msgid "CoreAudio device could not be opened"
-msgstr "Не вдалося відкрити пристрій CoreAudio"
 
 msgid "Record Source"
 msgstr "Запис джерела"
@@ -266,12 +266,10 @@ msgstr "Відеопристроєм не надано даних щодо фо�
 msgid "Video device returned invalid dimensions."
 msgstr "Відеопристроєм повернуто некоректні розмірності."
 
-#, fuzzy
-msgid "Video device uses an unsupported interlacing method."
+msgid "Video devices uses an unsupported interlacing method."
 msgstr "Драйвер пристрою «%s» не підтримує метод черезрядкового виведення."
 
-#, fuzzy
-msgid "Video device uses an unsupported pixel format."
+msgid "Video devices uses an unsupported pixel format."
 msgstr "Відеопристрій використовує непідтримуваний формат пікселів."
 
 msgid "Failed to configure internal buffer pool."
@@ -441,12 +439,6 @@ msgstr "Зміна роздільної здатності при відтвор
 
 msgid "Cannot operate without a clock"
 msgstr "Робота без годинника неможлива"
-
-#~ msgid "Internal data stream error."
-#~ msgstr "Внутрішня помилка потоку даних."
-
-#~ msgid "Internal data flow error."
-#~ msgstr "Помилка внутрішнього перенесення даних."
 
 #~ msgid "Device '%s' does not support video capture"
 #~ msgstr "Пристрій «%s» не може захоплювати відеодані"

@@ -234,7 +234,6 @@ static gboolean gst_dtmf_src_unlock (GstBaseSrc * src);
 
 static gboolean gst_dtmf_src_unlock_stop (GstBaseSrc * src);
 static gboolean gst_dtmf_src_negotiate (GstBaseSrc * basesrc);
-static gboolean gst_dtmf_src_query (GstBaseSrc * basesrc, GstQuery * query);
 
 
 static void
@@ -251,8 +250,8 @@ gst_dtmf_src_class_init (GstDTMFSrcClass * klass)
 
   GST_DEBUG_CATEGORY_INIT (gst_dtmf_src_debug, "dtmfsrc", 0, "dtmfsrc element");
 
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_dtmf_src_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_dtmf_src_template));
 
   gst_element_class_set_static_metadata (gstelement_class,
       "DTMF tone generator", "Source/Audio", "Generates DTMF tones",
@@ -278,7 +277,6 @@ gst_dtmf_src_class_init (GstDTMFSrcClass * klass)
   gstbasesrc_class->event = GST_DEBUG_FUNCPTR (gst_dtmf_src_handle_event);
   gstbasesrc_class->create = GST_DEBUG_FUNCPTR (gst_dtmf_src_create);
   gstbasesrc_class->negotiate = GST_DEBUG_FUNCPTR (gst_dtmf_src_negotiate);
-  gstbasesrc_class->query = GST_DEBUG_FUNCPTR (gst_dtmf_src_query);
 }
 
 static void
@@ -894,33 +892,6 @@ gst_dtmf_src_negotiate (GstBaseSrc * basesrc)
   gst_caps_unref (caps);
 
   return ret;
-}
-
-static gboolean
-gst_dtmf_src_query (GstBaseSrc * basesrc, GstQuery * query)
-{
-  GstDTMFSrc *dtmfsrc = GST_DTMF_SRC (basesrc);
-  gboolean res = FALSE;
-
-  switch (GST_QUERY_TYPE (query)) {
-    case GST_QUERY_LATENCY:
-    {
-      GstClockTime latency;
-
-      latency = dtmfsrc->interval * GST_MSECOND;
-      gst_query_set_latency (query, gst_base_src_is_live (basesrc), latency,
-          GST_CLOCK_TIME_NONE);
-      GST_DEBUG_OBJECT (dtmfsrc, "Reporting latency of %" GST_TIME_FORMAT,
-          GST_TIME_ARGS (latency));
-      res = TRUE;
-    }
-      break;
-    default:
-      res = GST_BASE_SRC_CLASS (parent_class)->query (basesrc, query);
-      break;
-  }
-
-  return res;
 }
 
 static GstStateChangeReturn

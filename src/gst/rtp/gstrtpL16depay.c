@@ -27,7 +27,7 @@
  * <refsect2>
  * <title>Example pipeline</title>
  * |[
- * gst-launch-1.0 udpsrc caps='application/x-rtp, media=(string)audio, clock-rate=(int)44100, encoding-name=(string)L16, encoding-params=(string)1, channels=(int)1, payload=(int)96' ! rtpL16depay ! pulsesink
+ * gst-launch udpsrc caps='application/x-rtp, media=(string)audio, clock-rate=(int)44100, encoding-name=(string)L16, encoding-params=(string)1, channels=(int)1, payload=(int)96' ! rtpL16depay ! pulsesink
  * ]| This example pipeline will depayload an RTP raw audio stream. Refer to
  * the rtpL16pay example to create the RTP stream.
  * </refsect2>
@@ -44,7 +44,6 @@
 
 #include "gstrtpL16depay.h"
 #include "gstrtpchannels.h"
-#include "gstrtputils.h"
 
 GST_DEBUG_CATEGORY_STATIC (rtpL16depay_debug);
 #define GST_CAT_DEFAULT (rtpL16depay_debug)
@@ -85,7 +84,7 @@ G_DEFINE_TYPE (GstRtpL16Depay, gst_rtp_L16_depay, GST_TYPE_RTP_BASE_DEPAYLOAD);
 static gboolean gst_rtp_L16_depay_setcaps (GstRTPBaseDepayload * depayload,
     GstCaps * caps);
 static GstBuffer *gst_rtp_L16_depay_process (GstRTPBaseDepayload * depayload,
-    GstRTPBuffer * rtp);
+    GstBuffer * buf);
 
 static void
 gst_rtp_L16_depay_class_init (GstRtpL16DepayClass * klass)
@@ -97,12 +96,12 @@ gst_rtp_L16_depay_class_init (GstRtpL16DepayClass * klass)
   gstrtpbasedepayload_class = (GstRTPBaseDepayloadClass *) klass;
 
   gstrtpbasedepayload_class->set_caps = gst_rtp_L16_depay_setcaps;
-  gstrtpbasedepayload_class->process_rtp_packet = gst_rtp_L16_depay_process;
+  gstrtpbasedepayload_class->process = gst_rtp_L16_depay_process;
 
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_L16_depay_src_template);
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_L16_depay_sink_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_L16_depay_src_template));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_L16_depay_sink_template));
 
   gst_element_class_set_static_metadata (gstelement_class,
       "RTP audio depayloader", "Codec/Depayloader/Network/RTP",
@@ -226,24 +225,26 @@ no_clockrate:
 }
 
 static GstBuffer *
-gst_rtp_L16_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
+gst_rtp_L16_depay_process (GstRTPBaseDepayload * depayload, GstBuffer * buf)
 {
   GstRtpL16Depay *rtpL16depay;
   GstBuffer *outbuf;
   gint payload_len;
   gboolean marker;
+  GstRTPBuffer rtp = { NULL };
 
   rtpL16depay = GST_RTP_L16_DEPAY (depayload);
 
-  payload_len = gst_rtp_buffer_get_payload_len (rtp);
+  gst_rtp_buffer_map (buf, GST_MAP_READ, &rtp);
+  payload_len = gst_rtp_buffer_get_payload_len (&rtp);
 
   if (payload_len <= 0)
     goto empty_packet;
 
   GST_DEBUG_OBJECT (rtpL16depay, "got payload of %d bytes", payload_len);
 
-  outbuf = gst_rtp_buffer_get_payload_buffer (rtp);
-  marker = gst_rtp_buffer_get_marker (rtp);
+  outbuf = gst_rtp_buffer_get_payload_buffer (&rtp);
+  marker = gst_rtp_buffer_get_marker (&rtp);
 
   if (marker) {
     /* mark talk spurt with RESYNC */
@@ -258,8 +259,7 @@ gst_rtp_L16_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
     goto reorder_failed;
   }
 
-  gst_rtp_drop_meta (GST_ELEMENT_CAST (rtpL16depay), outbuf,
-      g_quark_from_static_string (GST_META_TAG_AUDIO_STR));
+  gst_rtp_buffer_unmap (&rtp);
 
   return outbuf;
 
@@ -268,12 +268,14 @@ empty_packet:
   {
     GST_ELEMENT_WARNING (rtpL16depay, STREAM, DECODE,
         ("Empty Payload."), (NULL));
+    gst_rtp_buffer_unmap (&rtp);
     return NULL;
   }
 reorder_failed:
   {
     GST_ELEMENT_ERROR (rtpL16depay, STREAM, DECODE,
         ("Channel reordering failed."), (NULL));
+    gst_rtp_buffer_unmap (&rtp);
     return NULL;
   }
 }

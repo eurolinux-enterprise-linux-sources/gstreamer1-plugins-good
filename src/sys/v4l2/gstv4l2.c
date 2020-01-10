@@ -25,10 +25,6 @@
 #include "config.h"
 #endif
 
-#ifndef _GNU_SOURCE
-# define _GNU_SOURCE            /* O_CLOEXEC */
-#endif
-
 #include "gst/gst-i18n-plugin.h"
 
 #include <gst/gst.h>
@@ -54,7 +50,6 @@
 GST_DEBUG_CATEGORY (v4l2_debug);
 #define GST_CAT_DEFAULT v4l2_debug
 
-#ifdef GST_V4L2_ENABLE_PROBE
 /* This is a minimalist probe, for speed, we only enumerate formats */
 static GstCaps *
 gst_v4l2_probe_template_caps (const gchar * device, gint video_fd,
@@ -119,7 +114,6 @@ gst_v4l2_probe_and_register (GstPlugin * plugin)
   gint video_fd = -1;
   struct v4l2_capability vcap;
   gboolean ret = TRUE;
-  guint32 device_caps;
 
   it = gst_v4l2_iterator_new ();
 
@@ -130,8 +124,7 @@ gst_v4l2_probe_and_register (GstPlugin * plugin)
     if (video_fd >= 0)
       close (video_fd);
 
-    video_fd = open (it->device_path, O_RDWR | O_CLOEXEC);
-
+    video_fd = open (it->device_path, O_RDWR);
     if (video_fd == -1) {
       GST_DEBUG ("Failed to open %s: %s", it->device_path, g_strerror (errno));
       continue;
@@ -144,16 +137,12 @@ gst_v4l2_probe_and_register (GstPlugin * plugin)
       continue;
     }
 
-    if (vcap.capabilities & V4L2_CAP_DEVICE_CAPS)
-      device_caps = vcap.device_caps;
-    else
-      device_caps = vcap.capabilities;
-
-    if (!((device_caps & (V4L2_CAP_VIDEO_M2M | V4L2_CAP_VIDEO_M2M_MPLANE)) ||
+    if (!((vcap.capabilities & (V4L2_CAP_VIDEO_M2M |
+                    V4L2_CAP_VIDEO_M2M_MPLANE)) ||
             /* But legacy driver may expose both CAPTURE and OUTPUT */
-            ((device_caps &
+            ((vcap.capabilities &
                     (V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_VIDEO_CAPTURE_MPLANE)) &&
-                (device_caps &
+                (vcap.capabilities &
                     (V4L2_CAP_VIDEO_OUTPUT | V4L2_CAP_VIDEO_OUTPUT_MPLANE)))))
       continue;
 
@@ -172,13 +161,6 @@ gst_v4l2_probe_and_register (GstPlugin * plugin)
             video_fd, V4L2_BUF_TYPE_VIDEO_CAPTURE),
         gst_v4l2_probe_template_caps (it->device_path, video_fd,
             V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE));
-
-    /* Skip devices without any supported formats */
-    if (gst_caps_is_empty (sink_caps) || gst_caps_is_empty (src_caps)) {
-      gst_caps_unref (sink_caps);
-      gst_caps_unref (src_caps);
-      continue;
-    }
 
     basename = g_path_get_basename (it->device_path);
 
@@ -205,20 +187,11 @@ gst_v4l2_probe_and_register (GstPlugin * plugin)
 
   return ret;
 }
-#endif
 
 static gboolean
 plugin_init (GstPlugin * plugin)
 {
-  const gchar *paths[] = { "/dev", "/dev/v4l2", NULL };
-  const gchar *names[] = { "video", NULL };
-
   GST_DEBUG_CATEGORY_INIT (v4l2_debug, "v4l2", 0, "V4L2 API calls");
-
-  /* Add some depedency, so the dynamic features get updated upon changes in
-   * /dev/video* */
-  gst_plugin_add_dependency (plugin,
-      NULL, paths, names, GST_PLUGIN_DEPENDENCY_FLAG_FILE_NAME_IS_PREFIX);
 
   if (!gst_element_register (plugin, "v4l2src", GST_RANK_PRIMARY,
           GST_TYPE_V4L2SRC) ||
@@ -227,12 +200,9 @@ plugin_init (GstPlugin * plugin)
       !gst_element_register (plugin, "v4l2radio", GST_RANK_NONE,
           GST_TYPE_V4L2RADIO) ||
       !gst_device_provider_register (plugin, "v4l2deviceprovider",
-          GST_RANK_PRIMARY, GST_TYPE_V4L2_DEVICE_PROVIDER)
+          GST_RANK_PRIMARY, GST_TYPE_V4L2_DEVICE_PROVIDER) ||
       /* etc. */
-#ifdef GST_V4L2_ENABLE_PROBE
-      || !gst_v4l2_probe_and_register (plugin)
-#endif
-      )
+      !gst_v4l2_probe_and_register (plugin))
     return FALSE;
 
 #ifdef ENABLE_NLS

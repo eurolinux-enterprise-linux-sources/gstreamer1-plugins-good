@@ -458,13 +458,8 @@ gst_jack_ring_buffer_acquire (GstAudioRingBuffer * buf,
     /* find all the physical input ports. A physical input port is a port
      * associated with a hardware device. Someone needs connect to a physical
      * port in order to hear something. */
-    if (sink->port_pattern == NULL) {
-      ports = jack_get_ports (client, NULL, NULL,
-          JackPortIsPhysical | JackPortIsInput);
-    } else {
-      ports = jack_get_ports (client, sink->port_pattern, NULL,
-          JackPortIsInput);
-    }
+    ports = jack_get_ports (client, NULL, NULL,
+        JackPortIsPhysical | JackPortIsInput);
     if (ports == NULL) {
       /* no ports? fine then we don't do anything except for posting a warning
        * message. */
@@ -680,7 +675,6 @@ enum
 #define DEFAULT_PROP_CONNECT 		GST_JACK_CONNECT_AUTO
 #define DEFAULT_PROP_SERVER 		NULL
 #define DEFAULT_PROP_CLIENT_NAME	NULL
-#define DEFAULT_PROP_PORT_PATTERN      	NULL
 #define DEFAULT_PROP_TRANSPORT	GST_JACK_TRANSPORT_AUTONOMOUS
 
 enum
@@ -690,7 +684,6 @@ enum
   PROP_SERVER,
   PROP_CLIENT,
   PROP_CLIENT_NAME,
-  PROP_PORT_PATTERN,
   PROP_TRANSPORT,
   PROP_LAST
 };
@@ -757,19 +750,6 @@ gst_jack_audio_sink_class_init (GstJackAudioSinkClass * klass)
           GST_PARAM_MUTABLE_READY | G_PARAM_READWRITE |
           G_PARAM_STATIC_STRINGS));
 
-   /**
-   * GstJackAudioSink:port-pattern
-   *
-   * autoconnect to ports matching pattern, when NULL connect to physical ports
-   *
-   * Since: 1.6
-   */
-  g_object_class_install_property (gobject_class, PROP_PORT_PATTERN,
-      g_param_spec_string ("port-pattern", "port pattern",
-          "A pattern to select which ports to connect to (NULL = first physical ports)",
-          DEFAULT_PROP_PORT_PATTERN,
-          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
-
   /**
    * GstJackAudioSink:transport:
    *
@@ -785,8 +765,8 @@ gst_jack_audio_sink_class_init (GstJackAudioSinkClass * klass)
       "Sink/Audio", "Output audio to a JACK server",
       "Wim Taymans <wim.taymans@gmail.com>");
 
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &jackaudiosink_sink_factory);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&jackaudiosink_sink_factory));
 
   gstbasesink_class->get_caps = GST_DEBUG_FUNCPTR (gst_jack_audio_sink_getcaps);
 
@@ -825,11 +805,6 @@ gst_jack_audio_sink_dispose (GObject * object)
     sink->client_name = NULL;
   }
 
-  if (sink->port_pattern != NULL) {
-    g_free (sink->port_pattern);
-    sink->port_pattern = NULL;
-  }
-
   G_OBJECT_CLASS (parent_class)->dispose (object);
 }
 
@@ -845,10 +820,6 @@ gst_jack_audio_sink_set_property (GObject * object, guint prop_id,
     case PROP_CLIENT_NAME:
       g_free (sink->client_name);
       sink->client_name = g_value_dup_string (value);
-      break;
-    case PROP_PORT_PATTERN:
-      g_free (sink->port_pattern);
-      sink->port_pattern = g_value_dup_string (value);
       break;
     case PROP_CONNECT:
       sink->connect = g_value_get_enum (value);
@@ -883,9 +854,6 @@ gst_jack_audio_sink_get_property (GObject * object, guint prop_id,
   switch (prop_id) {
     case PROP_CLIENT_NAME:
       g_value_set_string (value, sink->client_name);
-      break;
-    case PROP_PORT_PATTERN:
-      g_value_set_string (value, sink->port_pattern);
       break;
     case PROP_CONNECT:
       g_value_set_enum (value, sink->connect);

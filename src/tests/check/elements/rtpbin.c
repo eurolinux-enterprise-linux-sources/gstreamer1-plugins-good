@@ -111,7 +111,6 @@ typedef struct
   GCond cond;
   GstPad *sinkpad;
   GList *pads;
-  GstCaps *caps;
 } CleanupData;
 
 static void
@@ -122,7 +121,6 @@ init_data (CleanupData * data)
   g_mutex_init (&data->lock);
   g_cond_init (&data->cond);
   data->pads = NULL;
-  data->caps = NULL;
 }
 
 static void
@@ -132,8 +130,6 @@ clean_data (CleanupData * data)
   g_list_free (data->pads);
   g_mutex_clear (&data->lock);
   g_cond_clear (&data->cond);
-  if (data->caps)
-    gst_caps_unref (data->caps);
 }
 
 static guint8 rtp_packet[] = { 0x80, 0x60, 0x94, 0xbc, 0x8f, 0x37, 0x4e, 0xb8,
@@ -146,19 +142,20 @@ static GstFlowReturn
 chain_rtp_packet (GstPad * pad, CleanupData * data)
 {
   GstFlowReturn res;
+  static GstCaps *caps = NULL;
   GstSegment segment;
   GstBuffer *buffer;
   GstMapInfo map;
 
-  if (data->caps == NULL) {
-    data->caps = gst_caps_from_string ("application/x-rtp,"
+  if (caps == NULL) {
+    caps = gst_caps_from_string ("application/x-rtp,"
         "media=(string)audio, clock-rate=(int)44100, "
         "encoding-name=(string)L16, encoding-params=(string)1, channels=(int)1");
     data->seqnum = 0;
   }
 
   gst_pad_send_event (pad, gst_event_new_stream_start (GST_OBJECT_NAME (pad)));
-  gst_pad_send_event (pad, gst_event_new_caps (data->caps));
+  gst_pad_send_event (pad, gst_event_new_caps (caps));
   gst_segment_init (&segment, GST_FORMAT_TIME);
   gst_pad_send_event (pad, gst_event_new_segment (&segment));
 
@@ -690,7 +687,7 @@ GST_START_TEST (test_aux_receiver)
 GST_END_TEST;
 
 static Suite *
-rtpbin_suite (void)
+gstrtpbin_suite (void)
 {
   Suite *s = suite_create ("rtpbin");
   TCase *tc_chain = tcase_create ("general");
@@ -709,4 +706,19 @@ rtpbin_suite (void)
   return s;
 }
 
-GST_CHECK_MAIN (rtpbin);
+int
+main (int argc, char **argv)
+{
+  int nf;
+
+  Suite *s = gstrtpbin_suite ();
+  SRunner *sr = srunner_create (s);
+
+  gst_check_init (&argc, &argv);
+
+  srunner_run_all (sr, CK_NORMAL);
+  nf = srunner_ntests_failed (sr);
+  srunner_free (sr);
+
+  return nf;
+}

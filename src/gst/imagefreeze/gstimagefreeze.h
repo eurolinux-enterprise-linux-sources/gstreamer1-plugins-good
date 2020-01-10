@@ -53,7 +53,6 @@ struct _GstImageFreeze
 
   GstSegment segment;
   gboolean need_segment;
-  guint seqnum;
 
   guint64 offset;
 

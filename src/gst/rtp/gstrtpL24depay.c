@@ -27,7 +27,7 @@
  * <refsect2>
  * <title>Example pipeline</title>
  * |[
- * gst-launch-1.0 udpsrc caps='application/x-rtp, media=(string)audio, clock-rate=(int)44100, encoding-name=(string)L24, encoding-params=(string)1, channels=(int)1, payload=(int)96' ! rtpL24depay ! pulsesink
+ * gst-launch udpsrc caps='application/x-rtp, media=(string)audio, clock-rate=(int)44100, encoding-name=(string)L24, encoding-params=(string)1, channels=(int)1, payload=(int)96' ! rtpL24depay ! pulsesink
  * ]| This example pipeline will depayload an RTP raw audio stream. Refer to
  * the rtpL24pay example to create the RTP stream.
  * </refsect2>
@@ -44,7 +44,6 @@
 
 #include "gstrtpL24depay.h"
 #include "gstrtpchannels.h"
-#include "gstrtputils.h"
 
 GST_DEBUG_CATEGORY_STATIC (rtpL24depay_debug);
 #define GST_CAT_DEFAULT (rtpL24depay_debug)
@@ -74,7 +73,7 @@ G_DEFINE_TYPE (GstRtpL24Depay, gst_rtp_L24_depay, GST_TYPE_RTP_BASE_DEPAYLOAD);
 static gboolean gst_rtp_L24_depay_setcaps (GstRTPBaseDepayload * depayload,
     GstCaps * caps);
 static GstBuffer *gst_rtp_L24_depay_process (GstRTPBaseDepayload * depayload,
-    GstRTPBuffer * rtp);
+    GstBuffer * buf);
 
 static void
 gst_rtp_L24_depay_class_init (GstRtpL24DepayClass * klass)
@@ -86,12 +85,12 @@ gst_rtp_L24_depay_class_init (GstRtpL24DepayClass * klass)
   gstrtpbasedepayload_class = (GstRTPBaseDepayloadClass *) klass;
 
   gstrtpbasedepayload_class->set_caps = gst_rtp_L24_depay_setcaps;
-  gstrtpbasedepayload_class->process_rtp_packet = gst_rtp_L24_depay_process;
+  gstrtpbasedepayload_class->process = gst_rtp_L24_depay_process;
 
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_L24_depay_src_template);
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_L24_depay_sink_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_L24_depay_src_template));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_L24_depay_sink_template));
 
   gst_element_class_set_static_metadata (gstelement_class,
       "RTP audio depayloader", "Codec/Depayloader/Network/RTP",
@@ -204,24 +203,26 @@ no_clockrate:
 }
 
 static GstBuffer *
-gst_rtp_L24_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
+gst_rtp_L24_depay_process (GstRTPBaseDepayload * depayload, GstBuffer * buf)
 {
   GstRtpL24Depay *rtpL24depay;
   GstBuffer *outbuf;
   gint payload_len;
   gboolean marker;
+  GstRTPBuffer rtp = { NULL };
 
   rtpL24depay = GST_RTP_L24_DEPAY (depayload);
 
-  payload_len = gst_rtp_buffer_get_payload_len (rtp);
+  gst_rtp_buffer_map (buf, GST_MAP_READ, &rtp);
+  payload_len = gst_rtp_buffer_get_payload_len (&rtp);
 
   if (payload_len <= 0)
     goto empty_packet;
 
   GST_DEBUG_OBJECT (rtpL24depay, "got payload of %d bytes", payload_len);
 
-  outbuf = gst_rtp_buffer_get_payload_buffer (rtp);
-  marker = gst_rtp_buffer_get_marker (rtp);
+  outbuf = gst_rtp_buffer_get_payload_buffer (&rtp);
+  marker = gst_rtp_buffer_get_marker (&rtp);
 
   if (marker) {
     /* mark talk spurt with RESYNC */
@@ -229,16 +230,14 @@ gst_rtp_L24_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
   }
 
   outbuf = gst_buffer_make_writable (outbuf);
-  if (outbuf) {
-    gst_rtp_drop_meta (GST_ELEMENT_CAST (rtpL24depay), outbuf,
-        g_quark_from_static_string (GST_META_TAG_AUDIO_STR));
-  }
   if (rtpL24depay->order &&
       !gst_audio_buffer_reorder_channels (outbuf,
           rtpL24depay->info.finfo->format, rtpL24depay->info.channels,
           rtpL24depay->info.position, rtpL24depay->order->pos)) {
     goto reorder_failed;
   }
+
+  gst_rtp_buffer_unmap (&rtp);
 
   return outbuf;
 
@@ -247,12 +246,14 @@ empty_packet:
   {
     GST_ELEMENT_WARNING (rtpL24depay, STREAM, DECODE,
         ("Empty Payload."), (NULL));
+    gst_rtp_buffer_unmap (&rtp);
     return NULL;
   }
 reorder_failed:
   {
     GST_ELEMENT_ERROR (rtpL24depay, STREAM, DECODE,
         ("Channel reordering failed."), (NULL));
+    gst_rtp_buffer_unmap (&rtp);
     return NULL;
   }
 }

@@ -35,6 +35,7 @@
 #include <objc/runtime.h>
 #include <Cocoa/Cocoa.h>
 
+#include <QuickTime/QuickTime.h>
 #import "cocoawindow.h"
 
 GST_DEBUG_CATEGORY_EXTERN (gst_debug_osx_video_sink);
@@ -129,10 +130,8 @@ GType gst_osx_video_sink_get_type(void);
 -(void) showFrame: (GstBufferObject*) buf;
 -(void) setView: (NSView*) view;
 + (BOOL) isMainThread;
-#ifndef GSTREAMER_GLIB_COCOA_NSAPPLICATION
 -(void) nsAppThread;
 -(void) checkMainRunLoop;
-#endif
 @end
 
 G_END_DECLS

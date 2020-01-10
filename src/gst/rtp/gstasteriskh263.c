@@ -78,10 +78,10 @@ gst_asteriskh263_class_init (GstAsteriskh263Class * klass)
 
   gstelement_class->change_state = gst_asteriskh263_change_state;
 
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_asteriskh263_src_template);
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_asteriskh263_sink_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_asteriskh263_src_template));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_asteriskh263_sink_template));
 
   gst_element_class_set_static_metadata (gstelement_class,
       "RTP Asterisk H263 depayloader", "Codec/Depayloader/Network/RTP",
@@ -169,7 +169,7 @@ gst_asteriskh263_chain (GstPad * pad, GstObject * parent, GstBuffer * buf)
 
     gst_buffer_unmap (outbuf, &map);
 
-    GST_BUFFER_PTS (outbuf) = timestamp;
+    GST_BUFFER_TIMESTAMP (outbuf) = timestamp;
     if (!gst_pad_has_current_caps (asteriskh263->srcpad)) {
       GstCaps *caps;
 
@@ -226,5 +226,5 @@ gboolean
 gst_asteriskh263_plugin_init (GstPlugin * plugin)
 {
   return gst_element_register (plugin, "asteriskh263",
-      GST_RANK_NONE, GST_TYPE_ASTERISK_H263);
+      GST_RANK_SECONDARY, GST_TYPE_ASTERISK_H263);
 }

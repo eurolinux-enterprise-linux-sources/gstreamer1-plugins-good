@@ -1,6 +1,4 @@
 GObject
-  GIOStream
-    GTlsConnection
   GInitiallyUnowned
     GstObject
       GstAllocator
@@ -21,23 +19,20 @@ GObject
         GstV4l2DeviceProvider
       GstElement
         Gst3GPPMux
+        GstALawDec
+        GstALawEnc
         GstAsteriskh263
         GstAuParse
         GstAudioDecoder
-          GstALawDec
           GstFlacDec
           GstMuLawDec
           GstSpeexDec
           GstWavpackDec
         GstAudioEncoder
-          GstALawEnc
           GstFlacEnc
           GstMuLawEnc
           GstSpeexEnc
           GstWavpackEnc
-        GstAudioVisualizer
-          GstGoom
-          GstGoom2k1
         GstAviDemux
         GstAviMux
         GstAviSubtitle
@@ -157,8 +152,6 @@ GObject
           GstRTSPSrc
           GstRgVolume
           GstRtpBin
-          GstSplitMuxSink
-          GstSplitMuxSrc
         GstCutter
         GstDVDec
         GstDVDemux
@@ -169,6 +162,8 @@ GObject
         GstFlvMux
         GstFlxDec
         GstGdkPixbufDec
+        GstGoom
+        GstGoom2k1
         GstICYDemux
         GstISMLMux
         GstImageFreeze
@@ -187,7 +182,6 @@ GObject
           GstRTPBVDepay
           GstRTPDVDepay
           GstRTPGSMDepay
-          GstRTPOpusDepay
           GstRTPSirenDepay
           GstRTPiLBCDepay
           GstRtpAC3Depay
@@ -199,14 +193,11 @@ GObject
           GstRtpG726Depay
           GstRtpG729Depay
           GstRtpGSTDepay
-          GstRtpH261Depay
           GstRtpH263Depay
           GstRtpH263PDepay
           GstRtpH264Depay
-          GstRtpH265Depay
           GstRtpJ2KDepay
           GstRtpJPEGDepay
-          GstRtpKlvDepay
           GstRtpL16Depay
           GstRtpL24Depay
           GstRtpMP1SDepay
@@ -226,7 +217,6 @@ GObject
           GstRtpSbcDepay
           GstRtpTheoraDepay
           GstRtpVP8Depay
-          GstRtpVP9Depay
           GstRtpVRawDepay
           GstRtpVorbisDepay
           GstRtpXQTDepay
@@ -251,24 +241,19 @@ GObject
           GstRtpAMRPay
           GstRtpCELTPay
           GstRtpGSTPay
-          GstRtpH261Pay
           GstRtpH263PPay
           GstRtpH263Pay
           GstRtpH264Pay
-          GstRtpH265Pay
           GstRtpJ2KPay
           GstRtpJPEGPay
-          GstRtpKlvPay
           GstRtpMP4APay
           GstRtpMP4GPay
           GstRtpMP4VPay
           GstRtpMPAPay
-          GstRtpOPUSPay
           GstRtpSBCPay
           GstRtpSPEEXPay
           GstRtpTheoraPay
           GstRtpVP8Pay
-          GstRtpVP9Pay
           GstRtpVRawPay
           GstRtpVorbisPay
         GstRTPDec
@@ -295,19 +280,17 @@ GObject
         GstVideoDecoder
           GstJpegDec
           GstPngDec
-          GstVPXDec
-            GstVP8Dec
-            GstVP9Dec
+          GstVP8Dec
+          GstVP9Dec
         GstVideoEncoder
           GstJpegEnc
           GstPngEnc
-          GstVPXEnc
-            GstVP8Enc
-            GstVP9Enc
-          GstY4mEncode
+          GstVP8Enc
+          GstVP9Enc
         GstVideoMixer2
         GstWavEnc
         GstWavParse
+        GstY4mEncode
       GstPad
         GstInterleavePad
         GstVideoMixer2Pad
@@ -316,25 +299,14 @@ GObject
       GstPluginFeature
         GstDeviceProviderFactory
         GstElementFactory
-        GstTracerFactory
         GstTypeFindFactory
       GstRegistry
       GstTask
       GstTaskPool
-  GResolver
   GSocket
-  GSocketAddress
-    GInetSocketAddress
-      GProxyAddress
-  GSocketClient
-  GSocketControlMessage
-    GstIPPktinfoMessage
-    GstIPV6PktinfoMessage
-  GSocketListener
-    GSocketService
-  GTlsCertificate
   GTlsDatabase
-  GTlsInteraction
+  GUdevClient
+  GUdevDevice
   GdkPixbuf
   GstColorBalanceChannel
   GstTunerChannel
@@ -342,12 +314,9 @@ GObject
   RTPSession
   SoupSession
 GInterface
-  GDatagramBased
   GIcon
   GInitable
   GLoadableIcon
-  GProxyResolver
-  GSocketConnectable
   GTypePlugin
   GstChildProxy
   GstColorBalance
@@ -358,5 +327,4 @@ GInterface
   GstTocSetter
   GstTuner
   GstURIHandler
-  GstVideoDirection
   GstVideoOrientation

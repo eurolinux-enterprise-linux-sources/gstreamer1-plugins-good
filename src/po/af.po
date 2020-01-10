@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: gst-plugins 0.7.6\n"
 "Report-Msgid-Bugs-To: http://bugzilla.gnome.org/\n"
-"POT-Creation-Date: 2017-02-23 15:16+0200\n"
+"POT-Creation-Date: 2014-12-18 12:05+0100\n"
 "PO-Revision-Date: 2004-03-18 14:16+0200\n"
 "Last-Translator: Petri Jooste <rkwjpj@puk.ac.za>\n"
 "Language-Team: Afrikaans <i18n@af.org.za>\n"
@@ -49,10 +49,13 @@ msgid "Secure connection setup failed."
 msgstr ""
 
 msgid ""
-"A network error occurred, or the server closed the connection unexpectedly."
+"A network error occured, or the server closed the connection unexpectedly."
 msgstr ""
 
 msgid "Server sent bad data."
+msgstr ""
+
+msgid "Internal data stream error."
 msgstr ""
 
 msgid "No or invalid input audio, AVI stream will be corrupt."
@@ -94,6 +97,9 @@ msgid ""
 "plugin."
 msgstr ""
 
+msgid "Internal data flow error."
+msgstr ""
+
 msgid ""
 "Could not open audio device for playback. Device is being used by another "
 "application."
@@ -133,12 +139,6 @@ msgstr ""
 #, fuzzy
 msgid "Could not open audio device for recording."
 msgstr "Kon nie CD-toestel oopmaak om te lees nie."
-
-msgid "CoreAudio device not found"
-msgstr ""
-
-msgid "CoreAudio device could not be opened"
-msgstr ""
 
 #, fuzzy
 msgid "Record Source"
@@ -246,10 +246,10 @@ msgstr ""
 msgid "Video device returned invalid dimensions."
 msgstr ""
 
-msgid "Video device uses an unsupported interlacing method."
+msgid "Video devices uses an unsupported interlacing method."
 msgstr ""
 
-msgid "Video device uses an unsupported pixel format."
+msgid "Video devices uses an unsupported pixel format."
 msgstr ""
 
 msgid "Failed to configure internal buffer pool."

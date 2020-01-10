@@ -43,11 +43,11 @@
 GST_DEBUG_CATEGORY (gst_debug_osx_video_sink);
 #define GST_CAT_DEFAULT gst_debug_osx_video_sink
 
-#ifndef GSTREAMER_GLIB_COCOA_NSAPPLICATION
 #include <pthread.h>
 extern void _CFRunLoopSetCurrent (CFRunLoopRef rl);
 extern pthread_t _CFMainPThread;
-#endif
+
+
 
 static GstStaticPadTemplate gst_osx_video_sink_sink_template_factory =
 GST_STATIC_PAD_TEMPLATE ("sink",
@@ -72,13 +72,9 @@ enum
 };
 
 static void gst_osx_video_sink_osxwindow_destroy (GstOSXVideoSink * osxvideosink);
-
-#ifndef GSTREAMER_GLIB_COCOA_NSAPPLICATION
 static GMutex _run_loop_check_mutex;
 static GMutex _run_loop_mutex;
 static GCond _run_loop_cond;
-#endif
-
 static GstOSXVideoSinkClass *sink_class = NULL;
 static GstVideoSinkClass *parent_class = NULL;
 
@@ -102,7 +98,6 @@ gst_osx_video_sink_call_from_main_thread(GstOSXVideoSink *osxvideosink,
   [pool release];
 }
 
-#ifndef GSTREAMER_GLIB_COCOA_NSAPPLICATION
 /* Poll for cocoa events */
 static void
 run_ns_app_loop (void) {
@@ -220,7 +215,6 @@ static void
 gst_osx_video_sink_stop_cocoa_loop (GstOSXVideoSink * osxvideosink)
 {
 }
-#endif
 
 /* This function handles osx window creation */
 static gboolean
@@ -251,10 +245,9 @@ gst_osx_video_sink_osxwindow_create (GstOSXVideoSink * osxvideosink, gint width,
   rect.size.height = (float) osxwindow->height;
   osxwindow->gstview =[[GstGLView alloc] initWithFrame:rect];
 
-#ifndef GSTREAMER_GLIB_COCOA_NSAPPLICATION
+
   gst_osx_video_sink_run_cocoa_loop (osxvideosink);
   [osxwindow->gstview setMainThread:sink_class->ns_app_thread];
-#endif
 
   if (osxvideosink->superview == NULL) {
     GST_INFO_OBJECT (osxvideosink, "emitting prepare-xwindow-id");
@@ -297,9 +290,7 @@ gst_osx_video_sink_osxwindow_destroy (GstOSXVideoSink * osxvideosink)
       osxvideosink->osxvideosinkobject,
       @selector(destroy), (id) nil, YES);
   GST_OBJECT_UNLOCK (osxvideosink);
-#ifndef GSTREAMER_GLIB_COCOA_NSAPPLICATION
   gst_osx_video_sink_stop_cocoa_loop (osxvideosink);
-#endif
   [pool release];
 }
 
@@ -520,7 +511,8 @@ gst_osx_video_sink_base_init (gpointer g_class)
       "Sink/Video", "OSX native videosink",
       "Zaheer Abbas Merali <zaheerabbas at merali dot org>");
 
-  gst_element_class_add_static_pad_template (element_class, &gst_osx_video_sink_sink_template_factory);
+  gst_element_class_add_pad_template (element_class,
+      gst_static_pad_template_get (&gst_osx_video_sink_sink_template_factory));
 }
 
 static void
@@ -772,8 +764,6 @@ gst_osx_video_sink_get_type (void)
   NSRect rect;
   unsigned int mask;
 
-  [NSApplication sharedApplication];
-
   osxwindow->internal = TRUE;
 
   mask =  NSTitledWindowMask             |
@@ -939,7 +929,6 @@ no_texture_buffer:
   [pool release];
 }
 
-#ifndef GSTREAMER_GLIB_COCOA_NSAPPLICATION
 -(void) nsAppThread
 {
   NSAutoreleasePool *pool;
@@ -976,7 +965,6 @@ no_texture_buffer:
   g_cond_signal (&_run_loop_cond);
   g_mutex_unlock (&_run_loop_mutex);
 }
-#endif
 
 @end
 

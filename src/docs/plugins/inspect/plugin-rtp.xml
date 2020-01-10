@@ -3,7 +3,7 @@
   <description>Real-time protocol plugins</description>
   <filename>../../gst/rtp/.libs/libgstrtp.so</filename>
   <basename>libgstrtp.so</basename>
-  <version>1.10.4</version>
+  <version>1.4.5</version>
   <license>LGPL</license>
   <source>gst-plugins-good</source>
   <package>GStreamer Good Plug-ins source release</package>
@@ -362,7 +362,7 @@
           <name>src</name>
           <direction>source</direction>
           <presence>always</presence>
-          <details>application/x-rtp, media=(string)audio, encoding-name=(string)G722, payload=(int)9, clock-rate=(int)8000; application/x-rtp, media=(string)audio, encoding-name=(string)G722, payload=(int)[ 96, 127 ], clock-rate=(int)8000</details>
+          <details>application/x-rtp, media=(string)audio, encoding-name=(string)G722, payload=(int)9, clock-rate=(int)8000</details>
         </caps>
       </pads>
     </element>
@@ -425,7 +425,7 @@
           <name>src</name>
           <direction>source</direction>
           <presence>always</presence>
-          <details>audio/x-adpcm, channels=(int)1, rate=(int)8000, bitrate=(int){ 16000, 24000, 32000, 40000 }, block_align=(int){ 2, 3, 4, 5 }, layout=(string)g726</details>
+          <details>audio/x-adpcm, channels=(int)1, rate=(int)8000, bitrate=(int){ 16000, 24000, 32000, 40000 }, layout=(string)g726</details>
         </caps>
       </pads>
     </element>
@@ -577,48 +577,6 @@
       </pads>
     </element>
     <element>
-      <name>rtph261depay</name>
-      <longname>RTP H261 depayloader</longname>
-      <class>Codec/Depayloader/Network/RTP</class>
-      <description>Extracts H261 video from RTP packets (RFC 4587)</description>
-      <author>Stian Selnes &lt;stian@pexip.com&gt;</author>
-      <pads>
-        <caps>
-          <name>sink</name>
-          <direction>sink</direction>
-          <presence>always</presence>
-          <details>application/x-rtp, media=(string)video, payload=(int)31, clock-rate=(int)90000, encoding-name=(string)H261; application/x-rtp, media=(string)video, payload=(int)[ 96, 127 ], clock-rate=(int)90000, encoding-name=(string)H261</details>
-        </caps>
-        <caps>
-          <name>src</name>
-          <direction>source</direction>
-          <presence>always</presence>
-          <details>video/x-h261</details>
-        </caps>
-      </pads>
-    </element>
-    <element>
-      <name>rtph261pay</name>
-      <longname>RTP H261 packet payloader</longname>
-      <class>Codec/Payloader/Network/RTP</class>
-      <description>Payload-encodes H261 video in RTP packets (RFC 4587)</description>
-      <author>Stian Selnes &lt;stian@pexip.com&gt;</author>
-      <pads>
-        <caps>
-          <name>sink</name>
-          <direction>sink</direction>
-          <presence>always</presence>
-          <details>video/x-h261</details>
-        </caps>
-        <caps>
-          <name>src</name>
-          <direction>source</direction>
-          <presence>always</presence>
-          <details>application/x-rtp, media=(string)video, payload=(int)31, clock-rate=(int)90000, encoding-name=(string)H261; application/x-rtp, media=(string)video, payload=(int)[ 96, 127 ], clock-rate=(int)90000, encoding-name=(string)H261</details>
-        </caps>
-      </pads>
-    </element>
-    <element>
       <name>rtph263depay</name>
       <longname>RTP H263 depayloader</longname>
       <class>Codec/Depayloader/Network/RTP</class>
@@ -745,48 +703,6 @@
       </pads>
     </element>
     <element>
-      <name>rtph265depay</name>
-      <longname>RTP H265 depayloader</longname>
-      <class>Codec/Depayloader/Network/RTP</class>
-      <description>Extracts H265 video from RTP packets (RFC 7798)</description>
-      <author>Jurgen Slowack &lt;jurgenslowack@gmail.com&gt;</author>
-      <pads>
-        <caps>
-          <name>sink</name>
-          <direction>sink</direction>
-          <presence>always</presence>
-          <details>application/x-rtp, media=(string)video, clock-rate=(int)90000, encoding-name=(string)H265</details>
-        </caps>
-        <caps>
-          <name>src</name>
-          <direction>source</direction>
-          <presence>always</presence>
-          <details>video/x-h265, stream-format=(string)byte-stream, alignment=(string){ nal, au }</details>
-        </caps>
-      </pads>
-    </element>
-    <element>
-      <name>rtph265pay</name>
-      <longname>RTP H265 payloader</longname>
-      <class>Codec/Payloader/Network/RTP</class>
-      <description>Payload-encode H265 video into RTP packets (RFC 7798)</description>
-      <author>Jurgen Slowack &lt;jurgenslowack@gmail.com&gt;</author>
-      <pads>
-        <caps>
-          <name>sink</name>
-          <direction>sink</direction>
-          <presence>always</presence>
-          <details>video/x-h265, stream-format=(string)hvc1, alignment=(string)au; video/x-h265, stream-format=(string)byte-stream, alignment=(string){ nal, au }</details>
-        </caps>
-        <caps>
-          <name>src</name>
-          <direction>source</direction>
-          <presence>always</presence>
-          <details>application/x-rtp, media=(string)video, payload=(int)[ 96, 127 ], clock-rate=(int)90000, encoding-name=(string)H265</details>
-        </caps>
-      </pads>
-    </element>
-    <element>
       <name>rtpilbcdepay</name>
       <longname>RTP iLBC depayloader</longname>
       <class>Codec/Depayloader/Network/RTP</class>
@@ -839,13 +755,13 @@
           <name>sink</name>
           <direction>sink</direction>
           <presence>always</presence>
-          <details>application/x-rtp, media=(string)video, clock-rate=(int)90000, sampling=(string){ RGB, BGR, RGBA, BGRA, YCbCrA, YCbCr-4:4:4, YCbCr-4:2:2, YCbCr-4:2:0, YCbCr-4:1:1, GRAYSCALE }, encoding-name=(string)JPEG2000; application/x-rtp, media=(string)video, clock-rate=(int)90000, colorspace=(string){ sRGB, sYUV, GRAY }, encoding-name=(string)JPEG2000</details>
+          <details>application/x-rtp, media=(string)video, clock-rate=(int)90000, encoding-name=(string)JPEG2000</details>
         </caps>
         <caps>
           <name>src</name>
           <direction>source</direction>
           <presence>always</presence>
-          <details>image/x-jpc, colorspace=(string){ sRGB, sYUV, GRAY }</details>
+          <details>image/x-jpc</details>
         </caps>
       </pads>
     </element>
@@ -860,13 +776,13 @@
           <name>sink</name>
           <direction>sink</direction>
           <presence>always</presence>
-          <details>image/x-jpc, sampling=(string){ RGB, BGR, RGBA, BGRA, YCbCrA, YCbCr-4:4:4, YCbCr-4:2:2, YCbCr-4:2:0, YCbCr-4:1:1, GRAYSCALE }</details>
+          <details>image/x-jpc</details>
         </caps>
         <caps>
           <name>src</name>
           <direction>source</direction>
           <presence>always</presence>
-          <details>application/x-rtp, media=(string)video, payload=(int)[ 96, 127 ], clock-rate=(int)90000, sampling=(string){ RGB, BGR, RGBA, BGRA, YCbCrA, YCbCr-4:4:4, YCbCr-4:2:2, YCbCr-4:2:0, YCbCr-4:1:1, GRAYSCALE }, encoding-name=(string)JPEG2000</details>
+          <details>application/x-rtp, media=(string)video, payload=(int)[ 96, 127 ], clock-rate=(int)90000, encoding-name=(string)JPEG2000</details>
         </caps>
       </pads>
     </element>
@@ -908,49 +824,7 @@
           <name>src</name>
           <direction>source</direction>
           <presence>always</presence>
-          <details>application/x-rtp, media=(string)video, payload=(int)26, clock-rate=(int)90000, encoding-name=(string)JPEG, width=(int)[ 1, 65536 ], height=(int)[ 1, 65536 ]; application/x-rtp, media=(string)video, payload=(int)[ 96, 127 ], clock-rate=(int)90000, encoding-name=(string)JPEG, width=(int)[ 1, 65536 ], height=(int)[ 1, 65536 ]</details>
-        </caps>
-      </pads>
-    </element>
-    <element>
-      <name>rtpklvdepay</name>
-      <longname>RTP KLV Depayloader</longname>
-      <class>Codec/Depayloader/Network/RTP</class>
-      <description>Extracts KLV (SMPTE ST 336) metadata from RTP packets</description>
-      <author>Tim-Philipp Müller &lt;tim@centricular.com&gt;</author>
-      <pads>
-        <caps>
-          <name>sink</name>
-          <direction>sink</direction>
-          <presence>always</presence>
-          <details>application/x-rtp, media=(string)application, clock-rate=(int)[ 1, 2147483647 ], encoding-name=(string)SMPTE336M</details>
-        </caps>
-        <caps>
-          <name>src</name>
-          <direction>source</direction>
-          <presence>always</presence>
-          <details>meta/x-klv, parsed=(boolean)true</details>
-        </caps>
-      </pads>
-    </element>
-    <element>
-      <name>rtpklvpay</name>
-      <longname>RTP KLV Payloader</longname>
-      <class>Codec/Payloader/Network/RTP</class>
-      <description>Payloads KLV (SMPTE ST 336) metadata as RTP packets</description>
-      <author>Tim-Philipp Müller &lt;tim@centricular.com&gt;</author>
-      <pads>
-        <caps>
-          <name>sink</name>
-          <direction>sink</direction>
-          <presence>always</presence>
-          <details>meta/x-klv, parsed=(boolean)true</details>
-        </caps>
-        <caps>
-          <name>src</name>
-          <direction>source</direction>
-          <presence>always</presence>
-          <details>application/x-rtp, media=(string)application, clock-rate=(int)[ 1, 2147483647 ], encoding-name=(string)SMPTE336M</details>
+          <details>application/x-rtp, media=(string)video, payload=(int)26, clock-rate=(int)90000, encoding-name=(string)JPEG, width=(int)[ 1, 65536 ], height=(int)[ 1, 65536 ]</details>
         </caps>
       </pads>
     </element>
@@ -1034,7 +908,7 @@
           <name>src</name>
           <direction>source</direction>
           <presence>always</presence>
-          <details>audio/mpeg, mpegversion=(int)4, framed=(boolean){ false, true }, stream-format=(string)raw</details>
+          <details>audio/mpeg, mpegversion=(int)4, framed=(boolean)true, stream-format=(string)raw</details>
         </caps>
       </pads>
     </element>
@@ -1154,7 +1028,7 @@
           <name>sink</name>
           <direction>sink</direction>
           <presence>always</presence>
-          <details>application/x-rtp, media=(string)audio, payload=(int)14, clock-rate=(int)90000; application/x-rtp, media=(string)audio, encoding-name=(string)MPA, clock-rate=(int)[ 1, 2147483647 ]</details>
+          <details>application/x-rtp, media=(string)audio, clock-rate=(int)90000, encoding-name=(string)MPA; application/x-rtp, media=(string)audio, payload=(int)14, clock-rate=(int)90000</details>
         </caps>
         <caps>
           <name>src</name>
@@ -1244,49 +1118,7 @@
           <name>src</name>
           <direction>source</direction>
           <presence>always</presence>
-          <details>application/x-rtp, media=(string)video, payload=(int)32, clock-rate=(int)90000, encoding-name=(string)MPV; application/x-rtp, media=(string)video, payload=(int)[ 96, 127 ], clock-rate=(int)90000, encoding-name=(string)MPV</details>
-        </caps>
-      </pads>
-    </element>
-    <element>
-      <name>rtpopusdepay</name>
-      <longname>RTP Opus packet depayloader</longname>
-      <class>Codec/Depayloader/Network/RTP</class>
-      <description>Extracts Opus audio from RTP packets</description>
-      <author>Danilo Cesar Lemes de Paula &lt;danilo.cesar@collabora.co.uk&gt;</author>
-      <pads>
-        <caps>
-          <name>sink</name>
-          <direction>sink</direction>
-          <presence>always</presence>
-          <details>application/x-rtp, media=(string)audio, payload=(int)[ 96, 127 ], clock-rate=(int)48000, encoding-name=(string){ OPUS, X-GST-OPUS-DRAFT-SPITTKA-00 }</details>
-        </caps>
-        <caps>
-          <name>src</name>
-          <direction>source</direction>
-          <presence>always</presence>
-          <details>audio/x-opus, channel-mapping-family=(int)0</details>
-        </caps>
-      </pads>
-    </element>
-    <element>
-      <name>rtpopuspay</name>
-      <longname>RTP Opus payloader</longname>
-      <class>Codec/Payloader/Network/RTP</class>
-      <description>Puts Opus audio in RTP packets</description>
-      <author>Danilo Cesar Lemes de Paula &lt;danilo.cesar@collabora.co.uk&gt;</author>
-      <pads>
-        <caps>
-          <name>sink</name>
-          <direction>sink</direction>
-          <presence>always</presence>
-          <details>audio/x-opus, channels=(int)[ 1, 2 ], channel-mapping-family=(int)0</details>
-        </caps>
-        <caps>
-          <name>src</name>
-          <direction>source</direction>
-          <presence>always</presence>
-          <details>application/x-rtp, media=(string)audio, payload=(int)[ 96, 127 ], clock-rate=(int)48000, encoding-params=(string)2, encoding-name=(string){ OPUS, X-GST-OPUS-DRAFT-SPITTKA-00 }</details>
+          <details>application/x-rtp, media=(string)video, payload=(int)32, clock-rate=(int)90000, encoding-name=(string)MPV</details>
         </caps>
       </pads>
     </element>
@@ -1670,10 +1502,10 @@
     </element>
     <element>
       <name>rtpvorbispay</name>
-      <longname>RTP Vorbis payloader</longname>
+      <longname>RTP Vorbis depayloader</longname>
       <class>Codec/Payloader/Network/RTP</class>
       <description>Payload-encode Vorbis audio into RTP packets (RFC 5215)</description>
-      <author>Wim Taymans &lt;wim.taymans@gmail.com&gt;</author>
+      <author>Wim Taymans &lt;wimi.taymans@gmail.com&gt;</author>
       <pads>
         <caps>
           <name>sink</name>
@@ -1700,7 +1532,7 @@
           <name>sink</name>
           <direction>sink</direction>
           <presence>always</presence>
-          <details>application/x-rtp, clock-rate=(int)90000, media=(string)video, encoding-name=(string){ VP8, VP8-DRAFT-IETF-01 }</details>
+          <details>application/x-rtp, clock-rate=(int)90000, media=(string)video, encoding-name=(string)VP8-DRAFT-IETF-01</details>
         </caps>
         <caps>
           <name>src</name>
@@ -1714,7 +1546,7 @@
       <name>rtpvp8pay</name>
       <longname>RTP VP8 payloader</longname>
       <class>Codec/Payloader/Network/RTP</class>
-      <description>Puts VP8 video in RTP packets</description>
+      <description>Puts VP8 video in RTP packets)</description>
       <author>Sjoerd Simons &lt;sjoerd@luon.net&gt;</author>
       <pads>
         <caps>
@@ -1727,49 +1559,7 @@
           <name>src</name>
           <direction>source</direction>
           <presence>always</presence>
-          <details>application/x-rtp, payload=(int)[ 96, 127 ], clock-rate=(int)90000, encoding-name=(string){ VP8, VP8-DRAFT-IETF-01 }</details>
-        </caps>
-      </pads>
-    </element>
-    <element>
-      <name>rtpvp9depay</name>
-      <longname>RTP VP9 depayloader</longname>
-      <class>Codec/Depayloader/Network/RTP</class>
-      <description>Extracts VP9 video from RTP packets)</description>
-      <author>Stian Selnes &lt;stian@pexip.com&gt;</author>
-      <pads>
-        <caps>
-          <name>sink</name>
-          <direction>sink</direction>
-          <presence>always</presence>
-          <details>application/x-rtp, clock-rate=(int)90000, media=(string)video, encoding-name=(string){ VP9, VP9-DRAFT-IETF-01 }</details>
-        </caps>
-        <caps>
-          <name>src</name>
-          <direction>source</direction>
-          <presence>always</presence>
-          <details>video/x-vp9</details>
-        </caps>
-      </pads>
-    </element>
-    <element>
-      <name>rtpvp9pay</name>
-      <longname>RTP VP9 payloader</longname>
-      <class>Codec/Payloader/Network/RTP</class>
-      <description>Puts VP9 video in RTP packets)</description>
-      <author>Stian Selnes &lt;stian@pexip.com&gt;</author>
-      <pads>
-        <caps>
-          <name>sink</name>
-          <direction>sink</direction>
-          <presence>always</presence>
-          <details>video/x-vp9</details>
-        </caps>
-        <caps>
-          <name>src</name>
-          <direction>source</direction>
-          <presence>always</presence>
-          <details>application/x-rtp, payload=(int)[ 96, 127 ], clock-rate=(int)90000, encoding-name=(string){ VP9, VP9-DRAFT-IETF-01 }</details>
+          <details>application/x-rtp, payload=(int)[ 96, 127 ], clock-rate=(int)90000, encoding-name=(string)VP8-DRAFT-IETF-01</details>
         </caps>
       </pads>
     </element>
@@ -1784,7 +1574,7 @@
           <name>sink</name>
           <direction>sink</direction>
           <presence>always</presence>
-          <details>application/x-rtp, media=(string)video, clock-rate=(int)90000, encoding-name=(string)RAW, sampling=(string){ RGB, RGBA, BGR, BGRA, YCbCr-4:4:4, YCbCr-4:2:2, YCbCr-4:2:0, YCbCr-4:1:1 }, depth=(string){ 8, 10, 12, 16 }</details>
+          <details>application/x-rtp, media=(string)video, clock-rate=(int)90000, encoding-name=(string)RAW</details>
         </caps>
         <caps>
           <name>src</name>

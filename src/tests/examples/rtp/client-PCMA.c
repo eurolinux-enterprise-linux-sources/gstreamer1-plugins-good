@@ -88,19 +88,13 @@ on_ssrc_active_cb (GstElement * rtpbin, guint sessid, guint ssrc,
   /* get the right session */
   g_signal_emit_by_name (rtpbin, "get-internal-session", sessid, &session);
 
-#if 0
-  /* FIXME: This is broken in rtpbin */
   /* get the internal source (the SSRC allocated to us, the receiver */
   g_object_get (session, "internal-source", &isrc, NULL);
   print_source_stats (isrc);
-  g_object_unref (isrc);
-#endif
 
   /* get the remote source that sent us RTCP */
   g_signal_emit_by_name (session, "get-source-by-ssrc", ssrc, &osrc);
   print_source_stats (osrc);
-  g_object_unref (osrc);
-  g_object_unref (session);
 }
 
 /* will be called when rtpbin has validated a payload that we can depayload */
@@ -122,9 +116,9 @@ pad_added_cb (GstElement * rtpbin, GstPad * new_pad, GstElement * depay)
 
 /* build a pipeline equivalent to:
  *
- * gst-launch-1.0 -v rtpbin name=rtpbin                                                \
+ * gst-launch -v rtpbin name=rtpbin                                                \
  *      udpsrc caps=$AUDIO_CAPS port=5002 ! rtpbin.recv_rtp_sink_0              \
- *        rtpbin. ! rtppcmadepay ! alawdec ! audioconvert ! audioresample ! autoaudiosink \
+ *        rtpbin. ! rtppcmadepay ! alawdec ! audioconvert ! audioresample ! alsasink \
  *      udpsrc port=5003 ! rtpbin.recv_rtcp_sink_0                              \
  *        rtpbin.send_rtcp_src_0 ! udpsink port=5007 host=$DEST sync=false async=false
  */

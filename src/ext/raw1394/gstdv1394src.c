@@ -218,7 +218,8 @@ gst_dv1394src_class_init (GstDV1394SrcClass * klass)
 
   gstpushsrc_class->create = gst_dv1394src_create;
 
-  gst_element_class_add_static_pad_template (gstelement_class, &src_factory);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&src_factory));
 
   gst_element_class_set_static_metadata (gstelement_class,
       "Firewire (1394) DV video source", "Source/Video",
@@ -789,12 +790,8 @@ gst_dv1394src_start (GstBaseSrc * bsrc)
   READ_SOCKET (src) = control_sock[0];
   WRITE_SOCKET (src) = control_sock[1];
 
-  if (fcntl (READ_SOCKET (src), F_SETFL, O_NONBLOCK) < 0)
-    GST_ERROR_OBJECT (src, "failed to make read socket non-blocking: %s",
-        g_strerror (errno));
-  if (fcntl (WRITE_SOCKET (src), F_SETFL, O_NONBLOCK) < 0)
-    GST_ERROR_OBJECT (src, "failed to make write socket non-blocking: %s",
-        g_strerror (errno));
+  fcntl (READ_SOCKET (src), F_SETFL, O_NONBLOCK);
+  fcntl (WRITE_SOCKET (src), F_SETFL, O_NONBLOCK);
 
   src->handle = raw1394_new_handle ();
 
@@ -983,7 +980,7 @@ gst_dv1394src_query (GstBaseSrc * basesrc, GstQuery * query)
   switch (GST_QUERY_TYPE (query)) {
     case GST_QUERY_LATENCY:
     {
-      gst_query_set_latency (query, TRUE, GST_SECOND / 25, GST_SECOND / 25);
+      gst_query_set_latency (query, TRUE, GST_SECOND / 25, GST_CLOCK_TIME_NONE);
     }
       break;
     default:

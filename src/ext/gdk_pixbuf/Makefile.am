@@ -1,5 +1,7 @@
 plugin_LTLIBRARIES = libgstgdkpixbuf.la
 
+# pixbufscale.[ch] - not sure the world needs this
+#
 # gstgdkanimation.[ch] - GdkPixbuf animations decode everything from the start,
 # which means it's easy to make us go OOM with manipulated input, disabled
 

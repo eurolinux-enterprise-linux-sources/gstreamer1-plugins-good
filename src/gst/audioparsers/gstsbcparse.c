@@ -98,8 +98,10 @@ gst_sbc_parse_class_init (GstSbcParseClass * klass)
   baseparse_class->get_sink_caps =
       GST_DEBUG_FUNCPTR (gst_sbc_parse_get_sink_caps);
 
-  gst_element_class_add_static_pad_template (element_class, &src_factory);
-  gst_element_class_add_static_pad_template (element_class, &sink_factory);
+  gst_element_class_add_pad_template (element_class,
+      gst_static_pad_template_get (&src_factory));
+  gst_element_class_add_pad_template (element_class,
+      gst_static_pad_template_get (&sink_factory));
 
   gst_element_class_set_static_metadata (element_class, "SBC audio parser",
       "Codec/Parser/Audio", "Parses an SBC bluetooth audio stream",
@@ -123,7 +125,6 @@ gst_sbc_parse_init (GstSbcParse * sbcparse)
 {
   gst_sbc_parse_reset (sbcparse);
   GST_PAD_SET_ACCEPT_INTERSECT (GST_BASE_PARSE_SINK_PAD (sbcparse));
-  GST_PAD_SET_ACCEPT_TEMPLATE (GST_BASE_PARSE_SINK_PAD (sbcparse));
 }
 
 static gboolean
@@ -421,13 +422,13 @@ gst_sbc_calc_framelen (guint subbands, GstSbcChannelMode ch_mode,
 {
   switch (ch_mode) {
     case GST_SBC_CHANNEL_MODE_MONO:
-      return 4 + (subbands * 1) / 2 + ((blocks * 1 * bitpool) + 7) / 8;
+      return 4 + (subbands * 1) / 2 + (blocks * 1 * bitpool) / 8;
     case GST_SBC_CHANNEL_MODE_DUAL:
-      return 4 + (subbands * 2) / 2 + ((blocks * 2 * bitpool) + 7) / 8;
+      return 4 + (subbands * 2) / 2 + (blocks * 2 * bitpool) / 8;
     case GST_SBC_CHANNEL_MODE_STEREO:
-      return 4 + (subbands * 2) / 2 + ((blocks * bitpool) + 7) / 8;
+      return 4 + (subbands * 2) / 2 + (blocks * bitpool) / 8;
     case GST_SBC_CHANNEL_MODE_JOINT_STEREO:
-      return 4 + (subbands * 2) / 2 + ((subbands + blocks * bitpool) + 7) / 8;
+      return 4 + (subbands * 2) / 2 + (subbands + blocks * bitpool) / 8;
     default:
       break;
   }
@@ -505,25 +506,16 @@ gst_sbc_parse_pre_push_frame (GstBaseParse * parse, GstBaseParseFrame * frame)
     GstTagList *taglist;
     GstCaps *caps;
 
+    taglist = gst_tag_list_new_empty ();
+
     /* codec tag */
     caps = gst_pad_get_current_caps (GST_BASE_PARSE_SRC_PAD (parse));
-    if (G_UNLIKELY (caps == NULL)) {
-      if (GST_PAD_IS_FLUSHING (GST_BASE_PARSE_SRC_PAD (parse))) {
-        GST_INFO_OBJECT (parse, "Src pad is flushing");
-        return GST_FLOW_FLUSHING;
-      } else {
-        GST_INFO_OBJECT (parse, "Src pad is not negotiated!");
-        return GST_FLOW_NOT_NEGOTIATED;
-      }
-    }
-
-    taglist = gst_tag_list_new_empty ();
     gst_pb_utils_add_codec_description_to_tag_list (taglist,
         GST_TAG_AUDIO_CODEC, caps);
     gst_caps_unref (caps);
 
-    gst_base_parse_merge_tags (parse, taglist, GST_TAG_MERGE_REPLACE);
-    gst_tag_list_unref (taglist);
+    gst_pad_push_event (GST_BASE_PARSE_SRC_PAD (sbcparse),
+        gst_event_new_tag (taglist));
 
     /* also signals the end of first-frame processing */
     sbcparse->sent_codec_tag = TRUE;

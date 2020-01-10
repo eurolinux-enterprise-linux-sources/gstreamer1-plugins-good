@@ -106,8 +106,10 @@ gst_dca_parse_class_init (GstDcaParseClass * klass)
   parse_class->get_sink_caps = GST_DEBUG_FUNCPTR (gst_dca_parse_get_sink_caps);
   parse_class->set_sink_caps = GST_DEBUG_FUNCPTR (gst_dca_parse_set_sink_caps);
 
-  gst_element_class_add_static_pad_template (element_class, &sink_template);
-  gst_element_class_add_static_pad_template (element_class, &src_template);
+  gst_element_class_add_pad_template (element_class,
+      gst_static_pad_template_get (&sink_template));
+  gst_element_class_add_pad_template (element_class,
+      gst_static_pad_template_get (&src_template));
 
   gst_element_class_set_static_metadata (element_class,
       "DTS Coherent Acoustics audio stream parser", "Codec/Parser/Audio",
@@ -137,7 +139,6 @@ gst_dca_parse_init (GstDcaParse * dcaparse)
       GST_BASE_PARSE_SINK_PAD (GST_BASE_PARSE (dcaparse))->chainfunc;
 
   GST_PAD_SET_ACCEPT_INTERSECT (GST_BASE_PARSE_SINK_PAD (dcaparse));
-  GST_PAD_SET_ACCEPT_TEMPLATE (GST_BASE_PARSE_SINK_PAD (dcaparse));
 }
 
 static void
@@ -319,10 +320,11 @@ gst_dca_parse_handle_frame (GstBaseParse * parse,
   GstDcaParse *dcaparse = GST_DCA_PARSE (parse);
   GstBuffer *buf = frame->buffer;
   GstByteReader r;
+  gboolean parser_draining;
   gboolean parser_in_sync;
   gboolean terminator;
   guint32 sync = 0;
-  guint size = 0, rate, chans, num_blocks, samples_per_block, depth;
+  guint size, rate, chans, num_blocks, samples_per_block, depth;
   gint block_size;
   gint endianness;
   gint off = -1;
@@ -376,12 +378,6 @@ gst_dca_parse_handle_frame (GstBaseParse * parse,
 
   dcaparse->last_sync = sync;
 
-  /* FIXME: Don't look for a second syncword, there are streams out there
-   * that consistently contain garbage between every frame so we never ever
-   * find a second consecutive syncword.
-   * See https://bugzilla.gnome.org/show_bug.cgi?id=738237
-   */
-#if 0
   parser_draining = GST_BASE_PARSE_DRAINING (parse);
 
   if (!parser_in_sync && !parser_draining) {
@@ -412,7 +408,6 @@ gst_dca_parse_handle_frame (GstBaseParse * parse,
       goto cleanup;
     }
   }
-#endif
 
   /* found frame */
   ret = GST_FLOW_OK;
@@ -563,25 +558,16 @@ gst_dca_parse_pre_push_frame (GstBaseParse * parse, GstBaseParseFrame * frame)
     GstTagList *taglist;
     GstCaps *caps;
 
+    taglist = gst_tag_list_new_empty ();
+
     /* codec tag */
     caps = gst_pad_get_current_caps (GST_BASE_PARSE_SRC_PAD (parse));
-    if (G_UNLIKELY (caps == NULL)) {
-      if (GST_PAD_IS_FLUSHING (GST_BASE_PARSE_SRC_PAD (parse))) {
-        GST_INFO_OBJECT (parse, "Src pad is flushing");
-        return GST_FLOW_FLUSHING;
-      } else {
-        GST_INFO_OBJECT (parse, "Src pad is not negotiated!");
-        return GST_FLOW_NOT_NEGOTIATED;
-      }
-    }
-
-    taglist = gst_tag_list_new_empty ();
     gst_pb_utils_add_codec_description_to_tag_list (taglist,
         GST_TAG_AUDIO_CODEC, caps);
     gst_caps_unref (caps);
 
-    gst_base_parse_merge_tags (parse, taglist, GST_TAG_MERGE_REPLACE);
-    gst_tag_list_unref (taglist);
+    gst_pad_push_event (GST_BASE_PARSE_SRC_PAD (dcaparse),
+        gst_event_new_tag (taglist));
 
     /* also signals the end of first-frame processing */
     dcaparse->sent_codec_tag = TRUE;

@@ -24,10 +24,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <gst/rtp/gstrtpbuffer.h>
-#include <gst/audio/audio.h>
 
 #include "gstrtpspeexpay.h"
-#include "gstrtputils.h"
 
 GST_DEBUG_CATEGORY_STATIC (rtpspeexpay_debug);
 #define GST_CAT_DEFAULT (rtpspeexpay_debug)
@@ -80,10 +78,10 @@ gst_rtp_speex_pay_class_init (GstRtpSPEEXPayClass * klass)
   gstrtpbasepayload_class->get_caps = gst_rtp_speex_pay_getcaps;
   gstrtpbasepayload_class->handle_buffer = gst_rtp_speex_pay_handle_buffer;
 
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_speex_pay_sink_template);
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_speex_pay_src_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_speex_pay_sink_template));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_speex_pay_src_template));
   gst_element_class_set_static_metadata (gstelement_class,
       "RTP Speex payloader", "Codec/Payloader/Network/RTP",
       "Payload-encodes Speex audio into a RTP packet",
@@ -238,10 +236,13 @@ gst_rtp_speex_pay_handle_buffer (GstRTPBasePayload * basepayload,
     GstBuffer * buffer)
 {
   GstRtpSPEEXPay *rtpspeexpay;
+  guint payload_len;
   GstMapInfo map;
   GstBuffer *outbuf;
+  guint8 *payload;
   GstClockTime timestamp, duration;
   GstFlowReturn ret;
+  GstRTPBuffer rtp = { NULL };
 
   rtpspeexpay = GST_RTP_SPEEX_PAY (basepayload);
 
@@ -251,54 +252,53 @@ gst_rtp_speex_pay_handle_buffer (GstRTPBasePayload * basepayload,
     case 0:
       /* ident packet. We need to parse the headers to construct the RTP
        * properties. */
-      if (!gst_rtp_speex_pay_parse_ident (rtpspeexpay, map.data, map.size)) {
-        gst_buffer_unmap (buffer, &map);
+      if (!gst_rtp_speex_pay_parse_ident (rtpspeexpay, map.data, map.size))
         goto parse_error;
-      }
 
       ret = GST_FLOW_OK;
-      gst_buffer_unmap (buffer, &map);
       goto done;
     case 1:
       /* comment packet, we ignore it */
       ret = GST_FLOW_OK;
-      gst_buffer_unmap (buffer, &map);
       goto done;
     default:
       /* other packets go in the payload */
       break;
   }
-  gst_buffer_unmap (buffer, &map);
 
   if (GST_BUFFER_FLAG_IS_SET (buffer, GST_BUFFER_FLAG_GAP)) {
     ret = GST_FLOW_OK;
     goto done;
   }
 
-  timestamp = GST_BUFFER_PTS (buffer);
+  timestamp = GST_BUFFER_TIMESTAMP (buffer);
   duration = GST_BUFFER_DURATION (buffer);
 
   /* FIXME, only one SPEEX frame per RTP packet for now */
+  payload_len = map.size;
 
-  outbuf = gst_rtp_buffer_new_allocate (0, 0, 0);
+  outbuf = gst_rtp_buffer_new_allocate (payload_len, 0, 0);
   /* FIXME, assert for now */
-  g_assert (gst_buffer_get_size (buffer) <=
-      GST_RTP_BASE_PAYLOAD_MTU (rtpspeexpay));
+  g_assert (payload_len <= GST_RTP_BASE_PAYLOAD_MTU (rtpspeexpay));
 
   /* copy timestamp and duration */
-  GST_BUFFER_PTS (outbuf) = timestamp;
+  GST_BUFFER_TIMESTAMP (outbuf) = timestamp;
   GST_BUFFER_DURATION (outbuf) = duration;
 
-  gst_rtp_copy_meta (GST_ELEMENT_CAST (basepayload), outbuf, buffer,
-      g_quark_from_static_string (GST_META_TAG_AUDIO_STR));
-  outbuf = gst_buffer_append (outbuf, buffer);
-  buffer = NULL;
+  gst_rtp_buffer_map (outbuf, GST_MAP_WRITE, &rtp);
+  /* get payload */
+  payload = gst_rtp_buffer_get_payload (&rtp);
+
+  /* copy data in payload */
+  memcpy (&payload[0], map.data, map.size);
+
+  gst_rtp_buffer_unmap (&rtp);
 
   ret = gst_rtp_base_payload_push (basepayload, outbuf);
 
 done:
-  if (buffer)
-    gst_buffer_unref (buffer);
+  gst_buffer_unmap (buffer, &map);
+  gst_buffer_unref (buffer);
 
   rtpspeexpay->packet++;
 
@@ -309,6 +309,7 @@ parse_error:
   {
     GST_ELEMENT_ERROR (rtpspeexpay, STREAM, DECODE, (NULL),
         ("Error parsing first identification packet."));
+    gst_buffer_unmap (buffer, &map);
     gst_buffer_unref (buffer);
     return GST_FLOW_ERROR;
   }

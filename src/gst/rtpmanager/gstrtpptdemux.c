@@ -35,9 +35,9 @@
  * the RTP stream changes, the #GstRtpPtDemux::payload-type-change signal will be
  * emitted.
  * 
- * The element will try to set complete and unique application/x-rtp caps
- * on the output pads based on the result of the #GstRtpPtDemux::request-pt-map
- * signal.
+ * The element will try to set complete and unique application/x-rtp caps on the
+ * outgoing buffers and pads based on the result of the
+ * #GstRtpPtDemux::request-pt-map signal.
  * 
  * <refsect2>
  * <title>Example pipelines</title>
@@ -206,10 +206,10 @@ gst_rtp_pt_demux_class_init (GstRtpPtDemuxClass * klass)
 
   klass->clear_pt_map = GST_DEBUG_FUNCPTR (gst_rtp_pt_demux_clear_pt_map);
 
-  gst_element_class_add_static_pad_template (gstelement_klass,
-      &rtp_pt_demux_sink_template);
-  gst_element_class_add_static_pad_template (gstelement_klass,
-      &rtp_pt_demux_src_template);
+  gst_element_class_add_pad_template (gstelement_klass,
+      gst_static_pad_template_get (&rtp_pt_demux_sink_template));
+  gst_element_class_add_pad_template (gstelement_klass,
+      gst_static_pad_template_get (&rtp_pt_demux_src_template));
 
   gst_element_class_set_static_metadata (gstelement_klass, "RTP Demux",
       "Demux/Network/RTP",
@@ -448,8 +448,8 @@ gst_rtp_pt_demux_chain (GstPad * pad, GstObject * parent, GstBuffer * buf)
   /* ERRORS */
 invalid_buffer:
   {
-    /* this should not be fatal */
-    GST_ELEMENT_WARNING (rtpdemux, STREAM, DEMUX, (NULL),
+    /* this is fatal and should be filtered earlier */
+    GST_ELEMENT_ERROR (rtpdemux, STREAM, DECODE, (NULL),
         ("Dropping invalid RTP payload"));
     gst_buffer_unref (buf);
     return GST_FLOW_ERROR;

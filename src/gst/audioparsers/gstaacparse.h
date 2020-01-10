@@ -83,9 +83,6 @@ struct _GstAacParse {
   GstAacHeaderType output_header_type;
 
   gboolean sent_codec_tag;
-
-  gint last_parsed_sample_rate;
-  gint last_parsed_channels;
 };
 
 /**

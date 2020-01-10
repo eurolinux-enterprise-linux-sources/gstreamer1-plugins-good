@@ -168,7 +168,8 @@ gst_hdv1394src_class_init (GstHDV1394SrcClass * klass)
 
   gstpushsrc_class->create = gst_hdv1394src_create;
 
-  gst_element_class_add_static_pad_template (gstelement_class, &src_factory);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&src_factory));
 
   gst_element_class_set_static_metadata (gstelement_class,
       "Firewire (1394) HDV video source", "Source/Video",
@@ -526,12 +527,8 @@ gst_hdv1394src_start (GstBaseSrc * bsrc)
   READ_SOCKET (src) = control_sock[0];
   WRITE_SOCKET (src) = control_sock[1];
 
-  if (fcntl (READ_SOCKET (src), F_SETFL, O_NONBLOCK) < 0)
-    GST_ERROR_OBJECT (src, "failed to make read socket non-blocking: %s",
-        g_strerror (errno));
-  if (fcntl (WRITE_SOCKET (src), F_SETFL, O_NONBLOCK) < 0)
-    GST_ERROR_OBJECT (src, "failed to make write socket non-blocking: %s",
-        g_strerror (errno));
+  fcntl (READ_SOCKET (src), F_SETFL, O_NONBLOCK);
+  fcntl (WRITE_SOCKET (src), F_SETFL, O_NONBLOCK);
 
   src->handle = raw1394_new_handle ();
 

@@ -58,8 +58,8 @@
 
 enum
 {
-  PROP_0,
-  PROP_PREFER_V1
+  ARG_0,
+  ARG_PREFER_V1
 };
 
 #define DEFAULT_PREFER_V1  FALSE
@@ -102,13 +102,14 @@ gst_id3demux_class_init (GstID3DemuxClass * klass)
   gobject_class->set_property = gst_id3demux_set_property;
   gobject_class->get_property = gst_id3demux_get_property;
 
-  g_object_class_install_property (gobject_class, PROP_PREFER_V1,
+  g_object_class_install_property (gobject_class, ARG_PREFER_V1,
       g_param_spec_boolean ("prefer-v1", "Prefer version 1 tag",
           "Prefer tags from ID3v1 tag at end of file when both ID3v1 "
           "and ID3v2 tags are present", DEFAULT_PREFER_V1,
           G_PARAM_READWRITE | G_PARAM_CONSTRUCT | G_PARAM_STATIC_STRINGS));
 
-  gst_element_class_add_static_pad_template (gstelement_class, &sink_factory);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&sink_factory));
 
   gst_element_class_set_static_metadata (gstelement_class, "ID3 tag demuxer",
       "Codec/Demuxer/Metadata",
@@ -238,7 +239,7 @@ gst_id3demux_set_property (GObject * object, guint prop_id,
   id3demux = GST_ID3DEMUX (object);
 
   switch (prop_id) {
-    case PROP_PREFER_V1:{
+    case ARG_PREFER_V1:{
       GST_OBJECT_LOCK (id3demux);
       id3demux->prefer_v1 = g_value_get_boolean (value);
       GST_OBJECT_UNLOCK (id3demux);
@@ -259,7 +260,7 @@ gst_id3demux_get_property (GObject * object, guint prop_id,
   id3demux = GST_ID3DEMUX (object);
 
   switch (prop_id) {
-    case PROP_PREFER_V1:
+    case ARG_PREFER_V1:
       GST_OBJECT_LOCK (id3demux);
       g_value_set_boolean (value, id3demux->prefer_v1);
       GST_OBJECT_UNLOCK (id3demux);

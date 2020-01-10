@@ -57,7 +57,11 @@ struct _GstSpeexEnc {
 
   SpeexBits             bits;
   SpeexHeader           header;
+#ifdef SPEEX_1_0
+  SpeexMode             *speex_mode;
+#else
   const SpeexMode       *speex_mode;
+#endif
   void                  *state;
 
   /* properties */
@@ -76,7 +80,6 @@ struct _GstSpeexEnc {
   gint                  rate;
 
   gboolean              header_sent;
-  guint64               encoded_samples;
 
   GstTagList            *tags;
 

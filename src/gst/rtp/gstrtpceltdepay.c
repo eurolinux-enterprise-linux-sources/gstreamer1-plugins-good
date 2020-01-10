@@ -24,10 +24,8 @@
 #include <string.h>
 #include <stdlib.h>
 #include <gst/rtp/gstrtpbuffer.h>
-#include <gst/audio/audio.h>
 
 #include "gstrtpceltdepay.h"
-#include "gstrtputils.h"
 
 GST_DEBUG_CATEGORY_STATIC (rtpceltdepay_debug);
 #define GST_CAT_DEFAULT (rtpceltdepay_debug)
@@ -46,7 +44,7 @@ enum
 
 enum
 {
-  PROP_0
+  ARG_0
 };
 
 static GstStaticPadTemplate gst_rtp_celt_depay_sink_template =
@@ -67,7 +65,7 @@ GST_STATIC_PAD_TEMPLATE ("src",
     );
 
 static GstBuffer *gst_rtp_celt_depay_process (GstRTPBaseDepayload * depayload,
-    GstRTPBuffer * rtp);
+    GstBuffer * buf);
 static gboolean gst_rtp_celt_depay_setcaps (GstRTPBaseDepayload * depayload,
     GstCaps * caps);
 
@@ -87,17 +85,17 @@ gst_rtp_celt_depay_class_init (GstRtpCELTDepayClass * klass)
   gstelement_class = (GstElementClass *) klass;
   gstrtpbasedepayload_class = (GstRTPBaseDepayloadClass *) klass;
 
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_celt_depay_src_template);
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_celt_depay_sink_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_celt_depay_src_template));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_celt_depay_sink_template));
 
   gst_element_class_set_static_metadata (gstelement_class,
       "RTP CELT depayloader", "Codec/Depayloader/Network/RTP",
       "Extracts CELT audio from RTP packets",
       "Wim Taymans <wim.taymans@gmail.com>");
 
-  gstrtpbasedepayload_class->process_rtp_packet = gst_rtp_celt_depay_process;
+  gstrtpbasedepayload_class->process = gst_rtp_celt_depay_process;
   gstrtpbasedepayload_class->set_caps = gst_rtp_celt_depay_setcaps;
 }
 
@@ -195,7 +193,7 @@ no_clockrate:
 }
 
 static GstBuffer *
-gst_rtp_celt_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
+gst_rtp_celt_depay_process (GstRTPBaseDepayload * depayload, GstBuffer * buf)
 {
   GstBuffer *outbuf = NULL;
   guint8 *payload;
@@ -205,25 +203,28 @@ gst_rtp_celt_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
   GstClockTime framesize_ns = 0, timestamp;
   guint n = 0;
   GstRtpCELTDepay *rtpceltdepay;
+  GstRTPBuffer rtp = { NULL, };
 
   rtpceltdepay = GST_RTP_CELT_DEPAY (depayload);
   clock_rate = depayload->clock_rate;
   frame_size = rtpceltdepay->frame_size;
   framesize_ns = gst_util_uint64_scale_int (frame_size, GST_SECOND, clock_rate);
 
-  timestamp = GST_BUFFER_PTS (rtp->buffer);
+  timestamp = GST_BUFFER_TIMESTAMP (buf);
+
+  gst_rtp_buffer_map (buf, GST_MAP_READ, &rtp);
 
   GST_LOG_OBJECT (depayload,
       "got %" G_GSIZE_FORMAT " bytes, mark %d ts %u seqn %d",
-      gst_buffer_get_size (rtp->buffer), gst_rtp_buffer_get_marker (rtp),
-      gst_rtp_buffer_get_timestamp (rtp), gst_rtp_buffer_get_seq (rtp));
+      gst_buffer_get_size (buf), gst_rtp_buffer_get_marker (&rtp),
+      gst_rtp_buffer_get_timestamp (&rtp), gst_rtp_buffer_get_seq (&rtp));
 
   GST_LOG_OBJECT (depayload, "got clock-rate=%d, frame_size=%d, "
       "_ns=%" GST_TIME_FORMAT ", timestamp=%" GST_TIME_FORMAT, clock_rate,
       frame_size, GST_TIME_ARGS (framesize_ns), GST_TIME_ARGS (timestamp));
 
-  payload = gst_rtp_buffer_get_payload (rtp);
-  payload_len = gst_rtp_buffer_get_payload_len (rtp);
+  payload = gst_rtp_buffer_get_payload (&rtp);
+  payload_len = gst_rtp_buffer_get_payload_len (&rtp);
 
   /* first count how many bytes are consumed by the size headers and make offset
    * point to the first data byte */
@@ -248,23 +249,21 @@ gst_rtp_celt_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
       total_size += s + 1;
     } while (s == 0xff);
 
-    outbuf = gst_rtp_buffer_get_payload_subbuffer (rtp, offset, size);
+    outbuf = gst_rtp_buffer_get_payload_subbuffer (&rtp, offset, size);
     offset += size;
 
     if (frame_size != -1 && clock_rate != -1) {
-      GST_BUFFER_PTS (outbuf) = timestamp + framesize_ns * n;
+      GST_BUFFER_TIMESTAMP (outbuf) = timestamp + framesize_ns * n;
       GST_BUFFER_DURATION (outbuf) = framesize_ns;
     }
     GST_LOG_OBJECT (depayload, "push timestamp=%"
         GST_TIME_FORMAT ", duration=%" GST_TIME_FORMAT,
-        GST_TIME_ARGS (GST_BUFFER_PTS (outbuf)),
+        GST_TIME_ARGS (GST_BUFFER_TIMESTAMP (outbuf)),
         GST_TIME_ARGS (GST_BUFFER_DURATION (outbuf)));
-
-    gst_rtp_drop_meta (GST_ELEMENT_CAST (depayload), outbuf,
-        g_quark_from_static_string (GST_META_TAG_AUDIO_STR));
 
     gst_rtp_base_depayload_push (depayload, outbuf);
   }
+  gst_rtp_buffer_unmap (&rtp);
 
   return NULL;
 }

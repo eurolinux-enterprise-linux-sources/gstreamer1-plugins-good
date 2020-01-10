@@ -186,8 +186,10 @@ gst_ac3_parse_class_init (GstAc3ParseClass * klass)
 
   object_class->finalize = gst_ac3_parse_finalize;
 
-  gst_element_class_add_static_pad_template (element_class, &sink_template);
-  gst_element_class_add_static_pad_template (element_class, &src_template);
+  gst_element_class_add_pad_template (element_class,
+      gst_static_pad_template_get (&sink_template));
+  gst_element_class_add_pad_template (element_class,
+      gst_static_pad_template_get (&src_template));
 
   gst_element_class_set_static_metadata (element_class,
       "AC3 audio stream parser", "Codec/Parser/Converter/Audio",
@@ -217,12 +219,11 @@ gst_ac3_parse_reset (GstAc3Parse * ac3parse)
 static void
 gst_ac3_parse_init (GstAc3Parse * ac3parse)
 {
-  gst_base_parse_set_min_frame_size (GST_BASE_PARSE (ac3parse), 8);
+  gst_base_parse_set_min_frame_size (GST_BASE_PARSE (ac3parse), 6);
   gst_ac3_parse_reset (ac3parse);
   ac3parse->baseparse_chainfunc =
       GST_BASE_PARSE_SINK_PAD (GST_BASE_PARSE (ac3parse))->chainfunc;
   GST_PAD_SET_ACCEPT_INTERSECT (GST_BASE_PARSE_SINK_PAD (ac3parse));
-  GST_PAD_SET_ACCEPT_TEMPLATE (GST_BASE_PARSE_SINK_PAD (ac3parse));
 }
 
 static void
@@ -477,8 +478,7 @@ gst_ac3_parse_frame_header (GstAc3Parse * parse, GstBuffer * buf, gint skip,
     goto cleanup;
   } else {
     GST_DEBUG_OBJECT (parse, "unexpected bsid %d", bsid);
-    ret = FALSE;
-    goto cleanup;
+    return FALSE;
   }
 
   GST_DEBUG_OBJECT (parse, "unexpected bsid %d", bsid);
@@ -509,7 +509,7 @@ gst_ac3_parse_handle_frame (GstBaseParse * parse,
 
   gst_buffer_map (buf, &map, GST_MAP_READ);
 
-  if (G_UNLIKELY (map.size < 8)) {
+  if (G_UNLIKELY (map.size < 6)) {
     *skipsize = 1;
     goto cleanup;
   }
@@ -601,7 +601,7 @@ gst_ac3_parse_handle_frame (GstBaseParse * parse,
     if (more || !gst_byte_reader_skip (&reader, frmsiz) ||
         !gst_byte_reader_get_uint16_be (&reader, &word)) {
       GST_DEBUG_OBJECT (ac3parse, "... but not sufficient data");
-      gst_base_parse_set_min_frame_size (parse, framesize + 8);
+      gst_base_parse_set_min_frame_size (parse, framesize + 6);
       *skipsize = 0;
       goto cleanup;
     } else {
@@ -784,25 +784,16 @@ gst_ac3_parse_pre_push_frame (GstBaseParse * parse, GstBaseParseFrame * frame)
     GstTagList *taglist;
     GstCaps *caps;
 
+    taglist = gst_tag_list_new_empty ();
+
     /* codec tag */
     caps = gst_pad_get_current_caps (GST_BASE_PARSE_SRC_PAD (parse));
-    if (G_UNLIKELY (caps == NULL)) {
-      if (GST_PAD_IS_FLUSHING (GST_BASE_PARSE_SRC_PAD (parse))) {
-        GST_INFO_OBJECT (parse, "Src pad is flushing");
-        return GST_FLOW_FLUSHING;
-      } else {
-        GST_INFO_OBJECT (parse, "Src pad is not negotiated!");
-        return GST_FLOW_NOT_NEGOTIATED;
-      }
-    }
-
-    taglist = gst_tag_list_new_empty ();
     gst_pb_utils_add_codec_description_to_tag_list (taglist,
         GST_TAG_AUDIO_CODEC, caps);
     gst_caps_unref (caps);
 
-    gst_base_parse_merge_tags (parse, taglist, GST_TAG_MERGE_REPLACE);
-    gst_tag_list_unref (taglist);
+    gst_pad_push_event (GST_BASE_PARSE_SRC_PAD (ac3parse),
+        gst_event_new_tag (taglist));
 
     /* also signals the end of first-frame processing */
     ac3parse->sent_codec_tag = TRUE;

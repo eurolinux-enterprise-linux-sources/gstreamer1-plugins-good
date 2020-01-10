@@ -130,7 +130,8 @@ gst_dynudpsink_class_init (GstDynUDPSinkClass * klass)
           "Port to bind the socket to", 0, G_MAXUINT16,
           UDP_DEFAULT_BIND_PORT, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
-  gst_element_class_add_static_pad_template (gstelement_class, &sink_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&sink_template));
 
   gst_element_class_set_static_metadata (gstelement_class, "UDP packet sender",
       "Sink/Network",
@@ -161,6 +162,7 @@ gst_dynudpsink_init (GstDynUDPSink * sink)
 
   sink->used_socket = NULL;
   sink->used_socket_v6 = NULL;
+  sink->cancellable = g_cancellable_new ();
 }
 
 static void
@@ -169,6 +171,10 @@ gst_dynudpsink_finalize (GObject * object)
   GstDynUDPSink *sink;
 
   sink = GST_DYNUDPSINK (object);
+
+  if (sink->cancellable)
+    g_object_unref (sink->cancellable);
+  sink->cancellable = NULL;
 
   if (sink->socket)
     g_object_unref (sink->socket);
@@ -366,26 +372,6 @@ gst_dynudpsink_get_property (GObject * object, guint prop_id, GValue * value,
   }
 }
 
-static void
-gst_dynudpsink_create_cancellable (GstDynUDPSink * sink)
-{
-  GPollFD pollfd;
-
-  sink->cancellable = g_cancellable_new ();
-  sink->made_cancel_fd = g_cancellable_make_pollfd (sink->cancellable, &pollfd);
-}
-
-static void
-gst_dynudpsink_free_cancellable (GstDynUDPSink * sink)
-{
-  if (sink->made_cancel_fd) {
-    g_cancellable_release_fd (sink->cancellable);
-    sink->made_cancel_fd = FALSE;
-  }
-  g_object_unref (sink->cancellable);
-  sink->cancellable = NULL;
-}
-
 /* create a socket for sending to remote machine */
 static gboolean
 gst_dynudpsink_start (GstBaseSink * bsink)
@@ -394,8 +380,6 @@ gst_dynudpsink_start (GstBaseSink * bsink)
   GError *err = NULL;
 
   udpsink = GST_DYNUDPSINK (bsink);
-
-  gst_dynudpsink_create_cancellable (udpsink);
 
   udpsink->external_socket = FALSE;
 
@@ -568,8 +552,6 @@ gst_dynudpsink_stop (GstBaseSink * bsink)
     udpsink->used_socket_v6 = NULL;
   }
 
-  gst_dynudpsink_free_cancellable (udpsink);
-
   return TRUE;
 }
 
@@ -592,8 +574,7 @@ gst_dynudpsink_unlock_stop (GstBaseSink * bsink)
 
   udpsink = GST_DYNUDPSINK (bsink);
 
-  gst_dynudpsink_free_cancellable (udpsink);
-  gst_dynudpsink_create_cancellable (udpsink);
+  g_cancellable_reset (udpsink->cancellable);
 
   return TRUE;
 }

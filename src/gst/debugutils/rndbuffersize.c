@@ -65,9 +65,9 @@ struct _GstRndBufferSizeClass
 
 enum
 {
-  PROP_SEED = 1,
-  PROP_MINIMUM,
-  PROP_MAXIMUM
+  ARG_SEED = 1,
+  ARG_MINIMUM,
+  ARG_MAXIMUM
 };
 
 #define DEFAULT_SEED 0
@@ -120,8 +120,10 @@ gst_rnd_buffer_size_class_init (GstRndBufferSizeClass * klass)
   gobject_class->get_property = gst_rnd_buffer_size_get_property;
   gobject_class->finalize = gst_rnd_buffer_size_finalize;
 
-  gst_element_class_add_static_pad_template (gstelement_class, &sink_template);
-  gst_element_class_add_static_pad_template (gstelement_class, &src_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&sink_template));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&src_template));
 
   gst_element_class_set_static_metadata (gstelement_class, "Random buffer size",
       "Testing", "pull random sized buffers",
@@ -130,16 +132,16 @@ gst_rnd_buffer_size_class_init (GstRndBufferSizeClass * klass)
   gstelement_class->change_state =
       GST_DEBUG_FUNCPTR (gst_rnd_buffer_size_change_state);
 
-  g_object_class_install_property (gobject_class, PROP_SEED,
+  g_object_class_install_property (gobject_class, ARG_SEED,
       g_param_spec_uint ("seed", "random number seed",
           "seed for randomness (initialized when going from READY to PAUSED)",
           0, G_MAXUINT32, DEFAULT_SEED,
           G_PARAM_READWRITE | G_PARAM_CONSTRUCT | G_PARAM_STATIC_STRINGS));
-  g_object_class_install_property (gobject_class, PROP_MINIMUM,
+  g_object_class_install_property (gobject_class, ARG_MINIMUM,
       g_param_spec_int ("min", "mininum", "mininum buffer size",
           0, G_MAXINT32, DEFAULT_MIN,
           G_PARAM_READWRITE | G_PARAM_CONSTRUCT | G_PARAM_STATIC_STRINGS));
-  g_object_class_install_property (gobject_class, PROP_MAXIMUM,
+  g_object_class_install_property (gobject_class, ARG_MAXIMUM,
       g_param_spec_int ("max", "maximum", "maximum buffer size",
           1, G_MAXINT32, DEFAULT_MAX,
           G_PARAM_READWRITE | G_PARAM_CONSTRUCT | G_PARAM_STATIC_STRINGS));
@@ -193,13 +195,13 @@ gst_rnd_buffer_size_set_property (GObject * object, guint prop_id,
   GstRndBufferSize *self = GST_RND_BUFFER_SIZE (object);
 
   switch (prop_id) {
-    case PROP_SEED:
+    case ARG_SEED:
       self->seed = g_value_get_uint (value);
       break;
-    case PROP_MINIMUM:
+    case ARG_MINIMUM:
       self->min = g_value_get_int (value);
       break;
-    case PROP_MAXIMUM:
+    case ARG_MAXIMUM:
       self->max = g_value_get_int (value);
       break;
     default:
@@ -216,13 +218,13 @@ gst_rnd_buffer_size_get_property (GObject * object, guint prop_id,
   GstRndBufferSize *self = GST_RND_BUFFER_SIZE (object);
 
   switch (prop_id) {
-    case PROP_SEED:
+    case ARG_SEED:
       g_value_set_uint (value, self->seed);
       break;
-    case PROP_MINIMUM:
+    case ARG_MINIMUM:
       g_value_set_int (value, self->min);
       break;
-    case PROP_MAXIMUM:
+    case ARG_MAXIMUM:
       g_value_set_int (value, self->max);
       break;
     default:
@@ -515,7 +517,9 @@ push_failed:
       GST_DEBUG_OBJECT (self, "eos");
       gst_pad_push_event (self->srcpad, gst_event_new_eos ());
     } else if (ret < GST_FLOW_EOS || ret == GST_FLOW_NOT_LINKED) {
-      GST_ELEMENT_FLOW_ERROR (self, ret);
+      GST_ELEMENT_ERROR (self, STREAM, FAILED,
+          ("Internal data stream error."),
+          ("streaming stopped, reason: %s", gst_flow_get_name (ret)));
     }
     goto pause_task;
   }

@@ -60,29 +60,12 @@ struct _GstUDPSrc {
   gboolean   close_socket;
   gboolean   auto_multicast;
   gboolean   reuse;
-  gboolean   loop;
-  gboolean   retrieve_sender_address;
-
-  /* stats */
-  guint      max_size;
 
   /* our sockets */
   GSocket   *used_socket;
+  GCancellable *cancellable;
   GInetSocketAddress *addr;
   gboolean   external_socket;
-
-  gboolean   made_cancel_fd;
-  GCancellable *cancellable;
-
-  /* memory management */
-  GstAllocator *allocator;
-  GstAllocationParams params;
-
-  GstMemory   *mem;
-  GstMapInfo   map;
-  GstMemory   *mem_max;
-  GstMapInfo   map_max;
-  GInputVector vec[2];
 
   gchar     *uri;
 };

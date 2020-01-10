@@ -24,10 +24,8 @@
 #include <string.h>
 
 #include <gst/rtp/gstrtpbuffer.h>
-#include <gst/video/video.h>
 
 #include "gstrtpvrawpay.h"
-#include "gstrtputils.h"
 
 enum
 {
@@ -110,10 +108,10 @@ G_DEFINE_TYPE (GstRtpVRawPay, gst_rtp_vraw_pay, GST_TYPE_RTP_BASE_PAYLOAD)
   gstrtpbasepayload_class->set_caps = gst_rtp_vraw_pay_setcaps;
   gstrtpbasepayload_class->handle_buffer = gst_rtp_vraw_pay_handle_buffer;
 
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_vraw_pay_src_template);
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_vraw_pay_sink_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_vraw_pay_src_template));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_vraw_pay_sink_template));
 
   gst_element_class_set_static_metadata (gstelement_class,
       "RTP Raw Video payloader", "Codec/Payloader/Network/RTP",
@@ -284,10 +282,7 @@ gst_rtp_vraw_pay_handle_buffer (GstRTPBasePayload * payload, GstBuffer * buffer)
 
   rtpvrawpay = GST_RTP_VRAW_PAY (payload);
 
-  if (!gst_video_frame_map (&frame, &rtpvrawpay->vinfo, buffer, GST_MAP_READ)) {
-    gst_buffer_unref (buffer);
-    return GST_FLOW_ERROR;
-  }
+  gst_video_frame_map (&frame, &rtpvrawpay->vinfo, buffer, GST_MAP_READ);
 
   GST_LOG_OBJECT (rtpvrawpay, "new frame of %" G_GSIZE_FORMAT " bytes",
       gst_buffer_get_size (buffer));
@@ -351,9 +346,9 @@ gst_rtp_vraw_pay_handle_buffer (GstRTPBasePayload * payload, GstBuffer * buffer)
       out = gst_rtp_buffer_new_allocate (left, 0, 0);
 
       if (field == 0) {
-        GST_BUFFER_PTS (out) = GST_BUFFER_PTS (buffer);
+        GST_BUFFER_TIMESTAMP (out) = GST_BUFFER_TIMESTAMP (buffer);
       } else {
-        GST_BUFFER_PTS (out) = GST_BUFFER_PTS (buffer) +
+        GST_BUFFER_TIMESTAMP (out) = GST_BUFFER_TIMESTAMP (buffer) +
             GST_BUFFER_DURATION (buffer) / 2;
       }
 
@@ -559,10 +554,6 @@ gst_rtp_vraw_pay_handle_buffer (GstRTPBasePayload * payload, GstBuffer * buffer)
         GST_LOG_OBJECT (rtpvrawpay, "we have %u bytes left", left);
         gst_buffer_resize (out, 0, gst_buffer_get_size (out) - left);
       }
-
-      gst_rtp_copy_meta (GST_ELEMENT_CAST (rtpvrawpay), out, buffer,
-          g_quark_from_static_string (GST_META_TAG_VIDEO_STR));
-
 
       /* Now either push out the buffer directly */
       if (!use_buffer_lists) {

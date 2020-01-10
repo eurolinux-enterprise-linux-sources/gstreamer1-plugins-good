@@ -43,7 +43,7 @@ enum
 
 enum
 {
-  PROP_0
+  ARG_0
 };
 
 static gboolean gst_mulawenc_start (GstAudioEncoder * audioenc);
@@ -193,10 +193,10 @@ gst_mulawenc_class_init (GstMuLawEncClass * klass)
   audio_encoder_class->handle_frame =
       GST_DEBUG_FUNCPTR (gst_mulawenc_handle_frame);
 
-  gst_element_class_add_static_pad_template (element_class,
-      &mulaw_enc_src_factory);
-  gst_element_class_add_static_pad_template (element_class,
-      &mulaw_enc_sink_factory);
+  gst_element_class_add_pad_template (element_class,
+      gst_static_pad_template_get (&mulaw_enc_src_factory));
+  gst_element_class_add_pad_template (element_class,
+      gst_static_pad_template_get (&mulaw_enc_sink_factory));
 
   gst_element_class_set_static_metadata (element_class, "Mu Law audio encoder",
       "Codec/Encoder/Audio",
@@ -207,5 +207,5 @@ gst_mulawenc_class_init (GstMuLawEncClass * klass)
 static void
 gst_mulawenc_init (GstMuLawEnc * mulawenc)
 {
-  GST_PAD_SET_ACCEPT_TEMPLATE (GST_AUDIO_ENCODER_SINK_PAD (mulawenc));
+
 }

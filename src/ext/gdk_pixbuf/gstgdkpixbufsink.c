@@ -149,8 +149,8 @@ gst_gdk_pixbuf_sink_class_init (GstGdkPixbufSinkClass * klass)
       "Sink/Video", "Output images as GdkPixbuf objects in bus messages",
       "Tim-Philipp Müller <tim centricular net>");
 
-  gst_element_class_add_static_pad_template (element_class,
-      &pixbufsink_sink_factory);
+  gst_element_class_add_pad_template (element_class,
+      gst_static_pad_template_get (&pixbufsink_sink_factory));
 
   gobject_class->set_property = gst_gdk_pixbuf_sink_set_property;
   gobject_class->get_property = gst_gdk_pixbuf_sink_get_property;
@@ -229,7 +229,7 @@ gst_gdk_pixbuf_sink_set_caps (GstBaseSink * basesink, GstCaps * caps)
   GstGdkPixbufSink *sink = GST_GDK_PIXBUF_SINK (basesink);
   GstVideoInfo info;
   GstVideoFormat fmt;
-  gint w, h, par_n, par_d;
+  gint w, h, s, par_n, par_d;
 
   GST_LOG_OBJECT (sink, "caps: %" GST_PTR_FORMAT, caps);
 
@@ -241,17 +241,12 @@ gst_gdk_pixbuf_sink_set_caps (GstBaseSink * basesink, GstCaps * caps)
   fmt = GST_VIDEO_INFO_FORMAT (&info);
   w = GST_VIDEO_INFO_WIDTH (&info);
   h = GST_VIDEO_INFO_HEIGHT (&info);
+  s = GST_VIDEO_INFO_COMP_PSTRIDE (&info, 0);
   par_n = GST_VIDEO_INFO_PAR_N (&info);
   par_d = GST_VIDEO_INFO_PAR_N (&info);
 
-#ifndef G_DISABLE_ASSERT
-  {
-    gint s;
-    s = GST_VIDEO_INFO_COMP_PSTRIDE (&info, 0);
-    g_assert ((fmt == GST_VIDEO_FORMAT_RGB && s == 3) ||
-        (fmt == GST_VIDEO_FORMAT_RGBA && s == 4));
-  }
-#endif
+  g_assert ((fmt == GST_VIDEO_FORMAT_RGB && s == 3) ||
+      (fmt == GST_VIDEO_FORMAT_RGBA && s == 4));
 
   GST_VIDEO_SINK_WIDTH (sink) = w;
   GST_VIDEO_SINK_HEIGHT (sink) = h;

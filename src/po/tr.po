@@ -1,26 +1,23 @@
 # translation of gst-plugins-good-1.0.3.po to Turkish
 # This file is put in the public domain.
-# This file is distributed under the same license as the gst-plugins-good package.
 # Server Acim <serveracim@gmail.com>, 2010.
 # Server Acim <serveracim@gmail.com>, 2011.
-# Server Acim <serveracim@gmail.com>, 2013, 2015.
+# Server Acim <serveracim@gmail.com>, 2013.
 msgid ""
 msgstr ""
-"Project-Id-Version: gst-plugins-good 1.4.1\n"
+"Project-Id-Version: gst-plugins-good 1.0.3\n"
 "Report-Msgid-Bugs-To: http://bugzilla.gnome.org/\n"
-"POT-Creation-Date: 2017-02-23 15:16+0200\n"
-"PO-Revision-Date: 2015-01-10 21:07+0100\n"
-"Last-Translator: Volkan Gezer <volkangezer@gmail.com>\n"
+"POT-Creation-Date: 2014-12-18 12:05+0100\n"
+"PO-Revision-Date: 2013-03-10 13:05+0200\n"
+"Last-Translator: Server Acim <serveracim@gmail.com>\n"
 "Language-Team: Turkish <gnu-tr-u12a@lists.sourceforge.net>\n"
 "Language: tr\n"
 "MIME-Version: 1.0\n"
-"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Type: text/plain; charset=utf-8\n"
 "Content-Transfer-Encoding: 8bit\n"
-"Plural-Forms: nplurals=2; plural=(n > 1);\n"
-"X-Generator: Lokalize 1.5\n"
 
 msgid "Jack server not found"
-msgstr "Jack sunucusu bulunamadı"
+msgstr ""
 
 msgid "Failed to decode JPEG image"
 msgstr "JPEG görüntüsünü çözümlenemedi"
@@ -48,15 +45,17 @@ msgstr "Sunucuyla bağlantı kurulumayor."
 msgid "Secure connection setup failed."
 msgstr "Güvenli bağlantı ayarı yapılamadı."
 
-#, fuzzy
 msgid ""
-"A network error occurred, or the server closed the connection unexpectedly."
+"A network error occured, or the server closed the connection unexpectedly."
 msgstr ""
 "Bir ağ hatası meydana geldi, veya sunucu bağlantıyı beklenmeyen bir şekilde "
 "kesti."
 
 msgid "Server sent bad data."
 msgstr "Sunucu yetersiz veri gönderdi."
+
+msgid "Internal data stream error."
+msgstr "İç veri akım hatası."
 
 msgid "No or invalid input audio, AVI stream will be corrupt."
 msgstr "Geçerli bir ses girişi bulunamadı. AVI akışı kesilecek."
@@ -68,7 +67,7 @@ msgid "This file is invalid and cannot be played."
 msgstr "Bu dosya geçersiz ve oynatılamaz."
 
 msgid "Cannot play stream because it is encrypted with PlayReady DRM."
-msgstr "Akış çalınamadı çünkü PlayReady DRM ile şifrelenmiş."
+msgstr ""
 
 msgid "This file is corrupt and cannot be played."
 msgstr "Bu dosya bozuk ve oynatılamaz."
@@ -100,6 +99,9 @@ msgid ""
 msgstr ""
 "Desteklenen akış bulunamadı. Daha fazla aktarım protokolüne izin vermeniz "
 "veya doğru GStreamer RTSP uzantı eklentisine onay vermeniz gerekebilir."
+
+msgid "Internal data flow error."
+msgstr "İç veri akış hatası."
 
 msgid ""
 "Could not open audio device for playback. Device is being used by another "
@@ -143,12 +145,6 @@ msgstr "Kayıt için aygıtı açamıyor. Aygıtı açmak için yetkiniz yok."
 msgid "Could not open audio device for recording."
 msgstr "Aygıtı kayıt için açamıyor."
 
-msgid "CoreAudio device not found"
-msgstr ""
-
-msgid "CoreAudio device could not be opened"
-msgstr ""
-
 msgid "Record Source"
 msgstr "Kayıt Kaynağı"
 
@@ -170,11 +166,13 @@ msgstr "AUX 1 Giriş"
 msgid "AUX 2 In"
 msgstr "AUX 2 Giriş"
 
+#, fuzzy
 msgid "Codec Loopback"
-msgstr "Kodek Geridönüşü"
+msgstr "Geridönüm"
 
+#, fuzzy
 msgid "SunVTS Loopback"
-msgstr "SunVTS Geridönüşü"
+msgstr "Geridönüm"
 
 msgid "Volume"
 msgstr "Ses Girişi"
@@ -237,9 +235,9 @@ msgstr "Aygıt '%s' görüntü yakalayamadı%dx%d"
 msgid "Device '%s' cannot capture in the specified format"
 msgstr "Aygıt '%s' belirtilen kipte görüntü yakalayamadı"
 
-#, c-format
+#, fuzzy, c-format
 msgid "Device '%s' does support non-contiguous planes"
-msgstr "Aygıt '%s' bitişik olmayan düzlemleri desteklemiyor"
+msgstr "Aygıt '%s' video yakalamayı desteklemiyor"
 
 #, c-format
 msgid "Could not get parameters on device '%s'"
@@ -248,28 +246,30 @@ msgstr "Değiştirgeler aygıttan '%s' alınamıyor"
 msgid "Video device did not accept new frame rate setting."
 msgstr "Vidyo aygıtı yeni çerçeve oranı ayarlarını kabul etmedi."
 
+#, fuzzy
 msgid "Video device did not provide output format."
-msgstr "Video aygıtı çıktı biçimini sağlamadı."
+msgstr "Vidyo aygıtı yeni çerçeve oranı ayarlarını kabul etmedi."
 
 msgid "Video device returned invalid dimensions."
-msgstr "Video aygıtı geçersiz boyutlar döndü."
+msgstr ""
 
 #, fuzzy
-msgid "Video device uses an unsupported interlacing method."
-msgstr "Video aygıtları desteklenmeyen bir birbirine geçme yöntemi kullanıyor."
+msgid "Video devices uses an unsupported interlacing method."
+msgstr "Bu aygıtın sürücüsü '%s' IO yöntemini desteklemiyor %d"
+
+msgid "Video devices uses an unsupported pixel format."
+msgstr ""
 
 #, fuzzy
-msgid "Video device uses an unsupported pixel format."
-msgstr "Video aygıtları desteklenmeyen bir piksel biçimini kullanıyor."
-
 msgid "Failed to configure internal buffer pool."
-msgstr "İç tampon bellek havuzu yapılandırılamıyor."
+msgstr "Video aygıtı tampon havuzu yaratamadı."
 
+#, fuzzy
 msgid "Video device did not suggest any buffer size."
-msgstr "Video aygıtı herhangi bir tampon bellek boyutu önermedi."
+msgstr "Video aygıtı tampon havuzu yaratamadı."
 
 msgid "No downstream pool to import from."
-msgstr "İçeri aktarılacak akıntı havuzu yok."
+msgstr ""
 
 #, c-format
 msgid "Failed to get settings of tuner %d on device '%s'."
@@ -296,32 +296,33 @@ msgid "Failed to change mute state for device '%s'."
 msgstr "Aygıt '%s' susturulmaya ayarlanamadı."
 
 msgid "Failed to allocated required memory."
-msgstr "Gerekli bellek ayrılamadı."
+msgstr ""
 
 msgid "Failed to allocate required memory."
-msgstr "Gerekli bellek ayrılamıyor."
+msgstr ""
 
-#, c-format
+#, fuzzy, c-format
 msgid "Converter on device %s has no supported input format"
-msgstr "Aygıt %s üzerindeki dönüştürücü girdi biçimini desteklemiyor"
+msgstr "Bu aygıtın sürücüsü '%s' IO yöntemini desteklemiyor %d"
 
-#, c-format
+#, fuzzy, c-format
 msgid "Converter on device %s has no supported output format"
-msgstr "Aygıt %s üzerindeki dönüştürücü çıktı biçimini desteklemiyor"
+msgstr "Bu aygıtın sürücüsü '%s' IO yöntemini desteklemiyor %d"
 
-#, c-format
+#, fuzzy, c-format
 msgid "Encoder on device %s has no supported input format"
-msgstr "Aygıt %s üzerindeki kodlayıcı girdi biçimini deskteklemiyor"
+msgstr "Bu aygıtın sürücüsü '%s' IO yöntemini desteklemiyor %d"
 
-#, c-format
+#, fuzzy, c-format
 msgid "Encoder on device %s has no supported output format"
-msgstr "Aygıt %s üzerindeki kodlayıcı çıktı biçimini deskteklemiyor"
+msgstr "Bu aygıtın sürücüsü '%s' IO yöntemini desteklemiyor %d"
 
+#, fuzzy
 msgid "Failed to start decoding thread."
-msgstr "Çözme işi başlaması başarısız."
+msgstr "JPEG görüntüsünü çözümlenemedi"
 
 msgid "Failed to process frame."
-msgstr "İşlem çerçevesi başarısız."
+msgstr ""
 
 #, c-format
 msgid ""
@@ -367,13 +368,13 @@ msgstr "Aygıt '%s' bir yakalama aygıtı değil."
 msgid "Device '%s' is not a output device."
 msgstr "Aygıt '%s' bir çıkış aygıtı değil."
 
-#, c-format
+#, fuzzy, c-format
 msgid "Device '%s' is not a M2M device."
-msgstr "Aygıt '%s' bir M2M aygıtı değil."
+msgstr "Aygıt '%s' bir çıkış aygıtı değil."
 
-#, c-format
+#, fuzzy, c-format
 msgid "Could not dup device '%s' for reading and writing."
-msgstr "Okuma ve yazma için '%s' aygıtı kopyalanamadı."
+msgstr "Şu aygıtı '%s' okuma ve yazma için açamıyor."
 
 #, c-format
 msgid "Failed to set norm for device '%s'."
@@ -419,15 +420,6 @@ msgstr "Çalışırken çözünürlüğü değiştirmek henüz desteklenmiyor."
 
 msgid "Cannot operate without a clock"
 msgstr "Saat olmadan çalışamaz"
-
-#~ msgid "Internal data stream error."
-#~ msgstr "İç veri akım hatası."
-
-#~ msgid "Internal data flow error."
-#~ msgstr "İç veri akış hatası."
-
-#~ msgid "Device '%s' does not support video capture"
-#~ msgstr "Aygıt '%s' video yakalamayı desteklemiyor"
 
 #~ msgid "Could not establish connection to sound server"
 #~ msgstr "Ses sunucusuyla bağlantı kurulumayor"

@@ -167,8 +167,8 @@ gst_oss_src_class_init (GstOssSrcClass * klass)
       "Capture from a sound card via OSS",
       "Erik Walthinsen <omega@cse.ogi.edu>, " "Wim Taymans <wim@fluendo.com>");
 
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &osssrc_src_factory);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&osssrc_src_factory));
 }
 
 static void
@@ -181,7 +181,8 @@ gst_oss_src_set_property (GObject * object, guint prop_id,
 
   switch (prop_id) {
     case PROP_DEVICE:
-      g_free (src->device);
+      if (src->device)
+        g_free (src->device);
       src->device = g_value_dup_string (value);
       break;
     default:

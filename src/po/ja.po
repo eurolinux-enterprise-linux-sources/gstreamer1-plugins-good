@@ -8,7 +8,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: gst-plugins-good 1.0.3\n"
 "Report-Msgid-Bugs-To: http://bugzilla.gnome.org/\n"
-"POT-Creation-Date: 2017-02-23 15:16+0200\n"
+"POT-Creation-Date: 2014-12-18 12:05+0100\n"
 "PO-Revision-Date: 2012-12-22 20:13+0900\n"
 "Last-Translator: Takeshi Hamasaki <hmatrjp@users.sourceforge.jp>\n"
 "Language-Team: Japanese <translation-team-ja@lists.sourceforge.net>\n"
@@ -48,13 +48,15 @@ msgstr "サーバーへの接続を確立できません。"
 msgid "Secure connection setup failed."
 msgstr "セキュア接続のセットアップに失敗しました。"
 
-#, fuzzy
 msgid ""
-"A network error occurred, or the server closed the connection unexpectedly."
+"A network error occured, or the server closed the connection unexpectedly."
 msgstr "ネットワークエラーが発生したか、サーバーが予期せず接続を閉じました。"
 
 msgid "Server sent bad data."
 msgstr "サーバが不正なデータを送信しました。"
+
+msgid "Internal data stream error."
+msgstr "内部データストリームエラー"
 
 # SUN REVIEWED
 msgid "No or invalid input audio, AVI stream will be corrupt."
@@ -103,6 +105,9 @@ msgstr ""
 "する必要があるかもしれません。または、正しい GStreamer RTSP 拡張プラグインが"
 "ないのかもしれません。"
 
+msgid "Internal data flow error."
+msgstr "内部データフローエラー。"
+
 msgid ""
 "Could not open audio device for playback. Device is being used by another "
 "application."
@@ -150,12 +155,6 @@ msgstr ""
 # SUN REVIEWED
 msgid "Could not open audio device for recording."
 msgstr "音声デバイスを録音用に開くことができません。"
-
-msgid "CoreAudio device not found"
-msgstr ""
-
-msgid "CoreAudio device could not be opened"
-msgstr ""
 
 msgid "Record Source"
 msgstr "録音ソース"
@@ -271,12 +270,11 @@ msgid "Video device returned invalid dimensions."
 msgstr ""
 
 #, fuzzy
-msgid "Video device uses an unsupported interlacing method."
+msgid "Video devices uses an unsupported interlacing method."
 msgstr "デバイス '%s' のドライバはIOメソッド%dをサポートしていません"
 
-#, fuzzy
-msgid "Video device uses an unsupported pixel format."
-msgstr "デバイス '%s' のドライバはIOメソッド%dをサポートしていません"
+msgid "Video devices uses an unsupported pixel format."
+msgstr ""
 
 #, fuzzy
 msgid "Failed to configure internal buffer pool."
@@ -444,12 +442,6 @@ msgstr "実行時の解像度変更はサポートされていません。"
 
 msgid "Cannot operate without a clock"
 msgstr "クロックなしでは動作できません。"
-
-#~ msgid "Internal data stream error."
-#~ msgstr "内部データストリームエラー"
-
-#~ msgid "Internal data flow error."
-#~ msgstr "内部データフローエラー。"
 
 #~ msgid "Device '%s' does not support video capture"
 #~ msgstr "デバイス '%s' はビデオキャプチャをサポートしていません"

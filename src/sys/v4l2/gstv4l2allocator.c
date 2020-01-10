@@ -145,6 +145,14 @@ _v4l2mem_dispose (GstV4l2Memory * mem)
   return ret;
 }
 
+static void
+_v4l2mem_free (GstV4l2Memory * mem)
+{
+  if (mem->dmafd >= 0)
+    close (mem->dmafd);
+  g_slice_free (GstV4l2Memory, mem);
+}
+
 static inline GstV4l2Memory *
 _v4l2mem_new (GstMemoryFlags flags, GstAllocator * allocator,
     GstMemory * parent, gsize maxsize, gsize align, gsize offset, gsize size,
@@ -262,14 +270,6 @@ gst_v4l2_memory_group_new (GstV4l2Allocator * allocator, guint32 index)
   if (v4l2_ioctl (video_fd, VIDIOC_QUERYBUF, &group->buffer) < 0)
     goto querybuf_failed;
 
-  if (group->buffer.index != index) {
-    GST_ERROR_OBJECT (allocator, "Buffer index returned by VIDIOC_QUERYBUF "
-        "didn't match, this indicate the presence of a bug in your driver or "
-        "libv4l2");
-    g_slice_free (GstV4l2MemoryGroup, group);
-    return NULL;
-  }
-
   /* Check that provided size matches the format we have negotiation. Failing
    * there usually means a driver of libv4l bug. */
   if (V4L2_TYPE_IS_MULTIPLANAR (allocator->type)) {
@@ -380,22 +380,23 @@ gst_v4l2_allocator_free (GstAllocator * gallocator, GstMemory * gmem)
   GstV4l2Memory *mem = (GstV4l2Memory *) gmem;
   GstV4l2MemoryGroup *group = mem->group;
 
-  /* Only free unparented memory */
-  if (mem->mem.parent == NULL) {
-    GST_LOG_OBJECT (allocator, "freeing plane %i of buffer %u",
-        mem->plane, group->buffer.index);
+  GST_LOG_OBJECT (allocator, "freeing plane %i of buffer %u",
+      mem->plane, group->buffer.index);
 
-    if (allocator->memory == V4L2_MEMORY_MMAP) {
-      if (mem->data)
+  switch (allocator->memory) {
+    case V4L2_MEMORY_MMAP:
+      if (mem->data) {
         v4l2_munmap (mem->data, group->planes[mem->plane].length);
-    }
-
-    /* This apply for both mmap with expbuf, and dmabuf imported memory */
-    if (mem->dmafd >= 0)
-      close (mem->dmafd);
+      } else if (group->planes[mem->plane].m.fd > 0) {
+        close (group->planes[mem->plane].m.fd);
+      }
+      break;
+    default:
+      /* Nothing to do */
+      break;
   }
 
-  g_slice_free (GstV4l2Memory, mem);
+  _v4l2mem_free (mem);
 }
 
 static void
@@ -489,7 +490,7 @@ gst_v4l2_allocator_probe (GstV4l2Allocator * allocator, guint32 memory,
 
     flags |= breq_flag;
 
-    bcreate.memory = memory;
+    bcreate.memory = V4L2_MEMORY_MMAP;
     bcreate.format = allocator->format;
 
     if ((v4l2_ioctl (allocator->video_fd, VIDIOC_CREATE_BUFS, &bcreate) == 0))
@@ -520,9 +521,6 @@ gst_v4l2_allocator_create_buf (GstV4l2Allocator * allocator)
   if (v4l2_ioctl (allocator->video_fd, VIDIOC_CREATE_BUFS, &bcreate) < 0)
     goto create_bufs_failed;
 
-  if (allocator->groups[bcreate.index] != NULL)
-    goto create_bufs_bug;
-
   group = gst_v4l2_memory_group_new (allocator, bcreate.index);
 
   if (group) {
@@ -538,13 +536,6 @@ create_bufs_failed:
   {
     GST_WARNING_OBJECT (allocator, "error creating a new buffer: %s",
         g_strerror (errno));
-    goto done;
-  }
-create_bufs_bug:
-  {
-    GST_ERROR_OBJECT (allocator, "created buffer has already used buffer "
-        "index %i, this means there is an bug in your driver or libv4l2",
-        bcreate.index);
     goto done;
   }
 }
@@ -1135,7 +1126,7 @@ dup_failed:
 gboolean
 gst_v4l2_allocator_import_userptr (GstV4l2Allocator * allocator,
     GstV4l2MemoryGroup * group, gsize img_size, int n_planes,
-    gpointer * data, gsize * size)
+    gpointer * data, gsize * offset)
 {
   GstV4l2Memory *mem;
   gint i;
@@ -1143,34 +1134,38 @@ gst_v4l2_allocator_import_userptr (GstV4l2Allocator * allocator,
   g_return_val_if_fail (allocator->memory == V4L2_MEMORY_USERPTR, FALSE);
 
   /* TODO Support passing N plane from 1 memory to MPLANE v4l2 format */
-  if (V4L2_TYPE_IS_MULTIPLANAR (allocator->type) && n_planes != group->n_mem)
+  if (n_planes != group->n_mem)
     goto n_mem_missmatch;
 
   for (i = 0; i < group->n_mem; i++) {
-    gsize maxsize, psize;
+    gsize size, maxsize;
 
     if (V4L2_TYPE_IS_MULTIPLANAR (allocator->type)) {
       struct v4l2_pix_format_mplane *pix = &allocator->format.fmt.pix_mp;
       maxsize = pix->plane_fmt[i].sizeimage;
-      psize = size[i];
     } else {
       maxsize = allocator->format.fmt.pix.sizeimage;
-      psize = img_size;
     }
 
-    g_assert (psize <= img_size);
+    if ((i + 1) == n_planes) {
+      size = img_size - offset[i];
+    } else {
+      size = offset[i + 1] - offset[i];
+    }
+
+    g_assert (size <= img_size);
 
     GST_LOG_OBJECT (allocator, "imported USERPTR %p plane %d size %"
-        G_GSIZE_FORMAT, data[i], i, psize);
+        G_GSIZE_FORMAT, data[i], i, size);
 
     mem = (GstV4l2Memory *) group->mem[i];
 
     mem->mem.maxsize = maxsize;
-    mem->mem.size = psize;
+    mem->mem.size = size;
     mem->data = data[i];
 
     group->planes[i].length = maxsize;
-    group->planes[i].bytesused = psize;
+    group->planes[i].bytesused = size;
     group->planes[i].m.userptr = (unsigned long) data[i];
     group->planes[i].data_offset = 0;
   }
@@ -1240,18 +1235,9 @@ gst_v4l2_allocator_qbuf (GstV4l2Allocator * allocator,
     group->buffer.bytesused = gst_memory_get_sizes (group->mem[0], NULL, NULL);
   }
 
-  /* Ensure the memory will stay around and is RO */
-  for (i = 0; i < group->n_mem; i++)
-    gst_memory_ref (group->mem[i]);
-
   if (v4l2_ioctl (allocator->video_fd, VIDIOC_QBUF, &group->buffer) < 0) {
-    GST_ERROR_OBJECT (allocator, "failed queueing buffer %i: %s",
+    GST_ERROR_OBJECT (allocator, "failed queing buffer %i: %s",
         group->buffer.index, g_strerror (errno));
-
-    /* Release the memory, possibly making it RW again */
-    for (i = 0; i < group->n_mem; i++)
-      gst_memory_unref (group->mem[i]);
-
     ret = FALSE;
     if (IS_QUEUED (group->buffer)) {
       GST_DEBUG_OBJECT (allocator,
@@ -1270,13 +1256,16 @@ gst_v4l2_allocator_qbuf (GstV4l2Allocator * allocator,
     SET_QUEUED (group->buffer);
   }
 
+  /* Ensure the memory will stay around and is RO */
+  for (i = 0; i < group->n_mem; i++)
+    gst_memory_ref (group->mem[i]);
+
 done:
   return ret;
 }
 
-GstFlowReturn
-gst_v4l2_allocator_dqbuf (GstV4l2Allocator * allocator,
-    GstV4l2MemoryGroup ** group_out)
+GstV4l2MemoryGroup *
+gst_v4l2_allocator_dqbuf (GstV4l2Allocator * allocator)
 {
   struct v4l2_buffer buffer = { 0 };
   struct v4l2_plane planes[VIDEO_MAX_PLANES] = { {0} };
@@ -1284,7 +1273,7 @@ gst_v4l2_allocator_dqbuf (GstV4l2Allocator * allocator,
 
   GstV4l2MemoryGroup *group = NULL;
 
-  g_return_val_if_fail (g_atomic_int_get (&allocator->active), GST_FLOW_ERROR);
+  g_return_val_if_fail (g_atomic_int_get (&allocator->active), FALSE);
 
   buffer.type = allocator->type;
   buffer.memory = allocator->memory;
@@ -1298,13 +1287,6 @@ gst_v4l2_allocator_dqbuf (GstV4l2Allocator * allocator,
     goto error;
 
   group = allocator->groups[buffer.index];
-
-  if (!IS_QUEUED (group->buffer)) {
-    GST_ERROR_OBJECT (allocator,
-        "buffer %i was not queued, this indicate a driver bug.", buffer.index);
-    return GST_FLOW_ERROR;
-  }
-
   group->buffer = buffer;
 
   GST_LOG_OBJECT (allocator, "dequeued buffer %i (flags 0x%X)", buffer.index,
@@ -1332,16 +1314,7 @@ gst_v4l2_allocator_dqbuf (GstV4l2Allocator * allocator,
   } else {
     /* for capture, simply read the size */
     for (i = 0; i < group->n_mem; i++) {
-      if (G_LIKELY (group->planes[i].bytesused <= group->mem[i]->maxsize))
-        gst_memory_resize (group->mem[i], 0, group->planes[i].bytesused);
-      else {
-        GST_WARNING_OBJECT (allocator,
-            "v4l2 provided buffer that is too big for the memory it was "
-            "writing into.  v4l2 claims %" G_GUINT32_FORMAT " bytes used but "
-            "memory is only %" G_GSIZE_FORMAT "B.  This is probably a driver "
-            "bug.", group->planes[i].bytesused, group->mem[i]->maxsize);
-        gst_memory_resize (group->mem[i], 0, group->mem[i]->maxsize);
-      }
+      gst_memory_resize (group->mem[i], 0, group->planes[i].bytesused);
     }
   }
 
@@ -1349,15 +1322,9 @@ gst_v4l2_allocator_dqbuf (GstV4l2Allocator * allocator,
   for (i = 0; i < group->n_mem; i++)
     gst_memory_unref (group->mem[i]);
 
-  *group_out = group;
-  return GST_FLOW_OK;
+  return group;
 
 error:
-  if (errno == EPIPE) {
-    GST_DEBUG_OBJECT (allocator, "broken pipe signals last buffer");
-    return GST_FLOW_EOS;
-  }
-
   GST_ERROR_OBJECT (allocator, "failed dequeuing a %s buffer: %s",
       memory_type_to_str (allocator->memory), g_strerror (errno));
 
@@ -1385,7 +1352,7 @@ error:
           " returning an error, or even stop capturing.");
       /* have we de-queued a buffer ? */
       if (!IS_QUEUED (buffer)) {
-        GST_DEBUG_OBJECT (allocator, "reenqueueing buffer");
+        GST_DEBUG_OBJECT (allocator, "reenqueing buffer");
         /* FIXME ... should we do something here? */
       }
       break;
@@ -1399,7 +1366,7 @@ error:
       break;
   }
 
-  return GST_FLOW_ERROR;
+  return NULL;
 }
 
 void
@@ -1421,4 +1388,18 @@ gst_v4l2_allocator_reset_group (GstV4l2Allocator * allocator,
   }
 
   gst_v4l2_allocator_reset_size (allocator, group);
+}
+
+gsize
+gst_v4l2_allocator_num_allocated (GstV4l2Allocator * allocator)
+{
+  gsize num_allocated;
+
+  GST_OBJECT_LOCK (allocator);
+
+  num_allocated = allocator->count;
+
+  GST_OBJECT_UNLOCK (allocator);
+
+  return num_allocated;
 }

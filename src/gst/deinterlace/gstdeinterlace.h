@@ -63,8 +63,7 @@ typedef enum
 {
   GST_DEINTERLACE_ALL,         /* All (missing data is interp.) */
   GST_DEINTERLACE_TF,          /* Top Fields Only */
-  GST_DEINTERLACE_BF,          /* Bottom Fields Only */
-  GST_DEINTERLACE_FIELDS_AUTO  /* Automatically detect */
+  GST_DEINTERLACE_BF           /* Bottom Fields Only */
 } GstDeinterlaceFields;
 
 typedef enum
@@ -77,8 +76,7 @@ typedef enum
 typedef enum {
   GST_DEINTERLACE_MODE_AUTO,
   GST_DEINTERLACE_MODE_INTERLACED,
-  GST_DEINTERLACE_MODE_DISABLED,
-  GST_DEINTERLACE_MODE_AUTO_STRICT
+  GST_DEINTERLACE_MODE_DISABLED
 } GstDeinterlaceMode;
 
 typedef enum
@@ -127,8 +125,6 @@ struct _GstDeinterlace
 
   GstDeinterlaceFields fields;
 
-  GstDeinterlaceFields user_set_fields;
-
   /* current state (differs when flushing/inverse telecine using weave) */
   GstDeinterlaceMethods method_id;
   /* property value */
@@ -141,7 +137,6 @@ struct _GstDeinterlace
   GstAllocationParams params;
 
   gboolean passthrough;
-  gboolean discont;
 
   GstClockTime field_duration; /* Duration of one field */
 

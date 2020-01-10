@@ -118,8 +118,10 @@ gst_au_parse_class_init (GstAuParseClass * klass)
 
   gstelement_class->change_state =
       GST_DEBUG_FUNCPTR (gst_au_parse_change_state);
-  gst_element_class_add_static_pad_template (gstelement_class, &sink_template);
-  gst_element_class_add_static_pad_template (gstelement_class, &src_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&sink_template));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&src_template));
   gst_element_class_set_static_metadata (gstelement_class,
       "AU audio demuxer",
       "Codec/Demuxer/Audio",
@@ -419,6 +421,7 @@ gst_au_parse_chain (GstPad * pad, GstObject * parent, GstBuffer * buf)
   gint64 timestamp;
   gint64 duration;
   gint64 offset;
+  GstSegment segment;
 
   auparse = GST_AU_PARSE (parent);
 
@@ -440,11 +443,8 @@ gst_au_parse_chain (GstPad * pad, GstObject * parent, GstBuffer * buf)
     if (ret != GST_FLOW_OK)
       goto out;
 
-    if (auparse->need_segment) {
-      gst_pad_push_event (auparse->srcpad,
-          gst_event_new_segment (&auparse->segment));
-      auparse->need_segment = FALSE;
-    }
+    gst_segment_init (&segment, GST_FORMAT_TIME);
+    gst_pad_push_event (auparse->srcpad, gst_event_new_segment (&segment));
   }
 
   avail = gst_adapter_available (auparse->adapter);
@@ -690,6 +690,7 @@ gst_au_parse_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
     {
       gint64 start, stop, offset = 0;
       GstSegment segment;
+      GstEvent *new_event = NULL;
 
       /* some debug output */
       gst_event_copy_segment (event, &segment);
@@ -721,17 +722,9 @@ gst_au_parse_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
       gst_segment_init (&segment, GST_FORMAT_TIME);
       segment.start = segment.time = start;
       segment.stop = stop;
+      new_event = gst_event_new_segment (&segment);
 
-      gst_segment_copy_into (&segment, &auparse->segment);
-
-      if (!gst_pad_has_current_caps (auparse->srcpad)) {
-        auparse->need_segment = TRUE;
-        ret = TRUE;
-      } else {
-        auparse->need_segment = FALSE;
-        ret = gst_pad_push_event (auparse->srcpad,
-            gst_event_new_segment (&segment));
-      }
+      ret = gst_pad_push_event (auparse->srcpad, new_event);
 
       auparse->buffer_offset = offset;
 
@@ -763,7 +756,6 @@ gst_au_parse_src_event (GstPad * pad, GstObject * parent, GstEvent * event)
   switch (GST_EVENT_TYPE (event)) {
     case GST_EVENT_SEEK:
       ret = gst_au_parse_handle_seek (auparse, event);
-      gst_event_unref (event);
       break;
     default:
       ret = gst_pad_event_default (pad, parent, event);

@@ -2,7 +2,6 @@
  * Copyright (C) 2008-2010 Thiago Santos <thiagoss@embedded.ufcg.edu.br>
  * Copyright (C) 2008 Mark Nauwelaerts <mnauw@users.sf.net>
  * Copyright (C) 2010 Nokia Corporation. All rights reserved.
- * Copyright (C) 2014 Jan Schmidt <jan@centricular.com>
  * Contact: Stefan Kost <stefan.kost@nokia.com>
 
  * This library is free software; you can redistribute it and/or
@@ -81,21 +80,6 @@
  * #GstQTMux:streamable allows foregoing to add index metadata (at the end of
  * file).
  *
- * When the maximum duration to be recorded can be known in advance, #GstQTMux
- * also supports a 'Robust Muxing' mode. In robust muxing mode,  space for the
- * headers are reserved at the start of muxing, and rewritten at a configurable
- * interval, so that the output file is always playable, even if the recording
- * is interrupted uncleanly by a crash. Robust muxing mode requires a seekable
- * output, such as filesink, because it needs to rewrite the start of the file.
- *
- * To enable robust muxing mode, set the #GstQTMux::reserved-moov-update-period
- * and #GstQTMux::reserved-max-duration property. Also present is the
- * #GstQTMux::reserved-bytes-per-sec property, which can be increased if
- * for some reason the default is not large enough and the initial reserved
- * space for headers is too small. Applications can monitor the
- * #GstQTMux::reserved-duration-remaining property to see how close to full
- * the reserved space is becoming.
- *
  * <refsect2>
  * <title>Example pipelines</title>
  * |[
@@ -117,12 +101,9 @@
 
 #include <gst/gst.h>
 #include <gst/base/gstcollectpads.h>
-#include <gst/base/gstbytereader.h>
-#include <gst/base/gstbitreader.h>
 #include <gst/audio/audio.h>
 #include <gst/video/video.h>
 #include <gst/tag/tag.h>
-#include <gst/pbutils/pbutils.h>
 
 #include <sys/types.h>
 #ifdef G_OS_WIN32
@@ -145,71 +126,6 @@
 
 GST_DEBUG_CATEGORY_STATIC (gst_qt_mux_debug);
 #define GST_CAT_DEFAULT gst_qt_mux_debug
-
-/* Hacker notes.
- *
- * The basic building blocks of MP4 files are:
- *  - an 'ftyp' box at the very start
- *  - an 'mdat' box which contains the raw audio/video/subtitle data;
- *    this is just a bunch of bytes, completely unframed and possibly
- *    unordered with no additional meta-information
- *  - a 'moov' box that contains information about the different streams
- *    and what they contain, as well as sample tables for each stream
- *    that tell the demuxer where in the mdat box each buffer/sample is
- *    and what its duration/timestamp etc. is, and whether it's a
- *    keyframe etc.
- * Additionally, fragmented MP4 works by writing chunks of data in
- * pairs of 'moof' and 'mdat' boxes:
- *  - 'moof' boxes, header preceding each mdat fragment describing the
- *    contents, like a moov but only for that fragment.
- *  - a 'mfra' box for Fragmented MP4, which is written at the end and
- *    contains a summary of all fragments and seek tables.
- *
- * Currently mp4mux can work in 4 different modes / generate 4 types
- * of output files/streams:
- *
- * - Normal mp4: mp4mux will write a little ftyp identifier at the
- *   beginning, then start an mdat box into which it will write all the
- *   sample data. At EOS it will then write the moov header with track
- *   headers and sample tables at the end of the file, and rewrite the
- *   start of the file to fix up the mdat box size at the beginning.
- *   It has to wait for EOS to write the moov (which includes the
- *   sample tables) because it doesn't know how much space those
- *   tables will be. The output downstream must be seekable to rewrite
- *   the mdat box at EOS.
- *
- * - Fragmented mp4: moov header with track headers at start
- *   but no sample table, followed by N fragments, each containing
- *   track headers with sample tables followed by some data. Downstream
- *   does not need to be seekable if the 'streamable' flag is TRUE,
- *   as the final mfra and total duration will be omitted.
- *
- * - Fast-start mp4: the goal here is to create a file where the moov
- *   headers are at the beginning; what mp4mux will do is write all
- *   sample data into a temp file and build moov header plus sample
- *   tables in memory and then when EOS comes, it will push out the
- *   moov header plus sample tables at the beginning, followed by the
- *   mdat sample data at the end which is read in from the temp file
- *   Files created in this mode are better for streaming over the
- *   network, since the client doesn't have to seek to the end of the
- *   file to get the headers, but it requires copying all sample data
- *   out of the temp file at EOS, which can be expensive. Downstream does
- *   not need to be seekable, because of the use of the temp file.
- *
- * - Robust Muxing mode: In this mode, qtmux uses the reserved-max-duration
- *   and reserved-moov-update-period properties to reserve free space
- *   at the start of the file and periodically write the MOOV atom out
- *   to it. That means that killing the muxing at any point still
- *   results in a playable file, at the cost of wasting some amount of
- *   free space at the start of file. The approximate recording duration
- *   has to be known in advance to estimate how much free space to reserve
- *   for the moov, and the downstream must be seekable.
- *   If the moov header grows larger than the reserved space, an error
- *   is generated - so it's better to over-estimate the amount of space
- *   to reserve. To ensure the file is playable at any point, the moov
- *   is updated using a 'ping-pong' strategy, so the output is never in
- *   an invalid state.
- */
 
 #ifndef GST_REMOVE_DEPRECATED
 enum
@@ -260,10 +176,6 @@ enum
   PROP_MOOV_RECOV_FILE,
   PROP_FRAGMENT_DURATION,
   PROP_STREAMABLE,
-  PROP_RESERVED_MAX_DURATION,
-  PROP_RESERVED_DURATION_REMAINING,
-  PROP_RESERVED_MOOV_UPDATE_PERIOD,
-  PROP_RESERVED_BYTES_PER_SEC,
 #ifndef GST_REMOVE_DEPRECATED
   PROP_DTS_METHOD,
 #endif
@@ -273,7 +185,7 @@ enum
 /* some spare for header size as well */
 #define MDAT_LARGE_FILE_LIMIT           ((guint64) 1024 * 1024 * 1024 * 2)
 
-#define DEFAULT_MOVIE_TIMESCALE         1800
+#define DEFAULT_MOVIE_TIMESCALE         1000
 #define DEFAULT_TRAK_TIMESCALE          0
 #define DEFAULT_DO_CTTS                 TRUE
 #define DEFAULT_FAST_START              FALSE
@@ -284,9 +196,7 @@ enum
 #ifndef GST_REMOVE_DEPRECATED
 #define DEFAULT_DTS_METHOD              DTS_METHOD_REORDER
 #endif
-#define DEFAULT_RESERVED_MAX_DURATION   GST_CLOCK_TIME_NONE
-#define DEFAULT_RESERVED_MOOV_UPDATE_PERIOD   GST_CLOCK_TIME_NONE
-#define DEFAULT_RESERVED_BYTES_PER_SEC_PER_TRAK 550
+
 
 static void gst_qt_mux_finalize (GObject * object);
 
@@ -312,9 +222,6 @@ static GstFlowReturn gst_qt_mux_handle_buffer (GstCollectPads * pads,
     GstCollectData * cdata, GstBuffer * buf, gpointer user_data);
 static GstFlowReturn gst_qt_mux_add_buffer (GstQTMux * qtmux, GstQTPad * pad,
     GstBuffer * buf);
-
-static GstFlowReturn
-gst_qt_mux_robust_recording_rewrite_moov (GstQTMux * qtmux);
 
 static GstElementClass *parent_class = NULL;
 
@@ -374,7 +281,6 @@ gst_qt_mux_class_init (GstQTMuxClass * klass)
 {
   GObjectClass *gobject_class;
   GstElementClass *gstelement_class;
-  GParamFlags streamable_flags;
   const gchar *streamable_desc;
   gboolean streamable;
 #define STREAMABLE_DESC "If set to true, the output should be as if it is to "\
@@ -389,14 +295,12 @@ gst_qt_mux_class_init (GstQTMuxClass * klass)
   gobject_class->get_property = gst_qt_mux_get_property;
   gobject_class->set_property = gst_qt_mux_set_property;
 
-  streamable_flags = G_PARAM_READWRITE | G_PARAM_CONSTRUCT;
   if (klass->format == GST_QT_MUX_FORMAT_ISML) {
     streamable_desc = STREAMABLE_DESC;
     streamable = DEFAULT_STREAMABLE;
   } else {
     streamable_desc =
         STREAMABLE_DESC " (DEPRECATED, only valid for fragmented MP4)";
-    streamable_flags |= G_PARAM_DEPRECATED;
     streamable = FALSE;
   }
 
@@ -419,7 +323,7 @@ gst_qt_mux_class_init (GstQTMuxClass * klass)
 #ifndef GST_REMOVE_DEPRECATED
   g_object_class_install_property (gobject_class, PROP_DTS_METHOD,
       g_param_spec_enum ("dts-method", "dts-method",
-          "Method to determine DTS time (DEPRECATED)",
+          "(DEPRECATED) Method to determine DTS time",
           GST_TYPE_QT_MUX_DTS_METHOD, DEFAULT_DTS_METHOD,
           G_PARAM_DEPRECATED | G_PARAM_READWRITE | G_PARAM_CONSTRUCT |
           G_PARAM_STATIC_STRINGS));
@@ -450,34 +354,7 @@ gst_qt_mux_class_init (GstQTMuxClass * klass)
           G_PARAM_READWRITE | G_PARAM_CONSTRUCT | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_STREAMABLE,
       g_param_spec_boolean ("streamable", "Streamable", streamable_desc,
-          streamable, streamable_flags | G_PARAM_STATIC_STRINGS));
-  g_object_class_install_property (gobject_class, PROP_RESERVED_MAX_DURATION,
-      g_param_spec_uint64 ("reserved-max-duration",
-          "Reserved maximum file duration (ns)",
-          "When set to a value > 0, reserves space for index tables at the "
-          "beginning of the file.",
-          0, G_MAXUINT64, DEFAULT_RESERVED_MAX_DURATION,
-          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
-  g_object_class_install_property (gobject_class,
-      PROP_RESERVED_DURATION_REMAINING,
-      g_param_spec_uint64 ("reserved-duration-remaining",
-          "Report the approximate amount of remaining recording space (ns)",
-          "Reports the approximate amount of remaining moov header space "
-          "reserved using reserved-max-duration", 0, G_MAXUINT64, 0,
-          G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
-  g_object_class_install_property (gobject_class,
-      PROP_RESERVED_MOOV_UPDATE_PERIOD,
-      g_param_spec_uint64 ("reserved-moov-update-period",
-          "Interval at which to update index tables (ns)",
-          "When used with reserved-max-duration, periodically updates the "
-          "index tables with information muxed so far.", 0, G_MAXUINT64,
-          DEFAULT_RESERVED_MOOV_UPDATE_PERIOD,
-          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
-  g_object_class_install_property (gobject_class, PROP_RESERVED_BYTES_PER_SEC,
-      g_param_spec_uint ("reserved-bytes-per-sec",
-          "Reserved MOOV bytes per second, per track",
-          "Multiplier for converting reserved-max-duration into bytes of header to reserve, per second, per track",
-          0, 10000, DEFAULT_RESERVED_BYTES_PER_SEC_PER_TRAK,
+          streamable,
           G_PARAM_READWRITE | G_PARAM_CONSTRUCT | G_PARAM_STATIC_STRINGS));
 
   gstelement_class->request_new_pad =
@@ -494,9 +371,7 @@ gst_qt_mux_pad_reset (GstQTPad * qtpad)
   qtpad->sample_size = 0;
   qtpad->sync = FALSE;
   qtpad->last_dts = 0;
-  qtpad->dts_adjustment = GST_CLOCK_TIME_NONE;
   qtpad->first_ts = GST_CLOCK_TIME_NONE;
-  qtpad->first_dts = GST_CLOCK_TIME_NONE;
   qtpad->prepare_buf_func = NULL;
   qtpad->create_empty_buffer = NULL;
   qtpad->avg_bitrate = 0;
@@ -504,17 +379,12 @@ gst_qt_mux_pad_reset (GstQTPad * qtpad)
   qtpad->total_duration = 0;
   qtpad->total_bytes = 0;
   qtpad->sparse = FALSE;
-  qtpad->tc_trak = NULL;
 
   qtpad->buf_head = 0;
   qtpad->buf_tail = 0;
 
-  gst_buffer_replace (&qtpad->last_buf, NULL);
-
-  if (qtpad->tags) {
-    gst_tag_list_unref (qtpad->tags);
-    qtpad->tags = NULL;
-  }
+  if (qtpad->last_buf)
+    gst_buffer_replace (&qtpad->last_buf, NULL);
 
   /* reference owned elsewhere */
   qtpad->trak = NULL;
@@ -540,9 +410,10 @@ gst_qt_mux_reset (GstQTMux * qtmux, gboolean alloc)
   qtmux->state = GST_QT_MUX_STATE_NONE;
   qtmux->header_size = 0;
   qtmux->mdat_size = 0;
-  qtmux->moov_pos = 0;
   qtmux->mdat_pos = 0;
   qtmux->longest_chunk = GST_CLOCK_TIME_NONE;
+  qtmux->video_pads = 0;
+  qtmux->audio_pads = 0;
   qtmux->fragment_sequence = 0;
 
   if (qtmux->ftyp) {
@@ -598,13 +469,6 @@ gst_qt_mux_reset (GstQTMux * qtmux, gboolean alloc)
       atom_moov_add_trak (qtmux->moov, qtpad->trak);
     }
   }
-
-  qtmux->reserved_moov_size = 0;
-  qtmux->last_moov_update = GST_CLOCK_TIME_NONE;
-  qtmux->muxed_since_last_update = 0;
-  qtmux->reserved_duration_remaining = GST_CLOCK_TIME_NONE;
-  qtmux->first_pts = GST_CLOCK_TIME_NONE;
-  qtmux->tc_pos = -1;
 }
 
 static void
@@ -628,11 +492,6 @@ gst_qt_mux_init (GstQTMux * qtmux, GstQTMuxClass * qtmux_klass)
       GST_DEBUG_FUNCPTR (gst_collect_pads_clip_running_time), qtmux);
 
   /* properties set to default upon construction */
-
-  qtmux->reserved_max_duration = DEFAULT_RESERVED_MAX_DURATION;
-  qtmux->reserved_moov_update_period = DEFAULT_RESERVED_MOOV_UPDATE_PERIOD;
-  qtmux->reserved_bytes_per_sec_per_trak =
-      DEFAULT_RESERVED_BYTES_PER_SEC_PER_TRAK;
 
   /* always need this */
   qtmux->context =
@@ -696,19 +555,16 @@ gst_qt_mux_prepare_tx3g_buffer (GstQTPad * qtpad, GstBuffer * buf,
   GstMapInfo frommap;
   GstMapInfo tomap;
   gsize size;
-  const guint8 *dataend;
 
   GST_LOG_OBJECT (qtmux, "Preparing tx3g buffer %" GST_PTR_FORMAT, buf);
 
   if (buf == NULL)
     return NULL;
 
-  gst_buffer_map (buf, &frommap, GST_MAP_READ);
-
-  dataend = memchr (frommap.data, 0, frommap.size);
-  size = dataend ? dataend - frommap.data : frommap.size;
+  size = gst_buffer_get_size (buf);
   newbuf = gst_buffer_new_and_alloc (size + 2);
 
+  gst_buffer_map (buf, &frommap, GST_MAP_READ);
   gst_buffer_map (newbuf, &tomap, GST_MAP_WRITE);
 
   GST_WRITE_UINT16_BE (tomap.data, size);
@@ -719,89 +575,9 @@ gst_qt_mux_prepare_tx3g_buffer (GstQTPad * qtpad, GstBuffer * buf,
 
   gst_buffer_copy_into (newbuf, buf, GST_BUFFER_COPY_METADATA, 0, size);
 
-  /* gst_buffer_copy_into is trying to be too clever and
-   * won't copy duration when size is different */
-  GST_BUFFER_DURATION (newbuf) = GST_BUFFER_DURATION (buf);
-
   gst_buffer_unref (buf);
 
   return newbuf;
-}
-
-static void
-gst_qt_mux_pad_add_ac3_extension (GstQTMux * qtmux, GstQTPad * qtpad,
-    guint8 fscod, guint8 frmsizcod, guint8 bsid, guint8 bsmod, guint8 acmod,
-    guint8 lfe_on)
-{
-  AtomInfo *ext;
-
-  g_return_if_fail (qtpad->trak_ste);
-
-  ext = build_ac3_extension (fscod, bsid, bsmod, acmod, lfe_on, frmsizcod >> 1);        /* bitrate_code is inside frmsizcod */
-
-  sample_table_entry_add_ext_atom (qtpad->trak_ste, ext);
-}
-
-static GstBuffer *
-gst_qt_mux_prepare_parse_ac3_frame (GstQTPad * qtpad, GstBuffer * buf,
-    GstQTMux * qtmux)
-{
-  GstMapInfo map;
-  GstByteReader reader;
-  guint off;
-
-  if (!gst_buffer_map (buf, &map, GST_MAP_READ)) {
-    GST_WARNING_OBJECT (qtpad->collect.pad, "Failed to map buffer");
-    return buf;
-  }
-
-  if (G_UNLIKELY (map.size < 8))
-    goto done;
-
-  gst_byte_reader_init (&reader, map.data, map.size);
-  off = gst_byte_reader_masked_scan_uint32 (&reader, 0xffff0000, 0x0b770000,
-      0, map.size);
-
-  if (off != -1) {
-    GstBitReader bits;
-    guint8 fscod, frmsizcod, bsid, bsmod, acmod, lfe_on;
-
-    GST_DEBUG_OBJECT (qtpad->collect.pad, "Found ac3 sync point at offset: %u",
-        off);
-
-    gst_bit_reader_init (&bits, map.data, map.size);
-
-    /* off + sync + crc */
-    gst_bit_reader_skip_unchecked (&bits, off * 8 + 16 + 16);
-
-    fscod = gst_bit_reader_get_bits_uint8_unchecked (&bits, 2);
-    frmsizcod = gst_bit_reader_get_bits_uint8_unchecked (&bits, 6);
-    bsid = gst_bit_reader_get_bits_uint8_unchecked (&bits, 5);
-    bsmod = gst_bit_reader_get_bits_uint8_unchecked (&bits, 3);
-    acmod = gst_bit_reader_get_bits_uint8_unchecked (&bits, 3);
-
-    if ((acmod & 0x1) && (acmod != 0x1))        /* 3 front channels */
-      gst_bit_reader_skip_unchecked (&bits, 2);
-    if ((acmod & 0x4))          /* if a surround channel exists */
-      gst_bit_reader_skip_unchecked (&bits, 2);
-    if (acmod == 0x2)           /* if in 2/0 mode */
-      gst_bit_reader_skip_unchecked (&bits, 2);
-
-    lfe_on = gst_bit_reader_get_bits_uint8_unchecked (&bits, 1);
-
-    gst_qt_mux_pad_add_ac3_extension (qtmux, qtpad, fscod, frmsizcod, bsid,
-        bsmod, acmod, lfe_on);
-
-    /* AC-3 spec says that those values should be constant for the
-     * whole stream when muxed in mp4. We trust the input follows it */
-    GST_DEBUG_OBJECT (qtpad->collect.pad, "Data parsed, removing "
-        "prepare buffer function");
-    qtpad->prepare_buf_func = NULL;
-  }
-
-done:
-  gst_buffer_unmap (buf, &map);
-  return buf;
 }
 
 static GstBuffer *
@@ -812,12 +588,12 @@ gst_qt_mux_create_empty_tx3g_buffer (GstQTPad * qtpad, gint64 duration)
   data = g_malloc (2);
   GST_WRITE_UINT16_BE (data, 0);
 
-  return gst_buffer_new_wrapped (data, 2);
+  return gst_buffer_new_wrapped (data, 2);;
 }
 
 static void
 gst_qt_mux_add_mp4_tag (GstQTMux * qtmux, const GstTagList * list,
-    AtomUDTA * udta, const char *tag, const char *tag2, guint32 fourcc)
+    const char *tag, const char *tag2, guint32 fourcc)
 {
   switch (gst_tag_get_type (tag)) {
       /* strings */
@@ -829,7 +605,7 @@ gst_qt_mux_add_mp4_tag (GstQTMux * qtmux, const GstTagList * list,
         break;
       GST_DEBUG_OBJECT (qtmux, "Adding tag %" GST_FOURCC_FORMAT " -> %s",
           GST_FOURCC_ARGS (fourcc), str);
-      atom_udta_add_str_tag (udta, fourcc, str);
+      atom_moov_add_str_tag (qtmux->moov, fourcc, str);
       g_free (str);
       break;
     }
@@ -842,7 +618,7 @@ gst_qt_mux_add_mp4_tag (GstQTMux * qtmux, const GstTagList * list,
         break;
       GST_DEBUG_OBJECT (qtmux, "Adding tag %" GST_FOURCC_FORMAT " -> %u",
           GST_FOURCC_ARGS (fourcc), (gint) value);
-      atom_udta_add_uint_tag (udta, fourcc, 21, (gint) value);
+      atom_moov_add_uint_tag (qtmux->moov, fourcc, 21, (gint) value);
       break;
     }
     case G_TYPE_UINT:
@@ -859,7 +635,7 @@ gst_qt_mux_add_mp4_tag (GstQTMux * qtmux, const GstTagList * list,
           break;
         GST_DEBUG_OBJECT (qtmux, "Adding tag %" GST_FOURCC_FORMAT " -> %u/%u",
             GST_FOURCC_ARGS (fourcc), value, count);
-        atom_udta_add_uint_tag (udta, fourcc, 0,
+        atom_moov_add_uint_tag (qtmux->moov, fourcc, 0,
             value << 16 | (count & 0xFFFF));
       } else {
         /* unpaired unsigned integers */
@@ -867,7 +643,7 @@ gst_qt_mux_add_mp4_tag (GstQTMux * qtmux, const GstTagList * list,
           break;
         GST_DEBUG_OBJECT (qtmux, "Adding tag %" GST_FOURCC_FORMAT " -> %u",
             GST_FOURCC_ARGS (fourcc), value);
-        atom_udta_add_uint_tag (udta, fourcc, 1, value);
+        atom_moov_add_uint_tag (qtmux->moov, fourcc, 1, value);
       }
       break;
     }
@@ -879,7 +655,7 @@ gst_qt_mux_add_mp4_tag (GstQTMux * qtmux, const GstTagList * list,
 
 static void
 gst_qt_mux_add_mp4_date (GstQTMux * qtmux, const GstTagList * list,
-    AtomUDTA * udta, const char *tag, const char *tag2, guint32 fourcc)
+    const char *tag, const char *tag2, guint32 fourcc)
 {
   GDate *date = NULL;
   GDateYear year;
@@ -907,13 +683,13 @@ gst_qt_mux_add_mp4_date (GstQTMux * qtmux, const GstTagList * list,
   str = g_strdup_printf ("%u-%u-%u", year, month, day);
   GST_DEBUG_OBJECT (qtmux, "Adding tag %" GST_FOURCC_FORMAT " -> %s",
       GST_FOURCC_ARGS (fourcc), str);
-  atom_udta_add_str_tag (udta, fourcc, str);
+  atom_moov_add_str_tag (qtmux->moov, fourcc, str);
   g_free (str);
 }
 
 static void
 gst_qt_mux_add_mp4_cover (GstQTMux * qtmux, const GstTagList * list,
-    AtomUDTA * udta, const char *tag, const char *tag2, guint32 fourcc)
+    const char *tag, const char *tag2, guint32 fourcc)
 {
   GValue value = { 0, };
   GstBuffer *buf;
@@ -959,7 +735,7 @@ gst_qt_mux_add_mp4_cover (GstQTMux * qtmux, const GstTagList * list,
   gst_buffer_map (buf, &map, GST_MAP_READ);
   GST_DEBUG_OBJECT (qtmux, "Adding tag %" GST_FOURCC_FORMAT
       " -> image size %" G_GSIZE_FORMAT "", GST_FOURCC_ARGS (fourcc), map.size);
-  atom_udta_add_tag (udta, fourcc, flags, map.data, map.size);
+  atom_moov_add_tag (qtmux->moov, fourcc, flags, map.data, map.size);
   gst_buffer_unmap (buf, &map);
 done:
   g_value_unset (&value);
@@ -967,7 +743,7 @@ done:
 
 static void
 gst_qt_mux_add_3gp_str (GstQTMux * qtmux, const GstTagList * list,
-    AtomUDTA * udta, const char *tag, const char *tag2, guint32 fourcc)
+    const char *tag, const char *tag2, guint32 fourcc)
 {
   gchar *str = NULL;
   guint number;
@@ -985,11 +761,11 @@ gst_qt_mux_add_3gp_str (GstQTMux * qtmux, const GstTagList * list,
   if (!tag2) {
     GST_DEBUG_OBJECT (qtmux, "Adding tag %" GST_FOURCC_FORMAT " -> %s",
         GST_FOURCC_ARGS (fourcc), str);
-    atom_udta_add_3gp_str_tag (udta, fourcc, str);
+    atom_moov_add_3gp_str_tag (qtmux->moov, fourcc, str);
   } else {
     GST_DEBUG_OBJECT (qtmux, "Adding tag %" GST_FOURCC_FORMAT " -> %s/%d",
         GST_FOURCC_ARGS (fourcc), str, number);
-    atom_udta_add_3gp_str_int_tag (udta, fourcc, str, number);
+    atom_moov_add_3gp_str_int_tag (qtmux->moov, fourcc, str, number);
   }
 
   g_free (str);
@@ -997,7 +773,7 @@ gst_qt_mux_add_3gp_str (GstQTMux * qtmux, const GstTagList * list,
 
 static void
 gst_qt_mux_add_3gp_date (GstQTMux * qtmux, const GstTagList * list,
-    AtomUDTA * udta, const char *tag, const char *tag2, guint32 fourcc)
+    const char *tag, const char *tag2, guint32 fourcc)
 {
   GDate *date = NULL;
   GDateYear year;
@@ -1008,7 +784,6 @@ gst_qt_mux_add_3gp_date (GstQTMux * qtmux, const GstTagList * list,
     return;
 
   year = g_date_get_year (date);
-  g_date_free (date);
 
   if (year == G_DATE_BAD_YEAR) {
     GST_WARNING_OBJECT (qtmux, "invalid date in tag");
@@ -1017,12 +792,12 @@ gst_qt_mux_add_3gp_date (GstQTMux * qtmux, const GstTagList * list,
 
   GST_DEBUG_OBJECT (qtmux, "Adding tag %" GST_FOURCC_FORMAT " -> %d",
       GST_FOURCC_ARGS (fourcc), year);
-  atom_udta_add_3gp_uint_tag (udta, fourcc, year);
+  atom_moov_add_3gp_uint_tag (qtmux->moov, fourcc, year);
 }
 
 static void
 gst_qt_mux_add_3gp_location (GstQTMux * qtmux, const GstTagList * list,
-    AtomUDTA * udta, const char *tag, const char *tag2, guint32 fourcc)
+    const char *tag, const char *tag2, guint32 fourcc)
 {
   gdouble latitude = -360, longitude = -360, altitude = 0;
   gchar *location = NULL;
@@ -1070,13 +845,13 @@ gst_qt_mux_add_3gp_location (GstQTMux * qtmux, const GstTagList * list,
   GST_WRITE_UINT16_BE (data + 13, 0);
 
   GST_DEBUG_OBJECT (qtmux, "Adding tag 'loci'");
-  atom_udta_add_3gp_tag (udta, fourcc, ddata, size);
+  atom_moov_add_3gp_tag (qtmux->moov, fourcc, ddata, size);
   g_free (ddata);
 }
 
 static void
 gst_qt_mux_add_3gp_keywords (GstQTMux * qtmux, const GstTagList * list,
-    AtomUDTA * udta, const char *tag, const char *tag2, guint32 fourcc)
+    const char *tag, const char *tag2, guint32 fourcc)
 {
   gchar *keywords = NULL;
   guint8 *data, *ddata;
@@ -1121,7 +896,7 @@ gst_qt_mux_add_3gp_keywords (GstQTMux * qtmux, const GstTagList * list,
 
   g_strfreev (kwds);
 
-  atom_udta_add_3gp_tag (udta, fourcc, ddata, size);
+  atom_moov_add_3gp_tag (qtmux->moov, fourcc, ddata, size);
   g_free (ddata);
 }
 
@@ -1199,7 +974,7 @@ mismatch:
 
 static void
 gst_qt_mux_add_3gp_classification (GstQTMux * qtmux, const GstTagList * list,
-    AtomUDTA * udta, const char *tag, const char *tag2, guint32 fourcc)
+    const char *tag, const char *tag2, guint32 fourcc)
 {
   gchar *clsf_data = NULL;
   gint size = 0;
@@ -1234,13 +1009,12 @@ gst_qt_mux_add_3gp_classification (GstQTMux * qtmux, const GstTagList * list,
   memcpy (data + 8, content, size);
   g_free (content);
 
-  atom_udta_add_3gp_tag (udta, fourcc, data, 4 + 2 + 2 + size);
+  atom_moov_add_3gp_tag (qtmux->moov, fourcc, data, 4 + 2 + 2 + size);
   g_free (data);
 }
 
-typedef void (*GstQTMuxAddUdtaTagFunc) (GstQTMux * mux,
-    const GstTagList * list, AtomUDTA * udta, const char *tag,
-    const char *tag2, guint32 fourcc);
+typedef void (*GstQTMuxAddTagFunc) (GstQTMux * mux, const GstTagList * list,
+    const char *tag, const char *tag2, guint32 fourcc);
 
 /*
  * Struct to record mappings from gstreamer tags to fourcc codes
@@ -1250,7 +1024,7 @@ typedef struct _GstTagToFourcc
   guint32 fourcc;
   const gchar *gsttag;
   const gchar *gsttag2;
-  const GstQTMuxAddUdtaTagFunc func;
+  const GstQTMuxAddTagFunc func;
 } GstTagToFourcc;
 
 /* tag list tags to fourcc matching */
@@ -1261,7 +1035,6 @@ static const GstTagToFourcc tag_matches_mp4[] = {
   {FOURCC_soar, GST_TAG_ARTIST_SORTNAME, NULL, gst_qt_mux_add_mp4_tag},
   {FOURCC_aART, GST_TAG_ALBUM_ARTIST, NULL, gst_qt_mux_add_mp4_tag},
   {FOURCC_soaa, GST_TAG_ALBUM_ARTIST_SORTNAME, NULL, gst_qt_mux_add_mp4_tag},
-  {FOURCC__swr, GST_TAG_APPLICATION_NAME, NULL, gst_qt_mux_add_mp4_tag},
   {FOURCC__cmt, GST_TAG_COMMENT, NULL, gst_qt_mux_add_mp4_tag},
   {FOURCC__wrt, GST_TAG_COMPOSER, NULL, gst_qt_mux_add_mp4_tag},
   {FOURCC_soco, GST_TAG_COMPOSER_SORTNAME, NULL, gst_qt_mux_add_mp4_tag},
@@ -1328,7 +1101,7 @@ gst_qt_mux_add_xmp_tags (GstQTMux * qtmux, const GstTagList * list)
     xmp = gst_tag_xmp_writer_tag_list_to_xmp_buffer (GST_TAG_XMP_WRITER (qtmux),
         list, TRUE);
     if (xmp)
-      atom_udta_add_xmp_tags (&qtmux->moov->udta, xmp);
+      atom_moov_add_xmp_tags (qtmux->moov, xmp);
   } else {
     AtomInfo *ainfo;
     /* for isom/mp4, it is a top level uuid atom */
@@ -1346,8 +1119,7 @@ gst_qt_mux_add_xmp_tags (GstQTMux * qtmux, const GstTagList * list)
 }
 
 static void
-gst_qt_mux_add_metadata_tags (GstQTMux * qtmux, const GstTagList * list,
-    AtomUDTA * udta)
+gst_qt_mux_add_metadata_tags (GstQTMux * qtmux, const GstTagList * list)
 {
   GstQTMuxClass *qtmux_klass = (GstQTMuxClass *) (G_OBJECT_GET_CLASS (qtmux));
   guint32 fourcc;
@@ -1371,16 +1143,13 @@ gst_qt_mux_add_metadata_tags (GstQTMux * qtmux, const GstTagList * list,
   if (!tag_matches)
     return;
 
-  /* Clear existing tags so we don't add them over and over */
-  atom_udta_clear_tags (udta);
-
   for (i = 0; tag_matches[i].fourcc; i++) {
     fourcc = tag_matches[i].fourcc;
     tag = tag_matches[i].gsttag;
     tag2 = tag_matches[i].gsttag2;
 
     g_assert (tag_matches[i].func);
-    tag_matches[i].func (qtmux, list, udta, tag, tag2, fourcc);
+    tag_matches[i].func (qtmux, list, tag, tag2, fourcc);
   }
 
   /* add unparsed blobs if present */
@@ -1414,12 +1183,11 @@ gst_qt_mux_add_metadata_tags (GstQTMux * qtmux, const GstTagList * list,
               (strcmp (style, "iso") == 0 &&
                   qtmux_klass->format == GST_QT_MUX_FORMAT_3GP)) {
             GST_DEBUG_OBJECT (qtmux, "Adding private tag");
-            atom_udta_add_blob_tag (udta, map.data, map.size);
+            atom_moov_add_blob_tag (qtmux->moov, map.data, map.size);
           }
         }
         gst_buffer_unmap (buf, &map);
       }
-      gst_sample_unref (sample);
     }
   }
 
@@ -1433,14 +1201,10 @@ gst_qt_mux_add_metadata_tags (GstQTMux * qtmux, const GstTagList * list,
 static void
 gst_qt_mux_setup_metadata (GstQTMux * qtmux)
 {
-  const GstTagList *tags = NULL;
-  GSList *walk;
+  const GstTagList *tags;
 
   GST_OBJECT_LOCK (qtmux);
-  if (qtmux->tags_changed) {
-    tags = gst_tag_setter_get_tag_list (GST_TAG_SETTER (qtmux));
-    qtmux->tags_changed = FALSE;
-  }
+  tags = gst_tag_setter_get_tag_list (GST_TAG_SETTER (qtmux));
   GST_OBJECT_UNLOCK (qtmux);
 
   GST_LOG_OBJECT (qtmux, "tags: %" GST_PTR_FORMAT, tags);
@@ -1454,27 +1218,11 @@ gst_qt_mux_setup_metadata (GstQTMux * qtmux)
     gst_tag_list_remove_tag (copy, GST_TAG_CONTAINER_FORMAT);
 
     GST_DEBUG_OBJECT (qtmux, "Formatting tags");
-    gst_qt_mux_add_metadata_tags (qtmux, copy, &qtmux->moov->udta);
+    gst_qt_mux_add_metadata_tags (qtmux, copy);
     gst_qt_mux_add_xmp_tags (qtmux, copy);
     gst_tag_list_unref (copy);
   } else {
-    GST_DEBUG_OBJECT (qtmux, "No new tags received");
-  }
-
-  for (walk = qtmux->sinkpads; walk; walk = g_slist_next (walk)) {
-    GstCollectData *cdata = (GstCollectData *) walk->data;
-    GstQTPad *qpad = (GstQTPad *) cdata;
-    GstPad *pad = qpad->collect.pad;
-
-    if (qpad->tags_changed && qpad->tags) {
-      GST_DEBUG_OBJECT (pad, "Adding tags");
-      gst_tag_list_remove_tag (qpad->tags, GST_TAG_CONTAINER_FORMAT);
-      gst_qt_mux_add_metadata_tags (qtmux, qpad->tags, &qpad->trak->udta);
-      qpad->tags_changed = FALSE;
-      GST_DEBUG_OBJECT (pad, "Tags added");
-    } else {
-      GST_DEBUG_OBJECT (pad, "No new tags received");
-    }
+    GST_DEBUG_OBJECT (qtmux, "No tags received");
   }
 }
 
@@ -1629,55 +1377,46 @@ fail:
  */
 static GstFlowReturn
 gst_qt_mux_send_mdat_header (GstQTMux * qtmux, guint64 * off, guint64 size,
-    gboolean extended, gboolean fsync_after)
+    gboolean extended)
 {
+  Atom *node_header;
   GstBuffer *buf;
-  GstMapInfo map;
+  guint8 *data = NULL;
+  guint64 offset = 0;
 
   GST_DEBUG_OBJECT (qtmux, "Sending mdat's atom header, "
       "size %" G_GUINT64_FORMAT, size);
 
-  /* if the qtmux state is EOS, really write the mdat, otherwise
-   * allow size == 0 for a placeholder atom */
-  if (qtmux->state == GST_QT_MUX_STATE_EOS || size > 0)
-    size += 8;
-
+  node_header = g_malloc0 (sizeof (Atom));
+  node_header->type = FOURCC_mdat;
   if (extended) {
-    gboolean large_file = (size > MDAT_LARGE_FILE_LIMIT);
-    /* Always write 16-bytes, but put a free atom first
-     * if the size is < 4GB. */
-    buf = gst_buffer_new_and_alloc (16);
-    gst_buffer_map (buf, &map, GST_MAP_WRITE);
-
-    if (large_file) {
-      /* Write extended mdat header and large_size field */
-      GST_WRITE_UINT32_BE (map.data, 1);
-      GST_WRITE_UINT32_LE (map.data + 4, FOURCC_mdat);
-      GST_WRITE_UINT64_BE (map.data + 8, size + 8);
-    } else {
-      /* Write an empty free atom, then standard 32-bit mdat */
-      GST_WRITE_UINT32_BE (map.data, 8);
-      GST_WRITE_UINT32_LE (map.data + 4, FOURCC_free);
-      GST_WRITE_UINT32_BE (map.data + 8, size);
-      GST_WRITE_UINT32_LE (map.data + 12, FOURCC_mdat);
-    }
-    gst_buffer_unmap (buf, &map);
+    /* use extended size */
+    node_header->size = 1;
+    node_header->extended_size = 0;
+    if (size)
+      node_header->extended_size = size + 16;
   } else {
-    buf = gst_buffer_new_and_alloc (8);
-    gst_buffer_map (buf, &map, GST_MAP_WRITE);
-
-    /* Vanilla 32-bit mdat */
-    GST_WRITE_UINT32_BE (map.data, size);
-    GST_WRITE_UINT32_LE (map.data + 4, FOURCC_mdat);
-    gst_buffer_unmap (buf, &map);
+    node_header->size = size + 8;
   }
 
-  GST_LOG_OBJECT (qtmux, "Pushing mdat header");
-  if (fsync_after)
-    GST_BUFFER_FLAG_SET (buf, GST_BUFFER_FLAG_SYNC_AFTER);
+  size = offset = 0;
+  if (atom_copy_data (node_header, &data, &size, &offset) == 0)
+    goto serialize_error;
 
+  buf = _gst_buffer_new_take_data (data, offset);
+  g_free (node_header);
+
+  GST_LOG_OBJECT (qtmux, "Pushing mdat start");
   return gst_qt_mux_send_buffer (qtmux, buf, off, FALSE);
 
+  /* ERRORS */
+serialize_error:
+  {
+    GST_ELEMENT_ERROR (qtmux, STREAM, MUX, (NULL),
+        ("Failed to serialize mdat"));
+    g_free (node_header);
+    return GST_FLOW_ERROR;
+  }
 }
 
 /*
@@ -1686,20 +1425,38 @@ gst_qt_mux_send_mdat_header (GstQTMux * qtmux, guint64 * off, guint64 size,
  */
 static GstFlowReturn
 gst_qt_mux_update_mdat_size (GstQTMux * qtmux, guint64 mdat_pos,
-    guint64 mdat_size, guint64 * offset, gboolean fsync_after)
+    guint64 mdat_size, guint64 * offset)
 {
+  GstBuffer *buf;
+  gboolean large_file;
   GstSegment segment;
+  GstMapInfo map;
 
-  /* We must have recorded the mdat position for this to work */
-  g_assert (mdat_pos != 0);
+  large_file = (mdat_size > MDAT_LARGE_FILE_LIMIT);
+
+  if (large_file)
+    mdat_pos += 8;
 
   /* seek and rewrite the header */
   gst_segment_init (&segment, GST_FORMAT_BYTES);
   segment.start = mdat_pos;
   gst_pad_push_event (qtmux->srcpad, gst_event_new_segment (&segment));
 
-  return gst_qt_mux_send_mdat_header (qtmux, offset, mdat_size, TRUE,
-      fsync_after);
+  if (large_file) {
+    buf = gst_buffer_new_and_alloc (sizeof (guint64));
+    gst_buffer_map (buf, &map, GST_MAP_WRITE);
+    GST_WRITE_UINT64_BE (map.data, mdat_size + 16);
+  } else {
+    buf = gst_buffer_new_and_alloc (16);
+    gst_buffer_map (buf, &map, GST_MAP_WRITE);
+    GST_WRITE_UINT32_BE (map.data, 8);
+    GST_WRITE_UINT32_LE (map.data + 4, FOURCC_free);
+    GST_WRITE_UINT32_BE (map.data + 8, mdat_size + 8);
+    GST_WRITE_UINT32_LE (map.data + 12, FOURCC_mdat);
+  }
+  gst_buffer_unmap (buf, &map);
+
+  return gst_qt_mux_send_buffer (qtmux, buf, offset, FALSE);
 }
 
 static GstFlowReturn
@@ -1806,83 +1563,15 @@ gst_qt_mux_set_header_on_caps (GstQTMux * mux, GstBuffer * buf)
   gst_caps_unref (caps);
 }
 
-/*
- * Write out a free space atom. The offset is adjusted by the full
- * size, but a smaller buffer is sent
- */
-static GstFlowReturn
-gst_qt_mux_send_free_atom (GstQTMux * qtmux, guint64 * off, guint32 size,
-    gboolean fsync_after)
-{
-  Atom *node_header;
-  GstBuffer *buf;
-  guint8 *data = NULL;
-  guint64 offset = 0, bsize = 0;
-  GstFlowReturn ret;
-
-  GST_DEBUG_OBJECT (qtmux, "Sending free atom header of size %u", size);
-
-  /* We can't make a free space atom smaller than the header */
-  if (size < 8)
-    goto too_small;
-
-  node_header = g_malloc0 (sizeof (Atom));
-  node_header->type = FOURCC_free;
-  node_header->size = size;
-
-  bsize = offset = 0;
-  if (atom_copy_data (node_header, &data, &bsize, &offset) == 0)
-    goto serialize_error;
-
-  buf = _gst_buffer_new_take_data (data, offset);
-  g_free (node_header);
-
-  if (fsync_after)
-    GST_BUFFER_FLAG_SET (buf, GST_BUFFER_FLAG_SYNC_AFTER);
-
-  GST_LOG_OBJECT (qtmux, "Pushing free atom");
-  ret = gst_qt_mux_send_buffer (qtmux, buf, off, FALSE);
-
-  if (off) {
-    GstSegment segment;
-
-    *off += size - 8;
-
-    /* Make sure downstream position ends up at the end of this free box */
-    gst_segment_init (&segment, GST_FORMAT_BYTES);
-    segment.start = *off;
-    gst_pad_push_event (qtmux->srcpad, gst_event_new_segment (&segment));
-  }
-
-  return ret;
-
-  /* ERRORS */
-too_small:
-  {
-    GST_ELEMENT_ERROR (qtmux, STREAM, MUX, (NULL),
-        ("Not enough free reserved space"));
-    return GST_FLOW_ERROR;
-  }
-serialize_error:
-  {
-    GST_ELEMENT_ERROR (qtmux, STREAM, MUX, (NULL),
-        ("Failed to serialize mdat"));
-    g_free (node_header);
-    return GST_FLOW_ERROR;
-  }
-}
-
 static void
-gst_qt_mux_configure_moov (GstQTMux * qtmux)
+gst_qt_mux_configure_moov (GstQTMux * qtmux, guint32 * _timescale)
 {
-  gboolean fragmented = FALSE;
+  gboolean fragmented;
   guint32 timescale;
 
   GST_OBJECT_LOCK (qtmux);
   timescale = qtmux->timescale;
-  if (qtmux->mux_mode == GST_QT_MUX_MODE_FRAGMENTED ||
-      qtmux->mux_mode == GST_QT_MUX_MODE_FRAGMENTED_STREAMABLE)
-    fragmented = TRUE;
+  fragmented = qtmux->fragment_sequence > 0;
   GST_OBJECT_UNLOCK (qtmux);
 
   /* inform lower layers of our property wishes, and determine duration.
@@ -1894,11 +1583,13 @@ gst_qt_mux_configure_moov (GstQTMux * qtmux)
   atom_moov_set_fragmented (qtmux->moov, fragmented);
 
   atom_moov_update_duration (qtmux->moov);
+
+  if (_timescale)
+    *_timescale = timescale;
 }
 
 static GstFlowReturn
-gst_qt_mux_send_moov (GstQTMux * qtmux, guint64 * _offset,
-    guint64 padded_moov_size, gboolean mind_fast, gboolean fsync_after)
+gst_qt_mux_send_moov (GstQTMux * qtmux, guint64 * _offset, gboolean mind_fast)
 {
   guint64 offset = 0, size = 0;
   guint8 *data;
@@ -1911,41 +1602,14 @@ gst_qt_mux_send_moov (GstQTMux * qtmux, guint64 * _offset,
   GST_LOG_OBJECT (qtmux, "Copying movie header into buffer");
   if (!atom_moov_copy_data (qtmux->moov, &data, &size, &offset))
     goto serialize_error;
-  qtmux->last_moov_size = offset;
 
-  /* Check we have enough reserved space for this and a Free atom */
-  if (padded_moov_size > 0 && offset + 8 > padded_moov_size)
-    goto too_small_reserved;
   buf = _gst_buffer_new_take_data (data, offset);
   GST_DEBUG_OBJECT (qtmux, "Pushing moov atoms");
-
-  /* If at EOS, this is the final moov, put in the streamheader
-   * (apparently used by a flumotion util) */
-  if (qtmux->state == GST_QT_MUX_STATE_EOS)
-    gst_qt_mux_set_header_on_caps (qtmux, buf);
-
-  if (fsync_after)
-    GST_BUFFER_FLAG_SET (buf, GST_BUFFER_FLAG_SYNC_AFTER);
+  gst_qt_mux_set_header_on_caps (qtmux, buf);
   ret = gst_qt_mux_send_buffer (qtmux, buf, _offset, mind_fast);
 
-  /* Write out a free atom if needed */
-  if (ret == GST_FLOW_OK && offset < padded_moov_size) {
-    GST_LOG_OBJECT (qtmux, "Writing out free atom of size %u",
-        (guint32) (padded_moov_size - offset));
-    ret =
-        gst_qt_mux_send_free_atom (qtmux, _offset, padded_moov_size - offset,
-        fsync_after);
-  }
-
   return ret;
-too_small_reserved:
-  {
-    GST_ELEMENT_ERROR (qtmux, STREAM, MUX,
-        ("Not enough free reserved header space"),
-        ("Needed %" G_GUINT64_FORMAT " bytes, reserved %" G_GUINT64_FORMAT,
-            offset, padded_moov_size));
-    return GST_FLOW_ERROR;
-  }
+
 serialize_error:
   {
     g_free (data);
@@ -1997,73 +1661,6 @@ serialize_error:
   }
 }
 
-static gboolean
-gst_qt_mux_downstream_is_seekable (GstQTMux * qtmux)
-{
-  gboolean seekable = FALSE;
-  GstQuery *query = gst_query_new_seeking (GST_FORMAT_BYTES);
-
-  if (gst_pad_peer_query (qtmux->srcpad, query)) {
-    gst_query_parse_seeking (query, NULL, &seekable, NULL, NULL);
-    GST_INFO_OBJECT (qtmux, "downstream is %sseekable", seekable ? "" : "not ");
-  } else {
-    /* have to assume seeking is not supported if query not handled downstream */
-    GST_WARNING_OBJECT (qtmux, "downstream did not handle seeking query");
-    seekable = FALSE;
-  }
-  gst_query_unref (query);
-
-  return seekable;
-}
-
-static void
-gst_qt_mux_prepare_moov_recovery (GstQTMux * qtmux)
-{
-  GSList *walk;
-  gboolean fail = FALSE;
-  AtomFTYP *ftyp = NULL;
-  GstBuffer *prefix = NULL;
-
-  GST_DEBUG_OBJECT (qtmux, "Opening moov recovery file: %s",
-      qtmux->moov_recov_file_path);
-
-  qtmux->moov_recov_file = g_fopen (qtmux->moov_recov_file_path, "wb+");
-  if (qtmux->moov_recov_file == NULL) {
-    GST_WARNING_OBJECT (qtmux, "Failed to open moov recovery file in %s",
-        qtmux->moov_recov_file_path);
-    return;
-  }
-
-  gst_qt_mux_prepare_ftyp (qtmux, &ftyp, &prefix);
-
-  if (!atoms_recov_write_headers (qtmux->moov_recov_file, ftyp, prefix,
-          qtmux->moov, qtmux->timescale, g_slist_length (qtmux->sinkpads))) {
-    GST_WARNING_OBJECT (qtmux, "Failed to write moov recovery file " "headers");
-    goto fail;
-  }
-
-  atom_ftyp_free (ftyp);
-  if (prefix)
-    gst_buffer_unref (prefix);
-
-  for (walk = qtmux->sinkpads; walk && !fail; walk = g_slist_next (walk)) {
-    GstCollectData *cdata = (GstCollectData *) walk->data;
-    GstQTPad *qpad = (GstQTPad *) cdata;
-    /* write info for each stream */
-    fail = atoms_recov_write_trak_info (qtmux->moov_recov_file, qpad->trak);
-    if (fail) {
-      GST_WARNING_OBJECT (qtmux, "Failed to write trak info to recovery "
-          "file");
-      break;
-    }
-  }
-
-fail:
-  /* cleanup */
-  fclose (qtmux->moov_recov_file);
-  qtmux->moov_recov_file = NULL;
-}
-
 static GstFlowReturn
 gst_qt_mux_start_file (GstQTMux * qtmux)
 {
@@ -2072,15 +1669,8 @@ gst_qt_mux_start_file (GstQTMux * qtmux)
   GstCaps *caps;
   GstSegment segment;
   gchar s_id[32];
-  GstClockTime reserved_max_duration;
-  guint reserved_bytes_per_sec_per_trak;
 
   GST_DEBUG_OBJECT (qtmux, "starting file");
-
-  GST_OBJECT_LOCK (qtmux);
-  reserved_max_duration = qtmux->reserved_max_duration;
-  reserved_bytes_per_sec_per_trak = qtmux->reserved_bytes_per_sec_per_trak;
-  GST_OBJECT_UNLOCK (qtmux);
 
   /* stream-start (FIXME: create id based on input ids) */
   g_snprintf (s_id, sizeof (s_id), "qtmux-%08x", g_random_int ());
@@ -2093,52 +1683,39 @@ gst_qt_mux_start_file (GstQTMux * qtmux)
   gst_pad_set_caps (qtmux->srcpad, caps);
   gst_caps_unref (caps);
 
-  /* Default is 'normal' mode */
-  qtmux->mux_mode = GST_QT_MUX_MODE_MOOV_AT_END;
+  /* if not streaming, check if downstream is seekable */
+  if (!qtmux->streamable) {
+    gboolean seekable;
+    GstQuery *query;
 
-  /* Require a sensible fragment duration when muxing
-   * using the ISML muxer */
-  if (qtmux_klass->format == GST_QT_MUX_FORMAT_ISML &&
-      qtmux->fragment_duration == 0)
-    goto invalid_isml;
-
-  if (qtmux->fragment_duration > 0) {
-    if (qtmux->streamable)
-      qtmux->mux_mode = GST_QT_MUX_MODE_FRAGMENTED_STREAMABLE;
-    else
-      qtmux->mux_mode = GST_QT_MUX_MODE_FRAGMENTED;
-  } else if (qtmux->fast_start) {
-    qtmux->mux_mode = GST_QT_MUX_MODE_FAST_START;
-  } else if (reserved_max_duration != GST_CLOCK_TIME_NONE) {
-    qtmux->mux_mode = GST_QT_MUX_MODE_ROBUST_RECORDING;
-  }
-
-  switch (qtmux->mux_mode) {
-    case GST_QT_MUX_MODE_MOOV_AT_END:
-    case GST_QT_MUX_MODE_ROBUST_RECORDING:
-      /* We have to be able to seek to rewrite the mdat header, or any
-       * moov atom we write will not be visible in the file, because an
-       * MDAT with 0 as the size covers the rest of the file. A file
-       * with no moov is not playable, so error out now. */
-      if (!gst_qt_mux_downstream_is_seekable (qtmux)) {
-        GST_ELEMENT_ERROR (qtmux, STREAM, MUX,
-            ("Downstream is not seekable - will not be able to create a playable file"),
-            (NULL));
-        return GST_FLOW_ERROR;
-      }
-      break;
-    case GST_QT_MUX_MODE_FAST_START:
-    case GST_QT_MUX_MODE_FRAGMENTED_STREAMABLE:
-      break;                    /* Don't need seekability, ignore */
-    case GST_QT_MUX_MODE_FRAGMENTED:
-      if (!gst_qt_mux_downstream_is_seekable (qtmux)) {
+    query = gst_query_new_seeking (GST_FORMAT_BYTES);
+    if (gst_pad_peer_query (qtmux->srcpad, query)) {
+      gst_query_parse_seeking (query, NULL, &seekable, NULL, NULL);
+      GST_INFO_OBJECT (qtmux, "downstream is %sseekable",
+          seekable ? "" : "not ");
+    } else {
+      /* have to assume seeking is supported if query not handled downstream */
+      GST_WARNING_OBJECT (qtmux, "downstream did not handle seeking query");
+      seekable = FALSE;
+    }
+    gst_query_unref (query);
+    if (!seekable) {
+      if (qtmux_klass->format != GST_QT_MUX_FORMAT_ISML) {
+        if (!qtmux->fast_start) {
+          GST_ELEMENT_WARNING (qtmux, STREAM, FAILED,
+              ("Downstream is not seekable and headers can't be rewritten"),
+              (NULL));
+          /* FIXME: Is there something better we can do? */
+          qtmux->streamable = TRUE;
+        }
+      } else {
         GST_WARNING_OBJECT (qtmux, "downstream is not seekable, but "
             "streamable=false. Will ignore that and create streamable output "
             "instead");
         qtmux->streamable = TRUE;
         g_object_notify (G_OBJECT (qtmux), "streamable");
       }
-      break;
+    }
   }
 
   /* let downstream know we think in BYTES and expect to do seeking later on */
@@ -2148,200 +1725,136 @@ gst_qt_mux_start_file (GstQTMux * qtmux)
   /* initialize our moov recovery file */
   GST_OBJECT_LOCK (qtmux);
   if (qtmux->moov_recov_file_path) {
-    gst_qt_mux_prepare_moov_recovery (qtmux);
+    GST_DEBUG_OBJECT (qtmux, "Openning moov recovery file: %s",
+        qtmux->moov_recov_file_path);
+    qtmux->moov_recov_file = g_fopen (qtmux->moov_recov_file_path, "wb+");
+    if (qtmux->moov_recov_file == NULL) {
+      GST_WARNING_OBJECT (qtmux, "Failed to open moov recovery file in %s",
+          qtmux->moov_recov_file_path);
+    } else {
+      GSList *walk;
+      gboolean fail = FALSE;
+      AtomFTYP *ftyp = NULL;
+      GstBuffer *prefix = NULL;
+
+      gst_qt_mux_prepare_ftyp (qtmux, &ftyp, &prefix);
+
+      if (!atoms_recov_write_headers (qtmux->moov_recov_file, ftyp, prefix,
+              qtmux->moov, qtmux->timescale,
+              g_slist_length (qtmux->sinkpads))) {
+        GST_WARNING_OBJECT (qtmux, "Failed to write moov recovery file "
+            "headers");
+        fail = TRUE;
+      }
+
+      atom_ftyp_free (ftyp);
+      if (prefix)
+        gst_buffer_unref (prefix);
+
+      for (walk = qtmux->sinkpads; walk && !fail; walk = g_slist_next (walk)) {
+        GstCollectData *cdata = (GstCollectData *) walk->data;
+        GstQTPad *qpad = (GstQTPad *) cdata;
+        /* write info for each stream */
+        fail = atoms_recov_write_trak_info (qtmux->moov_recov_file, qpad->trak);
+        if (fail) {
+          GST_WARNING_OBJECT (qtmux, "Failed to write trak info to recovery "
+              "file");
+        }
+      }
+      if (fail) {
+        /* cleanup */
+        fclose (qtmux->moov_recov_file);
+        qtmux->moov_recov_file = NULL;
+        GST_WARNING_OBJECT (qtmux, "An error was detected while writing to "
+            "recover file, moov recovery won't work");
+      }
+    }
   }
-
-  /* Make sure the first time we update the moov, we'll
-   * include any tagsetter tags */
-  qtmux->tags_changed = TRUE;
-
   GST_OBJECT_UNLOCK (qtmux);
 
-  /*
+  /* 
    * send mdat header if already needed, and mark position for later update.
    * We don't send ftyp now if we are on fast start mode, because we can
    * better fine tune using the information we gather to create the whole moov
    * atom.
    */
-  switch (qtmux->mux_mode) {
-    case GST_QT_MUX_MODE_MOOV_AT_END:
-      ret = gst_qt_mux_prepare_and_send_ftyp (qtmux);
-      if (ret != GST_FLOW_OK)
-        break;
+  if (qtmux->fast_start) {
+    GST_OBJECT_LOCK (qtmux);
+    qtmux->fast_start_file = g_fopen (qtmux->fast_start_file_path, "wb+");
+    if (!qtmux->fast_start_file)
+      goto open_failed;
+    GST_OBJECT_UNLOCK (qtmux);
 
-      /* Store this as the mdat offset for later updating
-       * when we write the moov */
-      qtmux->mdat_pos = qtmux->header_size;
-      /* extended atom in case we go over 4GB while writing and need
-       * the full 64-bit atom */
-      ret =
-          gst_qt_mux_send_mdat_header (qtmux, &qtmux->header_size, 0, TRUE,
-          FALSE);
-      break;
-    case GST_QT_MUX_MODE_ROBUST_RECORDING:
+    /* send a dummy buffer for preroll */
+    ret = gst_qt_mux_send_buffer (qtmux, gst_buffer_new (), NULL, FALSE);
+    if (ret != GST_FLOW_OK)
+      goto exit;
 
-      ret = gst_qt_mux_prepare_and_send_ftyp (qtmux);
-      if (ret != GST_FLOW_OK)
-        break;
+  } else {
+    ret = gst_qt_mux_prepare_and_send_ftyp (qtmux);
+    if (ret != GST_FLOW_OK) {
+      goto exit;
+    }
 
-      /* Pad ftyp out to an 8-byte boundary before starting the moov
-       * ping pong region. It should be well less than 1 disk sector,
-       * unless there's a bajillion compatible types listed,
-       * but let's be sure the free atom doesn't cross a sector
-       * boundary anyway */
-      if (qtmux->header_size % 8) {
-        /* Extra 8 bytes for the padding free atom header */
-        guint padding = (guint) (16 - (qtmux->header_size % 8));
-        GST_LOG_OBJECT (qtmux, "Rounding ftyp by %u bytes", padding);
-        ret =
-            gst_qt_mux_send_free_atom (qtmux, &qtmux->header_size, padding,
-            FALSE);
-        if (ret != GST_FLOW_OK)
-          return ret;
-      }
+    /* well, it's moov pos if fragmented ... */
+    qtmux->mdat_pos = qtmux->header_size;
 
-      /* Store this as the moov offset for later updating.
-       * We record mdat position below */
-      qtmux->moov_pos = qtmux->header_size;
-
-      /* Set up the initial 'ping' state of the ping-pong buffers */
-      qtmux->reserved_moov_first_active = TRUE;
-
-      gst_qt_mux_configure_moov (qtmux);
-      gst_qt_mux_setup_metadata (qtmux);
-      /* Empty free atom to begin, starting on an 8-byte boundary */
-      ret = gst_qt_mux_send_free_atom (qtmux, &qtmux->header_size, 8, FALSE);
-      if (ret != GST_FLOW_OK)
-        return ret;
-      /* Moov header, not padded yet */
-      ret = gst_qt_mux_send_moov (qtmux, &qtmux->header_size, 0, FALSE, FALSE);
-      if (ret != GST_FLOW_OK)
-        return ret;
-      /* The moov we just sent contains the 'base' size of the moov, before
-       * we put in any time-dependent per-trak data. Use that to make
-       * a good estimate of how much extra to reserve */
-      /* Calculate how much space to reserve for our MOOV atom.
-       * We actually reserve twice that, for ping-pong buffers */
-      qtmux->base_moov_size = qtmux->last_moov_size;
-      GST_LOG_OBJECT (qtmux, "Base moov size is %u before any indexes",
-          qtmux->base_moov_size);
-      qtmux->reserved_moov_size = qtmux->base_moov_size +
-          gst_util_uint64_scale (reserved_max_duration,
-          reserved_bytes_per_sec_per_trak *
-          atom_moov_get_trak_count (qtmux->moov), GST_SECOND);
-
-      /* Need space for at least 4 atom headers. More really, but
-       * this as an absolute minimum */
-      if (qtmux->reserved_moov_size < 4 * 8)
-        goto reserved_moov_too_small;
-
-      GST_DEBUG_OBJECT (qtmux, "reserving header area of size %u",
-          2 * qtmux->reserved_moov_size + 16);
-
-      GST_OBJECT_LOCK (qtmux);
-      qtmux->reserved_duration_remaining =
-          gst_util_uint64_scale (qtmux->reserved_moov_size -
-          qtmux->base_moov_size, GST_SECOND,
-          reserved_bytes_per_sec_per_trak *
-          atom_moov_get_trak_count (qtmux->moov));
-      GST_OBJECT_UNLOCK (qtmux);
-
-      /* Now that we know how much reserved space is targetted,
-       * output a free atom to fill the extra reserved */
-      ret = gst_qt_mux_send_free_atom (qtmux, &qtmux->header_size,
-          qtmux->reserved_moov_size - qtmux->base_moov_size, FALSE);
-      if (ret != GST_FLOW_OK)
-        return ret;
-
-      /* Then a free atom containing 'pong' buffer, with an
-       * extra 8 bytes to account for the free atom header itself */
-      ret = gst_qt_mux_send_free_atom (qtmux, &qtmux->header_size,
-          qtmux->reserved_moov_size + 8, FALSE);
-      if (ret != GST_FLOW_OK)
-        return ret;
-
-      /* extra atoms go after the free/moov(s), before the mdat */
-      ret =
-          gst_qt_mux_send_extra_atoms (qtmux, TRUE, &qtmux->header_size, FALSE);
-      if (ret != GST_FLOW_OK)
-        return ret;
-
-      qtmux->mdat_pos = qtmux->header_size;
-      /* extended atom in case we go over 4GB while writing and need
-       * the full 64-bit atom */
-      ret =
-          gst_qt_mux_send_mdat_header (qtmux, &qtmux->header_size, 0, TRUE,
-          FALSE);
-      break;
-    case GST_QT_MUX_MODE_FAST_START:
-      GST_OBJECT_LOCK (qtmux);
-      qtmux->fast_start_file = g_fopen (qtmux->fast_start_file_path, "wb+");
-      if (!qtmux->fast_start_file)
-        goto open_failed;
-      GST_OBJECT_UNLOCK (qtmux);
-      /* send a dummy buffer for preroll */
-      ret = gst_qt_mux_send_buffer (qtmux, gst_buffer_new (), NULL, FALSE);
-      break;
-    case GST_QT_MUX_MODE_FRAGMENTED:
-    case GST_QT_MUX_MODE_FRAGMENTED_STREAMABLE:
-      ret = gst_qt_mux_prepare_and_send_ftyp (qtmux);
-      if (ret != GST_FLOW_OK)
-        break;
-      /* store the moov pos so we can update the duration later
-       * in non-streamable mode */
-      qtmux->moov_pos = qtmux->header_size;
-
+    if (qtmux->fragment_duration) {
       GST_DEBUG_OBJECT (qtmux, "fragment duration %d ms, writing headers",
           qtmux->fragment_duration);
       /* also used as snapshot marker to indicate fragmented file */
       qtmux->fragment_sequence = 1;
       /* prepare moov and/or tags */
-      gst_qt_mux_configure_moov (qtmux);
+      gst_qt_mux_configure_moov (qtmux, NULL);
       gst_qt_mux_setup_metadata (qtmux);
-      ret = gst_qt_mux_send_moov (qtmux, &qtmux->header_size, 0, FALSE, FALSE);
+      ret = gst_qt_mux_send_moov (qtmux, &qtmux->header_size, FALSE);
       if (ret != GST_FLOW_OK)
         return ret;
       /* extra atoms */
       ret =
           gst_qt_mux_send_extra_atoms (qtmux, TRUE, &qtmux->header_size, FALSE);
       if (ret != GST_FLOW_OK)
-        break;
-      /* prepare index if not streamable */
-      if (qtmux->mux_mode == GST_QT_MUX_MODE_FRAGMENTED)
+        return ret;
+      /* prepare index */
+      if (!qtmux->streamable)
         qtmux->mfra = atom_mfra_new (qtmux->context);
-      break;
+    } else {
+      /* extended to ensure some spare space */
+      ret = gst_qt_mux_send_mdat_header (qtmux, &qtmux->header_size, 0, TRUE);
+    }
   }
 
+exit:
   return ret;
+
   /* ERRORS */
-invalid_isml:
-  {
-    GST_ELEMENT_ERROR (qtmux, STREAM, MUX,
-        ("Cannot create an ISML file with 0 fragment duration"), (NULL));
-    return GST_FLOW_ERROR;
-  }
-reserved_moov_too_small:
-  {
-    GST_ELEMENT_ERROR (qtmux, STREAM, MUX,
-        ("Not enough reserved space for creating headers"), (NULL));
-    return GST_FLOW_ERROR;
-  }
 open_failed:
   {
     GST_ELEMENT_ERROR (qtmux, RESOURCE, OPEN_READ_WRITE,
-        (("Could not open temporary file \"%s\""),
-            qtmux->fast_start_file_path), GST_ERROR_SYSTEM);
+        (("Could not open temporary file \"%s\""), qtmux->fast_start_file_path),
+        GST_ERROR_SYSTEM);
     GST_OBJECT_UNLOCK (qtmux);
     return GST_FLOW_ERROR;
   }
 }
 
 static GstFlowReturn
-gst_qt_mux_send_last_buffers (GstQTMux * qtmux)
+gst_qt_mux_stop_file (GstQTMux * qtmux)
 {
-  GstFlowReturn ret = GST_FLOW_OK;
+  gboolean ret = GST_FLOW_OK;
+  guint64 offset = 0, size = 0;
   GSList *walk;
+  gboolean large_file;
+  guint32 timescale;
+  GstClockTime first_ts = GST_CLOCK_TIME_NONE;
 
+  /* for setting some subtitles fields */
+  guint max_width = 0;
+  guint max_height = 0;
+
+  GST_DEBUG_OBJECT (qtmux, "Updating remaining values and sending last data");
+
+  /* pushing last buffers for each pad */
   for (walk = qtmux->collect->data; walk; walk = g_slist_next (walk)) {
     GstCollectData *cdata = (GstCollectData *) walk->data;
     GstQTPad *qtpad = (GstQTPad *) cdata;
@@ -2363,43 +1876,19 @@ gst_qt_mux_send_last_buffers (GstQTMux * qtmux)
           "flow return: %s", GST_PAD_NAME (qtpad->collect.pad),
           gst_flow_get_name (ret));
     }
-  }
 
-  return ret;
-}
-
-static void
-gst_qt_mux_update_global_statistics (GstQTMux * qtmux)
-{
-  GSList *walk;
-
-  /* for setting some subtitles fields */
-  guint max_width = 0;
-  guint max_height = 0;
-
-  qtmux->first_ts = qtmux->last_dts = GST_CLOCK_TIME_NONE;
-
-  for (walk = qtmux->collect->data; walk; walk = g_slist_next (walk)) {
-    GstCollectData *cdata = (GstCollectData *) walk->data;
-    GstQTPad *qtpad = (GstQTPad *) cdata;
-
-    if (!qtpad->fourcc) {
-      GST_DEBUG_OBJECT (qtmux, "Pad %s has never had buffers",
+    /* having flushed above, can check for buffers now */
+    if (!GST_CLOCK_TIME_IS_VALID (qtpad->first_ts)) {
+      GST_DEBUG_OBJECT (qtmux, "Pad %s has no buffers",
           GST_PAD_NAME (qtpad->collect.pad));
       continue;
     }
 
-    /* having flushed above, can check for buffers now */
-    if (GST_CLOCK_TIME_IS_VALID (qtpad->first_ts)) {
-      /* determine max stream duration */
-      if (!GST_CLOCK_TIME_IS_VALID (qtmux->last_dts)
-          || qtpad->last_dts > qtmux->last_dts) {
-        qtmux->last_dts = qtpad->last_dts;
-      }
-      if (!GST_CLOCK_TIME_IS_VALID (qtmux->first_ts)
-          || qtpad->first_ts < qtmux->first_ts) {
-        qtmux->first_ts = qtpad->first_ts;
-      }
+    /* determine max stream duration */
+    if (!GST_CLOCK_TIME_IS_VALID (first_ts) ||
+        (GST_CLOCK_TIME_IS_VALID (qtpad->first_ts) &&
+            qtpad->last_dts > first_ts)) {
+      first_ts = qtpad->last_dts;
     }
 
     /* subtitles need to know the video width/height,
@@ -2439,136 +1928,11 @@ gst_qt_mux_update_global_statistics (GstQTMux * qtmux)
       atom_trak_tx3g_update_dimension (qtpad->trak, max_width, max_height);
     }
   }
-}
 
-/* Called after gst_qt_mux_update_global_statistics() updates the
- * first_ts tracking, to create/set edit lists for delayed streams */
-static void
-gst_qt_mux_update_edit_lists (GstQTMux * qtmux)
-{
-  GSList *walk;
+  if (qtmux->fragment_sequence) {
+    GstSegment segment;
 
-  GST_DEBUG_OBJECT (qtmux, "Media first ts selected: %" GST_TIME_FORMAT,
-      GST_TIME_ARGS (qtmux->first_ts));
-  /* add/update EDTSs for late streams. configure_moov will have
-   * set the trak durations above by summing the sample tables,
-   * here we extend that if needing to insert an empty segment */
-  for (walk = qtmux->collect->data; walk; walk = g_slist_next (walk)) {
-    GstCollectData *cdata = (GstCollectData *) walk->data;
-    GstQTPad *qtpad = (GstQTPad *) cdata;
-
-    if (GST_CLOCK_TIME_IS_VALID (qtpad->first_ts)) {
-      guint32 lateness = 0;
-      guint32 duration = qtpad->trak->tkhd.duration;
-      gboolean has_gap;
-
-      has_gap = (qtpad->first_ts > (qtmux->first_ts + qtpad->dts_adjustment));
-
-      if (has_gap) {
-        GstClockTime diff;
-
-        diff = qtpad->first_ts - (qtmux->first_ts + qtpad->dts_adjustment);
-        lateness = gst_util_uint64_scale_round (diff,
-            qtmux->timescale, GST_SECOND);
-
-        GST_DEBUG_OBJECT (qtmux, "Pad %s is a late stream by %" GST_TIME_FORMAT,
-            GST_PAD_NAME (qtpad->collect.pad), GST_TIME_ARGS (lateness));
-
-        atom_trak_set_elst_entry (qtpad->trak, 0, lateness, (guint32) - 1,
-            (guint32) (1 * 65536.0));
-      }
-
-      /* has shift */
-      if (has_gap || (qtpad->dts_adjustment > 0)) {
-        GstClockTime ctts = 0;
-        guint32 media_start;
-
-        if (qtpad->first_ts > qtpad->first_dts)
-          ctts = qtpad->first_ts - qtpad->first_dts;
-
-        media_start = gst_util_uint64_scale_round (ctts,
-            atom_trak_get_timescale (qtpad->trak), GST_SECOND);
-
-        atom_trak_set_elst_entry (qtpad->trak, 1, duration, media_start,
-            (guint32) (1 * 65536.0));
-      }
-
-      /* need to add the empty time to the trak duration */
-      duration += lateness;
-
-      qtpad->trak->tkhd.duration = duration;
-      if (qtpad->tc_trak) {
-        qtpad->tc_trak->tkhd.duration = duration;
-        qtpad->tc_trak->mdia.mdhd.time_info.duration = duration;
-      }
-
-      /* And possibly grow the moov duration */
-      if (duration > qtmux->moov->mvhd.time_info.duration) {
-        qtmux->moov->mvhd.time_info.duration = duration;
-        qtmux->moov->mvex.mehd.fragment_duration = duration;
-      }
-    }
-  }
-}
-
-static GstFlowReturn
-gst_qt_mux_update_timecode (GstQTMux * qtmux)
-{
-  GstSegment segment;
-  GstBuffer *buf;
-  GstMapInfo map;
-  guint64 offset = qtmux->tc_pos;
-
-  g_assert (qtmux->tc_pos != -1);
-
-  gst_segment_init (&segment, GST_FORMAT_BYTES);
-  segment.start = offset;
-  gst_pad_push_event (qtmux->srcpad, gst_event_new_segment (&segment));
-
-  buf = gst_buffer_new_and_alloc (4);
-  gst_buffer_map (buf, &map, GST_MAP_WRITE);
-
-  GST_WRITE_UINT32_BE (map.data,
-      gst_video_time_code_frames_since_daily_jam (qtmux->first_tc));
-  gst_buffer_unmap (buf, &map);
-
-  /* Reset this value, so the timecode won't be re-rewritten */
-  qtmux->tc_pos = -1;
-
-  return gst_qt_mux_send_buffer (qtmux, buf, &offset, FALSE);
-}
-
-static GstFlowReturn
-gst_qt_mux_stop_file (GstQTMux * qtmux)
-{
-  gboolean ret = GST_FLOW_OK;
-  guint64 offset = 0, size = 0;
-  gboolean large_file;
-
-  GST_DEBUG_OBJECT (qtmux, "Updating remaining values and sending last data");
-
-  /* pushing last buffers for each pad */
-  if ((ret = gst_qt_mux_send_last_buffers (qtmux)) != GST_FLOW_OK)
-    return ret;
-
-  if (qtmux->mux_mode == GST_QT_MUX_MODE_FRAGMENTED_STREAMABLE) {
-    /* Streamable mode; no need to write duration or MFRA */
-    GST_DEBUG_OBJECT (qtmux, "streamable file; nothing to stop");
-    return GST_FLOW_OK;
-  }
-
-  gst_qt_mux_update_global_statistics (qtmux);
-  if (qtmux->tc_pos != -1) {
-    /* File is being stopped and timecode hasn't been updated. Update it now
-     * with whatever we have */
-    ret = gst_qt_mux_update_timecode (qtmux);
-    if (ret != GST_FLOW_OK)
-      return ret;
-  }
-
-  switch (qtmux->mux_mode) {
-    case GST_QT_MUX_MODE_FRAGMENTED:{
-      GstSegment segment;
+    if (qtmux->mfra) {
       guint8 *data = NULL;
       GstBuffer *buf;
 
@@ -2580,82 +1944,103 @@ gst_qt_mux_stop_file (GstQTMux * qtmux)
       ret = gst_qt_mux_send_buffer (qtmux, buf, NULL, FALSE);
       if (ret != GST_FLOW_OK)
         return ret;
+    } else {
+      /* must have been streamable; no need to write duration */
+      GST_DEBUG_OBJECT (qtmux, "streamable file; nothing to stop");
+      return GST_FLOW_OK;
+    }
 
-      /* only mvex duration is updated,
-       * mvhd should be consistent with empty moov
-       * (but TODO maybe some clients do not handle that well ?) */
-      qtmux->moov->mvex.mehd.fragment_duration =
-          gst_util_uint64_scale (qtmux->last_dts, qtmux->timescale, GST_SECOND);
-      GST_DEBUG_OBJECT (qtmux, "rewriting moov with mvex duration %"
-          GST_TIME_FORMAT, GST_TIME_ARGS (qtmux->last_dts));
-      /* seek and rewrite the header */
-      gst_segment_init (&segment, GST_FORMAT_BYTES);
-      segment.start = qtmux->moov_pos;
-      gst_pad_push_event (qtmux->srcpad, gst_event_new_segment (&segment));
-      /* no need to seek back */
-      return gst_qt_mux_send_moov (qtmux, NULL, 0, FALSE, FALSE);
-    }
-    case GST_QT_MUX_MODE_ROBUST_RECORDING:{
-      ret = gst_qt_mux_robust_recording_rewrite_moov (qtmux);
-      if (G_UNLIKELY (ret != GST_FLOW_OK))
-        return ret;
-      /* Finalise by writing the final size into the mdat. Up until now
-       * it's been 0, which means 'rest of the file'
-       * No need to seek back after this, we won't write any more */
-      return gst_qt_mux_update_mdat_size (qtmux, qtmux->mdat_pos,
-          qtmux->mdat_size, NULL, TRUE);
-    }
-    default:
-      break;
+    timescale = qtmux->timescale;
+    /* only mvex duration is updated,
+     * mvhd should be consistent with empty moov
+     * (but TODO maybe some clients do not handle that well ?) */
+    qtmux->moov->mvex.mehd.fragment_duration =
+        gst_util_uint64_scale (first_ts, timescale, GST_SECOND);
+    GST_DEBUG_OBJECT (qtmux, "rewriting moov with mvex duration %"
+        GST_TIME_FORMAT, GST_TIME_ARGS (first_ts));
+    /* seek and rewrite the header */
+    gst_segment_init (&segment, GST_FORMAT_BYTES);
+    segment.start = qtmux->mdat_pos;
+    gst_pad_push_event (qtmux->srcpad, gst_event_new_segment (&segment));
+    /* no need to seek back */
+    return gst_qt_mux_send_moov (qtmux, NULL, FALSE);
   }
 
-  /* Moov-at-end or fast-start mode from here down */
-  gst_qt_mux_configure_moov (qtmux);
+  gst_qt_mux_configure_moov (qtmux, &timescale);
 
-  gst_qt_mux_update_edit_lists (qtmux);
+  /* check for late streams */
+  first_ts = GST_CLOCK_TIME_NONE;
+  for (walk = qtmux->collect->data; walk; walk = g_slist_next (walk)) {
+    GstCollectData *cdata = (GstCollectData *) walk->data;
+    GstQTPad *qtpad = (GstQTPad *) cdata;
+
+    if (!GST_CLOCK_TIME_IS_VALID (first_ts) ||
+        (GST_CLOCK_TIME_IS_VALID (qtpad->first_ts) &&
+            qtpad->first_ts < first_ts)) {
+      first_ts = qtpad->first_ts;
+    }
+  }
+  GST_DEBUG_OBJECT (qtmux, "Media first ts selected: %" GST_TIME_FORMAT,
+      GST_TIME_ARGS (first_ts));
+  /* add EDTSs for late streams */
+  for (walk = qtmux->collect->data; walk; walk = g_slist_next (walk)) {
+    GstCollectData *cdata = (GstCollectData *) walk->data;
+    GstQTPad *qtpad = (GstQTPad *) cdata;
+    guint32 lateness;
+    guint32 duration;
+
+    if (GST_CLOCK_TIME_IS_VALID (qtpad->first_ts) && qtpad->first_ts > first_ts) {
+      GST_DEBUG_OBJECT (qtmux, "Pad %s is a late stream by %" GST_TIME_FORMAT,
+          GST_PAD_NAME (qtpad->collect.pad),
+          GST_TIME_ARGS (qtpad->first_ts - first_ts));
+      lateness = gst_util_uint64_scale_round (qtpad->first_ts - first_ts,
+          timescale, GST_SECOND);
+      duration = qtpad->trak->tkhd.duration;
+      atom_trak_add_elst_entry (qtpad->trak, lateness, (guint32) - 1,
+          (guint32) (1 * 65536.0));
+      atom_trak_add_elst_entry (qtpad->trak, duration, 0,
+          (guint32) (1 * 65536.0));
+
+      /* need to add the empty time to the trak duration */
+      qtpad->trak->tkhd.duration += lateness;
+    }
+  }
 
   /* tags into file metadata */
   gst_qt_mux_setup_metadata (qtmux);
 
   large_file = (qtmux->mdat_size > MDAT_LARGE_FILE_LIMIT);
+  /* if faststart, update the offset of the atoms in the movie with the offset
+   * that the movie headers before mdat will cause.
+   * Also, send the ftyp */
+  if (qtmux->fast_start_file) {
+    GstFlowReturn flow_ret;
+    offset = size = 0;
 
-  switch (qtmux->mux_mode) {
-    case GST_QT_MUX_MODE_FAST_START:{
-      /* if faststart, update the offset of the atoms in the movie with the offset
-       * that the movie headers before mdat will cause.
-       * Also, send the ftyp */
-      offset = size = 0;
-
-      ret = gst_qt_mux_prepare_and_send_ftyp (qtmux);
-      if (ret != GST_FLOW_OK) {
-        goto ftyp_error;
-      }
-      /* copy into NULL to obtain size */
-      if (!atom_moov_copy_data (qtmux->moov, NULL, &size, &offset))
-        goto serialize_error;
-      GST_DEBUG_OBJECT (qtmux, "calculated moov atom size %" G_GUINT64_FORMAT,
-          offset);
-      offset += qtmux->header_size + (large_file ? 16 : 8);
-
-      /* sum up with the extra atoms size */
-      ret = gst_qt_mux_send_extra_atoms (qtmux, FALSE, &offset, FALSE);
-      if (ret != GST_FLOW_OK)
-        return ret;
-      break;
+    flow_ret = gst_qt_mux_prepare_and_send_ftyp (qtmux);
+    if (flow_ret != GST_FLOW_OK) {
+      goto ftyp_error;
     }
-    default:
-      offset = qtmux->header_size;
-      break;
+    /* copy into NULL to obtain size */
+    if (!atom_moov_copy_data (qtmux->moov, NULL, &size, &offset))
+      goto serialize_error;
+    GST_DEBUG_OBJECT (qtmux, "calculated moov atom size %" G_GUINT64_FORMAT,
+        offset);
+    offset += qtmux->header_size + (large_file ? 16 : 8);
+
+    /* sum up with the extra atoms size */
+    ret = gst_qt_mux_send_extra_atoms (qtmux, FALSE, &offset, FALSE);
+    if (ret != GST_FLOW_OK)
+      return ret;
+  } else {
+    offset = qtmux->header_size;
   }
+  atom_moov_chunks_add_offset (qtmux->moov, offset);
 
-  /* Now that we know the size of moov + extra atoms, we can adjust
-   * the chunk offsets stored into the moov */
-  atom_moov_chunks_set_offset (qtmux->moov, offset);
-
-  /* write out moov and extra atoms */
+  /* moov */
   /* note: as of this point, we no longer care about tracking written data size,
    * since there is no more use for it anyway */
-  ret = gst_qt_mux_send_moov (qtmux, NULL, 0, FALSE, FALSE);
+  ret = gst_qt_mux_send_moov (qtmux, NULL, FALSE);
   if (ret != GST_FLOW_OK)
     return ret;
 
@@ -2664,32 +2049,23 @@ gst_qt_mux_stop_file (GstQTMux * qtmux)
   if (ret != GST_FLOW_OK)
     return ret;
 
-  switch (qtmux->mux_mode) {
-    case GST_QT_MUX_MODE_MOOV_AT_END:
-    {
-      /* mdat needs update iff not using faststart */
-      GST_DEBUG_OBJECT (qtmux, "updating mdat size");
-      ret = gst_qt_mux_update_mdat_size (qtmux, qtmux->mdat_pos,
-          qtmux->mdat_size, NULL, FALSE);
-      /* note; no seeking back to the end of file is done,
-       * since we no longer write anything anyway */
-      break;
-    }
-    case GST_QT_MUX_MODE_FAST_START:
-    {
-      /* send mdat atom and move buffered data into it */
-      /* mdat_size = accumulated (buffered data) */
-      ret = gst_qt_mux_send_mdat_header (qtmux, NULL, qtmux->mdat_size,
-          large_file, FALSE);
-      if (ret != GST_FLOW_OK)
-        return ret;
-      ret = gst_qt_mux_send_buffered_data (qtmux, NULL);
-      if (ret != GST_FLOW_OK)
-        return ret;
-      break;
-    }
-    default:
-      g_assert_not_reached ();
+  /* if needed, send mdat atom and move buffered data into it */
+  if (qtmux->fast_start_file) {
+    /* mdat_size = accumulated (buffered data) */
+    ret = gst_qt_mux_send_mdat_header (qtmux, NULL, qtmux->mdat_size,
+        large_file);
+    if (ret != GST_FLOW_OK)
+      return ret;
+    ret = gst_qt_mux_send_buffered_data (qtmux, NULL);
+    if (ret != GST_FLOW_OK)
+      return ret;
+  } else if (!qtmux->streamable) {
+    /* mdat needs update iff not using faststart */
+    GST_DEBUG_OBJECT (qtmux, "updating mdat size");
+    ret = gst_qt_mux_update_mdat_size (qtmux, qtmux->mdat_pos,
+        qtmux->mdat_size, NULL);
+    /* note; no seeking back to the end of file is done,
+     * since we no longer write anything anyway */
   }
 
   return ret;
@@ -2755,7 +2131,7 @@ flush:
         atom_array_get_len (&pad->fragment_buffers), total_size);
     if (ret == GST_FLOW_OK)
       ret = gst_qt_mux_send_mdat_header (qtmux, &qtmux->header_size, total_size,
-          FALSE, FALSE);
+          FALSE);
     for (i = 0; i < atom_array_get_len (&pad->fragment_buffers); i++) {
       if (G_LIKELY (ret == GST_FLOW_OK))
         ret = gst_qt_mux_send_buffer (qtmux,
@@ -2804,179 +2180,26 @@ init:
   return ret;
 }
 
-/* Here's the clever bit of robust recording: Updating the moov
- * header is done using a ping-pong scheme inside 2 blocks of size
- * 'reserved_moov_size' at the start of the file, in such a way that the
- * file on-disk is always valid if interrupted.
- * Inside the reserved space, we have 2 pairs of free + moov atoms
- * (in that order), free-A + moov-A @ offset 0 and free-B + moov-B at
- * at offset "reserved_moov_size".
- *
- * 1. Free-A has 0 size payload, moov-A immediately after is
- *    active/current, and is padded with an internal Free atom to
- *    end at reserved_space/2. Free-B is at reserved_space/2, sized
- *    to cover the remaining free space (including moov-B).
- * 2. We write moov-B (which is invisible inside free-B), and pad it to
- *    end at the end of free space. Then, we update free-A to size
- *    reserved_space/2 + sizeof(free-B), which hides moov-A and the
- *    free-B header, and makes moov-B active.
- * 3. Rewrite moov-A inside free-A, with padding out to free-B.
- *    Change the size of free-A to make moov-A active again.
- * 4. Rinse and repeat.
- *
- */
-static GstFlowReturn
-gst_qt_mux_robust_recording_rewrite_moov (GstQTMux * qtmux)
+static void
+check_and_subtract_ts (GstQTMux * qtmux, GstClockTime * ts_a, GstClockTime ts_b)
 {
-  GstSegment segment;
-  GstFlowReturn ret;
-  guint64 freeA_offset;
-  guint32 new_freeA_size;
-  guint64 new_moov_offset;
-
-  /* Update moov info, then seek and rewrite the MOOV atom */
-  gst_qt_mux_update_global_statistics (qtmux);
-  gst_qt_mux_configure_moov (qtmux);
-
-  gst_qt_mux_update_edit_lists (qtmux);
-
-  /* tags into file metadata */
-  gst_qt_mux_setup_metadata (qtmux);
-
-  /* chunks position is set relative to the first byte of the
-   * MDAT atom payload. Set the overall offset into the file */
-  atom_moov_chunks_set_offset (qtmux->moov, qtmux->header_size);
-
-  /* Calculate which moov to rewrite. qtmux->moov_pos points to
-   * the start of the free-A header */
-  freeA_offset = qtmux->moov_pos;
-  if (qtmux->reserved_moov_first_active) {
-    GST_DEBUG_OBJECT (qtmux, "Updating pong moov header");
-    /* After this, freeA will include itself, moovA, plus the freeB
-     * header */
-    new_freeA_size = qtmux->reserved_moov_size + 16;
-  } else {
-    GST_DEBUG_OBJECT (qtmux, "Updating ping moov header");
-    new_freeA_size = 8;
-  }
-  /* the moov we update is after free-A, calculate its offset */
-  new_moov_offset = freeA_offset + new_freeA_size;
-
-  /* Swap ping-pong cadence marker */
-  qtmux->reserved_moov_first_active = !qtmux->reserved_moov_first_active;
-
-  /* seek and rewrite the MOOV atom */
-  gst_segment_init (&segment, GST_FORMAT_BYTES);
-  segment.start = new_moov_offset;
-  gst_pad_push_event (qtmux->srcpad, gst_event_new_segment (&segment));
-
-  ret =
-      gst_qt_mux_send_moov (qtmux, NULL, qtmux->reserved_moov_size, FALSE,
-      TRUE);
-  if (ret != GST_FLOW_OK)
-    return ret;
-
-  /* Update the estimated recording space remaining, based on amount used so
-   * far and duration muxed so far */
-  if (qtmux->last_moov_size > qtmux->base_moov_size && qtmux->last_dts > 0) {
-    GstClockTime remain;
-    GstClockTime time_muxed = qtmux->last_dts;
-
-    remain =
-        gst_util_uint64_scale (qtmux->reserved_moov_size -
-        qtmux->last_moov_size, time_muxed,
-        qtmux->last_moov_size - qtmux->base_moov_size);
-    /* Always under-estimate slightly, so users
-     * have time to stop muxing before we run out */
-    if (remain < GST_SECOND / 2)
-      remain = 0;
-    else
-      remain -= GST_SECOND / 2;
-
-    GST_INFO_OBJECT (qtmux,
-        "Reserved %u header bytes. Used %u in %" GST_TIME_FORMAT
-        ". Remaining now %u or approx %" G_GUINT64_FORMAT " ns\n",
-        qtmux->reserved_moov_size, qtmux->last_moov_size,
-        GST_TIME_ARGS (qtmux->last_dts),
-        qtmux->reserved_moov_size - qtmux->last_moov_size, remain);
-
-    GST_OBJECT_LOCK (qtmux);
-    qtmux->reserved_duration_remaining = remain;
-    qtmux->muxed_since_last_update = 0;
-    GST_DEBUG_OBJECT (qtmux, "reserved remaining duration now %"
-        G_GUINT64_FORMAT, qtmux->reserved_duration_remaining);
-    GST_OBJECT_UNLOCK (qtmux);
-  }
-
-
-  /* Now update the moov-A size. Don't pass offset, since we don't need
-   * send_free_atom() to seek for us - all our callers seek back to
-   * where they need after this, or they don't need it */
-  gst_segment_init (&segment, GST_FORMAT_BYTES);
-  segment.start = freeA_offset;
-  gst_pad_push_event (qtmux->srcpad, gst_event_new_segment (&segment));
-
-  ret = gst_qt_mux_send_free_atom (qtmux, NULL, new_freeA_size, TRUE);
-
-  return ret;
-}
-
-static GstFlowReturn
-gst_qt_mux_robust_recording_update (GstQTMux * qtmux, GstClockTime position)
-{
-  GstSegment segment;
-  GstFlowReturn flow_ret;
-
-  guint64 mdat_offset = qtmux->mdat_pos + 16 + qtmux->mdat_size;
-
-  GST_OBJECT_LOCK (qtmux);
-  if (qtmux->reserved_moov_update_period == GST_CLOCK_TIME_NONE) {
-    GST_OBJECT_UNLOCK (qtmux);
-    return GST_FLOW_OK;
-  }
-
-  /* Update if position is > the threshold or there's been no update yet */
-  if (qtmux->last_moov_update != GST_CLOCK_TIME_NONE &&
-      (position <= qtmux->last_moov_update ||
-          (position - qtmux->last_moov_update) <
-          qtmux->reserved_moov_update_period)) {
-    /* Update the offset of how much we've muxed, so the
-     * report of remaining space keeps counting down */
-    if (position > qtmux->last_moov_update &&
-        position - qtmux->last_moov_update > qtmux->muxed_since_last_update) {
-      GST_LOG_OBJECT (qtmux,
-          "Muxed time %" G_GUINT64_FORMAT " since last moov update",
-          qtmux->muxed_since_last_update);
-      qtmux->muxed_since_last_update = position - qtmux->last_moov_update;
+  if (G_LIKELY (GST_CLOCK_TIME_IS_VALID (*ts_a))) {
+    if (G_LIKELY (*ts_a >= ts_b)) {
+      *ts_a -= ts_b;
+    } else {
+      *ts_a = 0;
+      GST_WARNING_OBJECT (qtmux, "Subtraction would result in negative value, "
+          "using 0 as result");
     }
-    GST_OBJECT_UNLOCK (qtmux);
-    return GST_FLOW_OK;         /* No update needed yet */
   }
-
-  qtmux->last_moov_update = position;
-  GST_OBJECT_UNLOCK (qtmux);
-
-  GST_DEBUG_OBJECT (qtmux, "Update moov atom, position %" GST_TIME_FORMAT
-      " mdat starts @ %" G_GUINT64_FORMAT " we were a %" G_GUINT64_FORMAT,
-      GST_TIME_ARGS (position), qtmux->mdat_pos, mdat_offset);
-
-  flow_ret = gst_qt_mux_robust_recording_rewrite_moov (qtmux);
-  if (G_UNLIKELY (flow_ret != GST_FLOW_OK))
-    return flow_ret;
-
-  /* Seek back to previous position */
-  gst_segment_init (&segment, GST_FORMAT_BYTES);
-  segment.start = mdat_offset;
-  gst_pad_push_event (qtmux->srcpad, gst_event_new_segment (&segment));
-
-  return flow_ret;
 }
+
 
 static GstFlowReturn
 gst_qt_mux_register_and_push_sample (GstQTMux * qtmux, GstQTPad * pad,
     GstBuffer * buffer, gboolean is_last_buffer, guint nsamples,
     gint64 last_dts, gint64 scaled_duration, guint sample_size,
-    guint64 chunk_offset, gboolean sync, gboolean do_pts, gint64 pts_offset)
+    guint chunk_offset, gboolean sync, gboolean do_pts, gint64 pts_offset)
 {
   GstFlowReturn ret = GST_FLOW_OK;
 
@@ -2992,105 +2215,17 @@ gst_qt_mux_register_and_push_sample (GstQTMux * qtmux, GstQTPad * pad,
     }
   }
 
-  switch (qtmux->mux_mode) {
-    case GST_QT_MUX_MODE_MOOV_AT_END:
-    case GST_QT_MUX_MODE_FAST_START:
-    case GST_QT_MUX_MODE_ROBUST_RECORDING:
-      atom_trak_add_samples (pad->trak, nsamples, (gint32) scaled_duration,
-          sample_size, chunk_offset, sync, pts_offset);
-      ret = gst_qt_mux_send_buffer (qtmux, buffer, &qtmux->mdat_size, TRUE);
-      /* Check if it's time to re-write the headers in robust-recording mode */
-      if (ret == GST_FLOW_OK
-          && qtmux->mux_mode == GST_QT_MUX_MODE_ROBUST_RECORDING)
-        ret = gst_qt_mux_robust_recording_update (qtmux, pad->total_duration);
-      break;
-    case GST_QT_MUX_MODE_FRAGMENTED:
-    case GST_QT_MUX_MODE_FRAGMENTED_STREAMABLE:
-      /* ensure that always sync samples are marked as such */
-      ret = gst_qt_mux_pad_fragment_add_buffer (qtmux, pad, buffer,
-          is_last_buffer, nsamples, last_dts, (gint32) scaled_duration,
-          sample_size, !pad->sync || sync, pts_offset);
-      break;
+  if (qtmux->fragment_sequence) {
+    /* ensure that always sync samples are marked as such */
+    ret = gst_qt_mux_pad_fragment_add_buffer (qtmux, pad, buffer,
+        is_last_buffer, nsamples, last_dts, (gint32) scaled_duration,
+        sample_size, !pad->sync || sync, pts_offset);
+  } else {
+    atom_trak_add_samples (pad->trak, nsamples, (gint32) scaled_duration,
+        sample_size, chunk_offset, sync, pts_offset);
+    ret = gst_qt_mux_send_buffer (qtmux, buffer, &qtmux->mdat_size, TRUE);
   }
 
-  return ret;
-}
-
-static GstFlowReturn
-gst_qt_mux_check_and_update_timecode (GstQTMux * qtmux, GstQTPad * pad,
-    GstBuffer * buf, GstFlowReturn ret)
-{
-  if (buf != NULL && (pad->tc_trak == NULL || qtmux->tc_pos != -1)) {
-    GstVideoTimeCodeMeta *tc_meta = gst_buffer_get_video_time_code_meta (buf);
-    if (tc_meta) {
-      GstVideoTimeCode *tc = &tc_meta->tc;
-      GstBuffer *tc_buf;
-      gsize szret;
-      guint32 frames_since_daily_jam;
-
-      /* This means we never got a timecode before */
-      if (qtmux->first_tc == NULL) {
-#ifndef GST_DISABLE_GST_DEBUG
-        gchar *tc_str = gst_video_time_code_to_string (tc);
-        GST_DEBUG_OBJECT (qtmux, "Found first timecode %s", tc_str);
-        g_free (tc_str);
-#endif
-        g_assert (pad->tc_trak == NULL);
-        tc_buf = gst_buffer_new_allocate (NULL, 4, NULL);
-        qtmux->first_tc = gst_video_time_code_copy (tc);
-        /* If frames are out of order, the frame we're currently getting might
-         * not be the first one. Just write a 0 timecode for now and wait
-         * until we receive a timecode that's lower than the current one */
-        if (pad->is_out_of_order) {
-          qtmux->first_pts = GST_BUFFER_PTS (buf);
-          frames_since_daily_jam = 0;
-          /* Position to rewrite */
-          qtmux->tc_pos = qtmux->mdat_size;
-        } else {
-          frames_since_daily_jam =
-              gst_video_time_code_frames_since_daily_jam (qtmux->first_tc);
-          frames_since_daily_jam = GUINT32_TO_BE (frames_since_daily_jam);
-        }
-        /* Write the timecode trak now */
-        pad->tc_trak = atom_trak_new (qtmux->context);
-        atom_moov_add_trak (qtmux->moov, pad->tc_trak);
-
-        pad->trak->tref = atom_tref_new (FOURCC_tmcd);
-        atom_tref_add_entry (pad->trak->tref, pad->tc_trak->tkhd.track_ID);
-
-        atom_trak_set_timecode_type (pad->tc_trak, qtmux->context,
-            qtmux->first_tc);
-
-        szret = gst_buffer_fill (tc_buf, 0, &frames_since_daily_jam, 4);
-        g_assert (szret == 4);
-
-        atom_trak_add_samples (pad->tc_trak, 1, 1, 4, qtmux->mdat_size, FALSE,
-            0);
-        ret = gst_qt_mux_send_buffer (qtmux, tc_buf, &qtmux->mdat_size, TRUE);
-      } else if (pad->is_out_of_order) {
-        /* Check for a lower timecode than the one stored */
-        g_assert (pad->tc_trak != NULL);
-        if (GST_BUFFER_DTS (buf) <= qtmux->first_pts) {
-          if (gst_video_time_code_compare (tc, qtmux->first_tc) == -1) {
-            gst_video_time_code_free (qtmux->first_tc);
-            qtmux->first_tc = gst_video_time_code_copy (tc);
-          }
-        } else {
-          guint64 bk_size = qtmux->mdat_size;
-          GstSegment segment;
-          /* If this frame's DTS is after the first PTS received, it means
-           * we've already received the first frame to be presented. Otherwise
-           * the decoder would need to go back in time */
-          gst_qt_mux_update_timecode (qtmux);
-
-          /* Reset writing position */
-          gst_segment_init (&segment, GST_FORMAT_BYTES);
-          segment.start = bk_size;
-          gst_pad_push_event (qtmux->srcpad, gst_event_new_segment (&segment));
-        }
-      }
-    }
-  }
   return ret;
 }
 
@@ -3106,7 +2241,7 @@ gst_qt_mux_add_buffer (GstQTMux * qtmux, GstQTPad * pad, GstBuffer * buf)
   guint64 chunk_offset;
   gint64 last_dts, scaled_duration;
   gint64 pts_offset = 0;
-  gboolean sync = FALSE;
+  gboolean sync = FALSE, do_pts = FALSE;
   GstFlowReturn ret = GST_FLOW_OK;
 
   if (!pad->fourcc)
@@ -3117,30 +2252,38 @@ gst_qt_mux_add_buffer (GstQTMux * qtmux, GstQTPad * pad, GstBuffer * buf)
     buf = pad->prepare_buf_func (pad, buf, qtmux);
   }
 
+  if (G_LIKELY (buf != NULL && GST_CLOCK_TIME_IS_VALID (pad->first_ts) &&
+          pad->first_ts != 0)) {
+    buf = gst_buffer_make_writable (buf);
+    check_and_subtract_ts (qtmux, &GST_BUFFER_DTS (buf), pad->first_ts);
+    check_and_subtract_ts (qtmux, &GST_BUFFER_PTS (buf), pad->first_ts);
+  }
+
   last_buf = pad->last_buf;
 
-  /* DTS delta is used to calculate sample duration.
-   * If buffer has missing DTS, we take either segment start or
-   *  previous buffer end time, whichever is later.
-   * This must only be done for non sparse streams, sparse streams
-   * can have gaps between buffers (which is handled later by adding
-   * extra empty buffer with duration that fills the gap). */
-  if (!pad->sparse && buf && !GST_BUFFER_DTS_IS_VALID (buf)) {
+  /* if buffer has missing DTS, we take either segment start or previous buffer end time, 
+     which ever is later */
+  if (buf && !GST_BUFFER_DTS_IS_VALID (buf)) {
     GstClockTime last_buf_duration = last_buf
         && GST_BUFFER_DURATION_IS_VALID (last_buf) ?
         GST_BUFFER_DURATION (last_buf) : 0;
 
     buf = gst_buffer_make_writable (buf);
-    GST_BUFFER_DTS (buf) = 0;   /* running-time 0 */
+    GST_BUFFER_DTS (buf) =
+        gst_segment_to_running_time (&pad->collect.segment, GST_FORMAT_TIME,
+        pad->collect.segment.start);
+    if (GST_CLOCK_TIME_IS_VALID (pad->first_ts))
+      check_and_subtract_ts (qtmux, &GST_BUFFER_DTS (buf), pad->first_ts);
 
     if (last_buf
         && (GST_BUFFER_DTS (last_buf) + last_buf_duration) >
         GST_BUFFER_DTS (buf)) {
       GST_BUFFER_DTS (buf) = GST_BUFFER_DTS (last_buf) + last_buf_duration;
     }
-  }
 
-  ret = gst_qt_mux_check_and_update_timecode (qtmux, pad, buf, ret);
+    if (GST_BUFFER_PTS_IS_VALID (buf))
+      GST_BUFFER_DTS (buf) = MIN (GST_BUFFER_DTS (buf), GST_BUFFER_PTS (buf));
+  }
 
   if (last_buf && !buf && !GST_BUFFER_DURATION_IS_VALID (last_buf)) {
     /* this is last buffer; there is no next buffer so we need valid number as duration */
@@ -3167,28 +2310,32 @@ gst_qt_mux_add_buffer (GstQTMux * qtmux, GstQTPad * pad, GstBuffer * buf)
 
   /* if this is the first buffer, store the timestamp */
   if (G_UNLIKELY (pad->first_ts == GST_CLOCK_TIME_NONE) && last_buf) {
-    if (GST_BUFFER_PTS_IS_VALID (last_buf)) {
-      pad->first_ts = GST_BUFFER_PTS (last_buf);
-    } else if (GST_BUFFER_DTS_IS_VALID (last_buf)) {
-      pad->first_ts = GST_BUFFER_DTS (last_buf);
-    }
-
     if (GST_BUFFER_DTS_IS_VALID (last_buf)) {
-      pad->first_dts = pad->last_dts = GST_BUFFER_DTS (last_buf);
+      /* first pad always has DTS. If it was not provided by upstream it was set to segment start */
+      pad->first_ts = GST_BUFFER_DTS (last_buf);
     } else if (GST_BUFFER_PTS_IS_VALID (last_buf)) {
-      pad->first_dts = pad->last_dts = GST_BUFFER_PTS (last_buf);
+      pad->first_ts = GST_BUFFER_PTS (last_buf);
     }
 
     if (GST_CLOCK_TIME_IS_VALID (pad->first_ts)) {
       GST_DEBUG ("setting first_ts to %" G_GUINT64_FORMAT, pad->first_ts);
+      last_buf = gst_buffer_make_writable (last_buf);
+      check_and_subtract_ts (qtmux, &GST_BUFFER_DTS (last_buf), pad->first_ts);
+      check_and_subtract_ts (qtmux, &GST_BUFFER_PTS (last_buf), pad->first_ts);
+      if (buf) {
+        buf = gst_buffer_make_writable (buf);
+        check_and_subtract_ts (qtmux, &GST_BUFFER_DTS (buf), pad->first_ts);
+        check_and_subtract_ts (qtmux, &GST_BUFFER_PTS (buf), pad->first_ts);
+      }
     } else {
-      GST_WARNING_OBJECT (qtmux, "First buffer for pad %s has no timestamp, "
+      GST_ERROR_OBJECT (qtmux, "First buffer for pad %s has no timestamp, "
           "using 0 as first timestamp", GST_PAD_NAME (pad->collect.pad));
-      pad->first_ts = pad->first_dts = 0;
+      pad->first_ts = 0;
     }
     GST_DEBUG_OBJECT (qtmux, "Stored first timestamp for pad %s %"
         GST_TIME_FORMAT, GST_PAD_NAME (pad->collect.pad),
         GST_TIME_ARGS (pad->first_ts));
+
   }
 
   if (last_buf && buf && GST_CLOCK_TIME_IS_VALID (GST_BUFFER_DTS (buf)) &&
@@ -3298,17 +2445,17 @@ gst_qt_mux_add_buffer (GstQTMux * qtmux, GstQTPad * pad, GstBuffer * buf)
     sync = TRUE;
   }
 
-  if (!GST_BUFFER_PTS_IS_VALID (last_buf))
-    goto no_pts;
-
-  if (GST_BUFFER_DTS_IS_VALID (last_buf)) {
+  if (GST_CLOCK_TIME_IS_VALID (GST_BUFFER_DTS (last_buf))) {
+    do_pts = TRUE;
     last_dts = gst_util_uint64_scale_round (GST_BUFFER_DTS (last_buf),
         atom_trak_get_timescale (pad->trak), GST_SECOND);
     pts_offset =
         (gint64) (gst_util_uint64_scale_round (GST_BUFFER_PTS (last_buf),
             atom_trak_get_timescale (pad->trak), GST_SECOND) - last_dts);
+
   } else {
     pts_offset = 0;
+    do_pts = TRUE;
     last_dts = gst_util_uint64_scale_round (GST_BUFFER_PTS (last_buf),
         atom_trak_get_timescale (pad->trak), GST_SECOND);
   }
@@ -3332,7 +2479,7 @@ gst_qt_mux_add_buffer (GstQTMux * qtmux, GstQTPad * pad, GstBuffer * buf)
   /* now we go and register this buffer/sample all over */
   ret = gst_qt_mux_register_and_push_sample (qtmux, pad, last_buf,
       buf == NULL, nsamples, last_dts, scaled_duration, sample_size,
-      chunk_offset, sync, TRUE, pts_offset);
+      chunk_offset, sync, do_pts, pts_offset);
 
   /* if this is sparse and we have a next buffer, check if there is any gap
    * between them to insert an empty sample */
@@ -3355,7 +2502,7 @@ gst_qt_mux_add_buffer (GstQTMux * qtmux, GstQTPad * pad, GstBuffer * buf)
       ret =
           gst_qt_mux_register_and_push_sample (qtmux, pad, empty_buf, FALSE, 1,
           last_dts + scaled_duration, empty_duration_scaled,
-          gst_buffer_get_size (empty_buf), qtmux->mdat_size, sync, TRUE, 0);
+          gst_buffer_get_size (empty_buf), qtmux->mdat_size, sync, do_pts, 0);
     } else {
       /* our only case currently is tx3g subtitles, so there is no reason to fill this yet */
       g_assert_not_reached ();
@@ -3386,11 +2533,6 @@ fragmented_sample:
         ("Audio buffer contains fragmented sample."));
     goto bail;
   }
-no_pts:
-  {
-    GST_ELEMENT_ERROR (qtmux, STREAM, MUX, (NULL), ("Buffer has no PTS."));
-    goto bail;
-  }
 not_negotiated:
   {
     GST_ELEMENT_ERROR (qtmux, CORE, NEGOTIATION, (NULL),
@@ -3402,57 +2544,6 @@ not_negotiated:
   }
 }
 
-/*
- * DTS running time can be negative. There is no way to represent that in
- * MP4 however, thus we need to offset DTS so that it starts from 0.
- */
-static void
-gst_qt_pad_adjust_buffer_dts (GstQTMux * qtmux, GstQTPad * pad,
-    GstCollectData * cdata, GstBuffer ** buf)
-{
-  GstClockTime pts;
-  gint64 dts;
-
-  pts = GST_BUFFER_PTS (*buf);
-  dts = GST_COLLECT_PADS_DTS (cdata);
-
-  GST_LOG_OBJECT (qtmux, "selected pad %s with PTS %" GST_TIME_FORMAT
-      " and DTS %" GST_STIME_FORMAT, GST_PAD_NAME (cdata->pad),
-      GST_TIME_ARGS (pts), GST_STIME_ARGS (dts));
-
-  if (!GST_CLOCK_TIME_IS_VALID (pad->dts_adjustment)) {
-    if (GST_CLOCK_STIME_IS_VALID (dts) && dts < 0)
-      pad->dts_adjustment = -dts;
-    else
-      pad->dts_adjustment = 0;
-  }
-
-  if (pad->dts_adjustment > 0) {
-    *buf = gst_buffer_make_writable (*buf);
-
-    dts += pad->dts_adjustment;
-
-    if (GST_CLOCK_TIME_IS_VALID (pts))
-      pts += pad->dts_adjustment;
-
-    if (GST_CLOCK_STIME_IS_VALID (dts) && dts < 0) {
-      GST_WARNING_OBJECT (pad, "Decreasing DTS.");
-      dts = 0;
-    }
-
-    if (pts < dts) {
-      GST_WARNING_OBJECT (pad, "DTS is bigger then PTS");
-      pts = dts;
-    }
-
-    GST_BUFFER_PTS (*buf) = pts;
-    GST_BUFFER_DTS (*buf) = dts;
-
-    GST_LOG_OBJECT (qtmux, "time adjusted to PTS %" GST_TIME_FORMAT
-        " and DTS %" GST_TIME_FORMAT, GST_TIME_ARGS (pts), GST_TIME_ARGS (dts));
-  }
-}
-
 static GstFlowReturn
 gst_qt_mux_handle_buffer (GstCollectPads * pads, GstCollectData * cdata,
     GstBuffer * buf, gpointer user_data)
@@ -3460,12 +2551,13 @@ gst_qt_mux_handle_buffer (GstCollectPads * pads, GstCollectData * cdata,
   GstFlowReturn ret = GST_FLOW_OK;
   GstQTMux *qtmux = GST_QT_MUX_CAST (user_data);
   GstQTPad *best_pad = NULL;
+  GstClockTime best_time = GST_CLOCK_TIME_NONE;
 
   if (G_UNLIKELY (qtmux->state == GST_QT_MUX_STATE_STARTED)) {
     if ((ret = gst_qt_mux_start_file (qtmux)) != GST_FLOW_OK)
       return ret;
-
-    qtmux->state = GST_QT_MUX_STATE_DATA;
+    else
+      qtmux->state = GST_QT_MUX_STATE_DATA;
   }
 
   if (G_UNLIKELY (qtmux->state == GST_QT_MUX_STATE_EOS))
@@ -3476,10 +2568,11 @@ gst_qt_mux_handle_buffer (GstCollectPads * pads, GstCollectData * cdata,
   /* clipping already converted to running time */
   if (best_pad != NULL) {
     g_assert (buf);
-    gst_qt_pad_adjust_buffer_dts (qtmux, best_pad, cdata, &buf);
+    best_time = GST_BUFFER_PTS (buf);
+    GST_LOG_OBJECT (qtmux, "selected pad %s with time %" GST_TIME_FORMAT,
+        GST_PAD_NAME (best_pad->collect.pad), GST_TIME_ARGS (best_time));
     ret = gst_qt_mux_add_buffer (qtmux, best_pad, buf);
   } else {
-    qtmux->state = GST_QT_MUX_STATE_EOS;
     ret = gst_qt_mux_stop_file (qtmux);
     if (ret == GST_FLOW_OK) {
       GST_DEBUG_OBJECT (qtmux, "Pushing eos");
@@ -3489,6 +2582,7 @@ gst_qt_mux_handle_buffer (GstCollectPads * pads, GstCollectData * cdata,
       GST_WARNING_OBJECT (qtmux, "Failed to stop file: %s",
           gst_flow_get_name (ret));
     }
+    qtmux->state = GST_QT_MUX_STATE_EOS;
   }
 
   return ret;
@@ -3585,38 +2679,30 @@ gst_qt_mux_audio_sink_set_caps (GstQTPad * qtpad, GstCaps * caps)
 
   /* now map onto a fourcc, and some extra properties */
   if (strcmp (mimetype, "audio/mpeg") == 0) {
-    gint mpegversion = 0, mpegaudioversion = 0;
+    gint mpegversion = 0;
     gint layer = -1;
 
     gst_structure_get_int (structure, "mpegversion", &mpegversion);
     switch (mpegversion) {
       case 1:
         gst_structure_get_int (structure, "layer", &layer);
-        gst_structure_get_int (structure, "mpegaudioversion",
-            &mpegaudioversion);
-
-        /* mp1/2/3 */
-        /* note: QuickTime player does not like mp3 either way in iso/mp4 */
-        if (format == GST_QT_MUX_FORMAT_QT)
-          entry.fourcc = FOURCC__mp3;
-        else {
-          entry.fourcc = FOURCC_mp4a;
-          ext_atom =
-              build_esds_extension (qtpad->trak, ESDS_OBJECT_TYPE_MPEG1_P3,
-              ESDS_STREAM_TYPE_AUDIO, codec_data, qtpad->avg_bitrate,
-              qtpad->max_bitrate);
+        switch (layer) {
+          case 3:
+            /* mp3 */
+            /* note: QuickTime player does not like mp3 either way in iso/mp4 */
+            if (format == GST_QT_MUX_FORMAT_QT)
+              entry.fourcc = FOURCC__mp3;
+            else {
+              entry.fourcc = FOURCC_mp4a;
+              ext_atom =
+                  build_esds_extension (qtpad->trak, ESDS_OBJECT_TYPE_MPEG1_P3,
+                  ESDS_STREAM_TYPE_AUDIO, codec_data, qtpad->avg_bitrate,
+                  qtpad->max_bitrate);
+            }
+            entry.samples_per_packet = 1152;
+            entry.bytes_per_sample = 2;
+            break;
         }
-        if (layer == 1) {
-          g_warn_if_fail (format == GST_QT_MUX_FORMAT_MP4);
-          entry.samples_per_packet = 384;
-        } else if (layer == 2) {
-          g_warn_if_fail (format == GST_QT_MUX_FORMAT_MP4);
-          entry.samples_per_packet = 1152;
-        } else {
-          g_warn_if_fail (layer == 3);
-          entry.samples_per_packet = (mpegaudioversion <= 1) ? 1152 : 576;
-        }
-        entry.bytes_per_sample = 2;
         break;
       case 4:
 
@@ -3633,10 +2719,9 @@ gst_qt_mux_audio_sink_set_caps (GstQTPad * qtpad, GstCaps * caps)
               "assuming 'raw'");
         }
 
-        if (!codec_data || gst_buffer_get_size ((GstBuffer *) codec_data) < 2) {
+        if (!codec_data || gst_buffer_get_size ((GstBuffer *) codec_data) < 2)
           GST_WARNING_OBJECT (qtmux, "no (valid) codec_data for AAC audio");
-          goto refuse_caps;
-        } else {
+        else {
           guint8 profile;
 
           gst_buffer_extract ((GstBuffer *) codec_data, 0, &profile, 1);
@@ -3692,8 +2777,6 @@ gst_qt_mux_audio_sink_set_caps (GstQTPad * qtpad, GstCaps * caps)
         entry.fourcc = FOURCC_sowt;
       else if (info.finfo->endianness == G_BIG_ENDIAN)
         entry.fourcc = FOURCC_twos;
-      else
-        entry.fourcc = FOURCC_sowt;
       /* maximum backward compatibility; only new version for > 16 bit */
       if (info.finfo->depth <= 16)
         entry.version = 0;
@@ -3768,8 +2851,7 @@ gst_qt_mux_audio_sink_set_caps (GstQTPad * qtpad, GstCaps * caps)
     if (GST_READ_UINT32_LE (map.data + 4) == FOURCC_alac) {
       len -= 8;
       codec_config =
-          gst_buffer_copy_region ((GstBuffer *) codec_data,
-          GST_BUFFER_COPY_MEMORY, 8, len);
+          gst_buffer_copy_region ((GstBuffer *) codec_data, 0, 8, len);
     } else {
       codec_config = gst_buffer_ref ((GstBuffer *) codec_data);
     }
@@ -3779,7 +2861,7 @@ gst_qt_mux_audio_sink_set_caps (GstQTPad * qtpad, GstCaps * caps)
       GST_WARNING_OBJECT (qtmux, "unexpected codec-data size, possibly broken");
     }
     if (format == GST_QT_MUX_FORMAT_QT)
-      ext_atom = build_mov_alac_extension (codec_config);
+      ext_atom = build_mov_alac_extension (qtpad->trak, codec_config);
     else
       ext_atom = build_codec_data_extension (FOURCC_alac, codec_config);
     /* set some more info */
@@ -3788,61 +2870,6 @@ gst_qt_mux_audio_sink_set_caps (GstQTPad * qtpad, GstCaps * caps)
     entry.samples_per_packet = GST_READ_UINT32_BE (map.data + 4);
     gst_buffer_unmap (codec_config, &map);
     gst_buffer_unref (codec_config);
-  } else if (strcmp (mimetype, "audio/x-ac3") == 0) {
-    entry.fourcc = FOURCC_ac_3;
-
-    /* Fixed values according to TS 102 366 but it also mentions that
-     * they should be ignored */
-    entry.channels = 2;
-    entry.sample_size = 16;
-
-    /* AC-3 needs an extension atom but its data can only be obtained from
-     * the stream itself. Abuse the prepare_buf_func so we parse a frame
-     * and get the needed data */
-    qtpad->prepare_buf_func = gst_qt_mux_prepare_parse_ac3_frame;
-  } else if (strcmp (mimetype, "audio/x-opus") == 0) {
-    /* Based on the specification defined in:
-     * https://www.opus-codec.org/docs/opus_in_isobmff.html */
-    guint8 channels, mapping_family, stream_count, coupled_count;
-    guint16 pre_skip;
-    gint16 output_gain;
-    guint32 rate;
-    guint8 channel_mapping[256];
-    const GValue *streamheader;
-    const GValue *first_element;
-    GstBuffer *header;
-
-    entry.fourcc = FOURCC_opus;
-    entry.sample_size = 16;
-
-    streamheader = gst_structure_get_value (structure, "streamheader");
-    if (streamheader && GST_VALUE_HOLDS_ARRAY (streamheader) &&
-        gst_value_array_get_size (streamheader) != 0) {
-      first_element = gst_value_array_get_value (streamheader, 0);
-      header = gst_value_get_buffer (first_element);
-      if (!gst_codec_utils_opus_parse_header (header, &rate, &channels,
-              &mapping_family, &stream_count, &coupled_count, channel_mapping,
-              &pre_skip, &output_gain)) {
-        GST_ERROR_OBJECT (qtmux, "Incomplete OpusHead");
-        goto refuse_caps;
-      }
-    } else {
-      GST_WARNING_OBJECT (qtmux,
-          "no streamheader field in caps %" GST_PTR_FORMAT, caps);
-
-      if (!gst_codec_utils_opus_parse_caps (caps, &rate, &channels,
-              &mapping_family, &stream_count, &coupled_count,
-              channel_mapping)) {
-        GST_ERROR_OBJECT (qtmux, "Incomplete Opus caps");
-        goto refuse_caps;
-      }
-      pre_skip = 0;
-      output_gain = 0;
-    }
-
-    entry.channels = channels;
-    ext_atom = build_opus_extension (rate, channels, mapping_family,
-        stream_count, coupled_count, channel_mapping, pre_skip, output_gain);
   }
 
   if (!entry.fourcc)
@@ -3851,9 +2878,7 @@ gst_qt_mux_audio_sink_set_caps (GstQTPad * qtpad, GstCaps * caps)
   /* ok, set the pad info accordingly */
   qtpad->fourcc = entry.fourcc;
   qtpad->sample_size = constant_size;
-  qtpad->trak_ste =
-      (SampleTableEntry *) atom_trak_set_audio_type (qtpad->trak,
-      qtmux->context, &entry,
+  atom_trak_set_audio_type (qtpad->trak, qtmux->context, &entry,
       qtmux->trak_timescale ? qtmux->trak_timescale : entry.sample_rate,
       ext_atom, constant_size);
 
@@ -4004,13 +3029,6 @@ gst_qt_mux_video_sink_set_caps (GstQTPad * qtpad, GstCaps * caps)
         entry.depth = depth;
         sync = FALSE;
         break;
-      case GST_VIDEO_FORMAT_v210:
-        if (depth == -1)
-          depth = 24;
-        entry.fourcc = FOURCC_v210;
-        entry.depth = depth;
-        sync = FALSE;
-        break;
       default:
         if (GST_VIDEO_FORMAT_INFO_FLAGS (vinfo) & GST_VIDEO_FORMAT_FLAG_RGB) {
           entry.fourcc = FOURCC_raw_;
@@ -4135,15 +3153,15 @@ gst_qt_mux_video_sink_set_caps (GstQTPad * qtpad, GstCaps * caps)
     switch (version) {
       case 25:
         if (pal)
-          entry.fourcc = FOURCC_dvcp;
+          entry.fourcc = GST_MAKE_FOURCC ('d', 'v', 'c', 'p');
         else
-          entry.fourcc = FOURCC_dvc_;
+          entry.fourcc = GST_MAKE_FOURCC ('d', 'v', 'c', ' ');
         break;
       case 50:
         if (pal)
-          entry.fourcc = FOURCC_dv5p;
+          entry.fourcc = GST_MAKE_FOURCC ('d', 'v', '5', 'p');
         else
-          entry.fourcc = FOURCC_dv5n;
+          entry.fourcc = GST_MAKE_FOURCC ('d', 'v', '5', 'n');
         break;
       default:
         GST_WARNING_OBJECT (qtmux, "unrecognized dv version");
@@ -4176,8 +3194,8 @@ gst_qt_mux_video_sink_set_caps (GstQTPad * qtpad, GstCaps * caps)
     colorspace = gst_structure_get_string (structure, "colorspace");
     if (colorspace &&
         (ext_atom =
-            build_jp2h_extension (width, height, colorspace, ncomp, cmap_array,
-                cdef_array)) != NULL) {
+            build_jp2h_extension (qtpad->trak, width, height, colorspace, ncomp,
+                cmap_array, cdef_array)) != NULL) {
       ext_atom_list = g_list_append (ext_atom_list, ext_atom);
 
       ext_atom = build_fiel_extension (fields);
@@ -4206,18 +3224,6 @@ gst_qt_mux_video_sink_set_caps (GstQTPad * qtpad, GstCaps * caps)
 
     gst_structure_get_uint (structure, "format", &fourcc);
     entry.fourcc = fourcc;
-  } else if (strcmp (mimetype, "video/x-prores") == 0) {
-    const gchar *variant;
-
-    variant = gst_structure_get_string (structure, "variant");
-    if (!variant || !g_strcmp0 (variant, "standard"))
-      entry.fourcc = FOURCC_apcn;
-    else if (!g_strcmp0 (variant, "lt"))
-      entry.fourcc = FOURCC_apcs;
-    else if (!g_strcmp0 (variant, "hq"))
-      entry.fourcc = FOURCC_apch;
-    else if (!g_strcmp0 (variant, "proxy"))
-      entry.fourcc = FOURCC_apco;
   }
 
   if (!entry.fourcc)
@@ -4226,9 +3232,8 @@ gst_qt_mux_video_sink_set_caps (GstQTPad * qtpad, GstCaps * caps)
   /* ok, set the pad info accordingly */
   qtpad->fourcc = entry.fourcc;
   qtpad->sync = sync;
-  qtpad->trak_ste =
-      (SampleTableEntry *) atom_trak_set_video_type (qtpad->trak,
-      qtmux->context, &entry, rate, ext_atom_list);
+  atom_trak_set_video_type (qtpad->trak, qtmux->context, &entry, rate,
+      ext_atom_list);
 
   gst_object_unref (qtmux);
   return TRUE;
@@ -4258,6 +3263,8 @@ gst_qt_mux_subtitle_sink_set_caps (GstQTPad * qtpad, GstCaps * caps)
   GstQTMux *qtmux = GST_QT_MUX_CAST (gst_pad_get_parent (pad));
   GstStructure *structure;
   SubtitleSampleEntry entry = { 0, };
+
+  qtpad->prepare_buf_func = NULL;
 
   /* does not go well to renegotiate stream mid-way, unless
    * the old caps are a subset of the new one (this means upstream
@@ -4303,9 +3310,7 @@ gst_qt_mux_subtitle_sink_set_caps (GstQTPad * qtpad, GstCaps * caps)
     goto refuse_caps;
 
   qtpad->fourcc = entry.fourcc;
-  qtpad->trak_ste =
-      (SampleTableEntry *) atom_trak_set_subtitle_type (qtpad->trak,
-      qtmux->context, &entry);
+  atom_trak_set_subtitle_type (qtpad->trak, qtmux->context, &entry);
 
   gst_object_unref (qtmux);
   return TRUE;
@@ -4361,25 +3366,15 @@ gst_qt_mux_sink_event (GstCollectPads * pads, GstCollectData * data,
       GstTagSetter *setter = GST_TAG_SETTER (qtmux);
       GstTagMergeMode mode;
       gchar *code;
-      GstQTPad *collect_pad;
 
       GST_OBJECT_LOCK (qtmux);
       mode = gst_tag_setter_get_tag_merge_mode (setter);
-      collect_pad = (GstQTPad *) gst_pad_get_element_private (pad);
 
       gst_event_parse_tag (event, &list);
       GST_DEBUG_OBJECT (qtmux, "received tag event on pad %s:%s : %"
           GST_PTR_FORMAT, GST_DEBUG_PAD_NAME (pad), list);
 
-      if (gst_tag_list_get_scope (list) == GST_TAG_SCOPE_GLOBAL) {
-        gst_tag_setter_merge_tags (setter, list, mode);
-        qtmux->tags_changed = TRUE;
-      } else {
-        if (!collect_pad->tags)
-          collect_pad->tags = gst_tag_list_new_empty ();
-        gst_tag_list_insert (collect_pad->tags, list, mode);
-        collect_pad->tags_changed = TRUE;
-      }
+      gst_tag_setter_merge_tags (setter, list, mode);
       GST_OBJECT_UNLOCK (qtmux);
 
       if (gst_tag_list_get_uint (list, GST_TAG_BITRATE, &avg_bitrate) |
@@ -4443,13 +3438,6 @@ gst_qt_mux_release_pad (GstElement * element, GstPad * pad)
   }
 
   gst_collect_pads_remove_pad (mux->collect, pad);
-
-  if (mux->sinkpads == NULL) {
-    /* No more outstanding request pads, reset our counters */
-    mux->video_pads = 0;
-    mux->audio_pads = 0;
-    mux->subtitle_pads = 0;
-  }
 }
 
 static GstPad *
@@ -4463,7 +3451,6 @@ gst_qt_mux_request_new_pad (GstElement * element,
   GstQTPadSetCapsFunc setcaps_func;
   gchar *name;
   gint pad_id;
-  gboolean lock = TRUE;
 
   if (templ->direction != GST_PAD_SINK)
     goto wrong_direction;
@@ -4492,7 +3479,6 @@ gst_qt_mux_request_new_pad (GstElement * element,
     } else {
       name = g_strdup_printf ("subtitle_%u", qtmux->subtitle_pads++);
     }
-    lock = FALSE;
   } else
     goto wrong_template;
 
@@ -4503,7 +3489,7 @@ gst_qt_mux_request_new_pad (GstElement * element,
   g_free (name);
   collect_pad = (GstQTPad *)
       gst_collect_pads_add_pad (qtmux->collect, newpad, sizeof (GstQTPad),
-      (GstCollectDataDestroyNotify) (gst_qt_mux_pad_reset), lock);
+      (GstCollectDataDestroyNotify) (gst_qt_mux_pad_reset), TRUE);
   /* set up pad */
   gst_qt_mux_pad_reset (collect_pad);
   collect_pad->trak = atom_trak_new (qtmux->context);
@@ -4574,34 +3560,6 @@ gst_qt_mux_get_property (GObject * object,
     case PROP_STREAMABLE:
       g_value_set_boolean (value, qtmux->streamable);
       break;
-    case PROP_RESERVED_MAX_DURATION:
-      g_value_set_uint64 (value, qtmux->reserved_max_duration);
-      break;
-    case PROP_RESERVED_DURATION_REMAINING:
-      if (qtmux->reserved_duration_remaining == GST_CLOCK_TIME_NONE)
-        g_value_set_uint64 (value, qtmux->reserved_max_duration);
-      else {
-        GstClockTime remaining = qtmux->reserved_duration_remaining;
-
-        /* Report the remaining space as the calculated remaining, minus
-         * however much we've muxed since the last update */
-        if (remaining > qtmux->muxed_since_last_update)
-          remaining -= qtmux->muxed_since_last_update;
-        else
-          remaining = 0;
-        GST_LOG_OBJECT (qtmux, "reserved duration remaining - reporting %"
-            G_GUINT64_FORMAT "(%" G_GUINT64_FORMAT " - %" G_GUINT64_FORMAT,
-            remaining, qtmux->reserved_duration_remaining,
-            qtmux->muxed_since_last_update);
-        g_value_set_uint64 (value, remaining);
-      }
-      break;
-    case PROP_RESERVED_MOOV_UPDATE_PERIOD:
-      g_value_set_uint64 (value, qtmux->reserved_moov_update_period);
-      break;
-    case PROP_RESERVED_BYTES_PER_SEC:
-      g_value_set_uint (value, qtmux->reserved_bytes_per_sec_per_trak);
-      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -4670,15 +3628,6 @@ gst_qt_mux_set_property (GObject * object,
       }
       break;
     }
-    case PROP_RESERVED_MAX_DURATION:
-      qtmux->reserved_max_duration = g_value_get_uint64 (value);
-      break;
-    case PROP_RESERVED_MOOV_UPDATE_PERIOD:
-      qtmux->reserved_moov_update_period = g_value_get_uint64 (value);
-      break;
-    case PROP_RESERVED_BYTES_PER_SEC:
-      qtmux->reserved_bytes_per_sec_per_trak = g_value_get_uint (value);
-      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -4698,8 +3647,6 @@ gst_qt_mux_change_state (GstElement * element, GstStateChange transition)
     case GST_STATE_CHANGE_READY_TO_PAUSED:
       gst_collect_pads_start (qtmux->collect);
       qtmux->state = GST_QT_MUX_STATE_STARTED;
-      qtmux->first_tc = NULL;
-      qtmux->tc_pos = -1;
       break;
     case GST_STATE_CHANGE_PAUSED_TO_PLAYING:
       break;
@@ -4747,9 +3694,6 @@ gst_qt_mux_register (GstPlugin * plugin)
   static const GInterfaceInfo tag_xmp_writer_info = {
     NULL, NULL, NULL
   };
-  static const GInterfaceInfo preset_info = {
-    NULL, NULL, NULL
-  };
   GType type;
   GstQTMuxFormat format;
   GstQTMuxClassParams *params;
@@ -4788,7 +3732,6 @@ gst_qt_mux_register (GstPlugin * plugin)
     g_type_add_interface_static (type, GST_TYPE_TAG_SETTER, &tag_setter_info);
     g_type_add_interface_static (type, GST_TYPE_TAG_XMP_WRITER,
         &tag_xmp_writer_info);
-    g_type_add_interface_static (type, GST_TYPE_PRESET, &preset_info);
 
     if (!gst_element_register (plugin, prop->name, prop->rank, type))
       return FALSE;

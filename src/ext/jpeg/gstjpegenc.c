@@ -98,8 +98,8 @@ GST_STATIC_PAD_TEMPLATE ("sink",
     GST_PAD_SINK,
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS (GST_VIDEO_CAPS_MAKE
-        ("{ I420, YV12, YUY2, UYVY, Y41B, Y42B, YVYU, Y444, NV21, "
-         "NV12, RGB, BGR, RGBx, xRGB, BGRx, xBGR, GRAY8 }"))
+        ("{ I420, YV12, YUY2, UYVY, Y41B, Y42B, YVYU, Y444, "
+         "RGB, BGR, RGBx, xRGB, BGRx, xBGR, GRAY8 }"))
     );
 /* *INDENT-ON* */
 
@@ -150,13 +150,13 @@ gst_jpegenc_class_init (GstJpegEncClass * klass)
           JPEG_DEFAULT_IDCT_METHOD,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
-  gst_element_class_add_static_pad_template (element_class,
-      &gst_jpegenc_sink_pad_template);
-  gst_element_class_add_static_pad_template (element_class,
-      &gst_jpegenc_src_pad_template);
+  gst_element_class_add_pad_template (element_class,
+      gst_static_pad_template_get (&gst_jpegenc_sink_pad_template));
+  gst_element_class_add_pad_template (element_class,
+      gst_static_pad_template_get (&gst_jpegenc_src_pad_template));
   gst_element_class_set_static_metadata (element_class, "JPEG image encoder",
-      "Codec/Encoder/Image", "Encode images in JPEG format",
-      "Wim Taymans <wim.taymans@tvd.be>");
+      "Codec/Encoder/Image",
+      "Encode images in JPEG format", "Wim Taymans <wim.taymans@tvd.be>");
 
   venc_class->start = gst_jpegenc_start;
   venc_class->stop = gst_jpegenc_stop;
@@ -283,8 +283,6 @@ gst_jpegenc_term_destination (j_compress_ptr cinfo)
 static void
 gst_jpegenc_init (GstJpegEnc * jpegenc)
 {
-  GST_PAD_SET_ACCEPT_TEMPLATE (GST_VIDEO_ENCODER_SINK_PAD (jpegenc));
-
   /* setup jpeglib */
   memset (&jpegenc->cinfo, 0, sizeof (jpegenc->cinfo));
   memset (&jpegenc->jerr, 0, sizeof (jpegenc->jerr));

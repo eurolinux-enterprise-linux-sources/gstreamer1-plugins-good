@@ -421,14 +421,14 @@ gst_rtp_ssrc_demux_class_init (GstRtpSsrcDemuxClass * klass)
   gstrtpssrcdemux_klass->clear_ssrc =
       GST_DEBUG_FUNCPTR (gst_rtp_ssrc_demux_clear_ssrc);
 
-  gst_element_class_add_static_pad_template (gstelement_klass,
-      &rtp_ssrc_demux_sink_template);
-  gst_element_class_add_static_pad_template (gstelement_klass,
-      &rtp_ssrc_demux_rtcp_sink_template);
-  gst_element_class_add_static_pad_template (gstelement_klass,
-      &rtp_ssrc_demux_src_template);
-  gst_element_class_add_static_pad_template (gstelement_klass,
-      &rtp_ssrc_demux_rtcp_src_template);
+  gst_element_class_add_pad_template (gstelement_klass,
+      gst_static_pad_template_get (&rtp_ssrc_demux_sink_template));
+  gst_element_class_add_pad_template (gstelement_klass,
+      gst_static_pad_template_get (&rtp_ssrc_demux_rtcp_sink_template));
+  gst_element_class_add_pad_template (gstelement_klass,
+      gst_static_pad_template_get (&rtp_ssrc_demux_src_template));
+  gst_element_class_add_pad_template (gstelement_klass,
+      gst_static_pad_template_get (&rtp_ssrc_demux_rtcp_src_template));
 
   gst_element_class_set_static_metadata (gstelement_klass, "RTP SSRC Demux",
       "Demux/Network/RTP",
@@ -678,7 +678,7 @@ gst_rtp_ssrc_demux_rtcp_chain (GstPad * pad, GstObject * parent,
 
   demux = GST_RTP_SSRC_DEMUX (parent);
 
-  if (!gst_rtcp_buffer_validate_reduced (buf))
+  if (!gst_rtcp_buffer_validate (buf))
     goto invalid_rtcp;
 
   gst_rtcp_buffer_map (buf, GST_MAP_READ, &rtcp);
@@ -687,9 +687,7 @@ gst_rtp_ssrc_demux_rtcp_chain (GstPad * pad, GstObject * parent,
     goto invalid_rtcp;
   }
 
-  /* first packet must be SR or RR, or in case of a reduced size RTCP packet
-   * it must be APP, RTPFB or PSFB feeadback, or else the validate would
-   * have failed */
+  /* first packet must be SR or RR or else the validate would have failed */
   switch (gst_rtcp_packet_get_type (&packet)) {
     case GST_RTCP_TYPE_SR:
       /* get the ssrc so that we can route it to the right source pad */
@@ -698,11 +696,6 @@ gst_rtp_ssrc_demux_rtcp_chain (GstPad * pad, GstObject * parent,
       break;
     case GST_RTCP_TYPE_RR:
       ssrc = gst_rtcp_packet_rr_get_ssrc (&packet);
-      break;
-    case GST_RTCP_TYPE_APP:
-    case GST_RTCP_TYPE_RTPFB:
-    case GST_RTCP_TYPE_PSFB:
-      ssrc = gst_rtcp_packet_fb_get_sender_ssrc (&packet);
       break;
     default:
       goto unexpected_rtcp;

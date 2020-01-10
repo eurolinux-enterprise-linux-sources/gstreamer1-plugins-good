@@ -58,15 +58,15 @@
 #define PAL_FRAMERATE_NUMERATOR 25
 #define PAL_FRAMERATE_DENOMINATOR 1
 
-#define PAL_NORMAL_PAR_X        16
-#define PAL_NORMAL_PAR_Y        15
-#define PAL_WIDE_PAR_X          64
-#define PAL_WIDE_PAR_Y          45
+#define PAL_NORMAL_PAR_X        59
+#define PAL_NORMAL_PAR_Y        54
+#define PAL_WIDE_PAR_X          118
+#define PAL_WIDE_PAR_Y          81
 
-#define NTSC_NORMAL_PAR_X       8
-#define NTSC_NORMAL_PAR_Y       9
-#define NTSC_WIDE_PAR_X         32
-#define NTSC_WIDE_PAR_Y         27
+#define NTSC_NORMAL_PAR_X       10
+#define NTSC_NORMAL_PAR_Y       11
+#define NTSC_WIDE_PAR_X         40
+#define NTSC_WIDE_PAR_Y         33
 
 #define DV_DEFAULT_QUALITY DV_QUALITY_BEST
 #define DV_DEFAULT_DECODE_NTH 1
@@ -174,8 +174,10 @@ gst_dvdec_class_init (GstDVDecClass * klass)
 
   gstelement_class->change_state = GST_DEBUG_FUNCPTR (gst_dvdec_change_state);
 
-  gst_element_class_add_static_pad_template (gstelement_class, &sink_temp);
-  gst_element_class_add_static_pad_template (gstelement_class, &src_temp);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&sink_temp));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&src_temp));
 
   gst_element_class_set_static_metadata (gstelement_class, "DV video decoder",
       "Codec/Decoder/Video",
@@ -477,9 +479,6 @@ gst_dvdec_chain (GstPad * pad, GstObject * parent, GstBuffer * buf)
     GstCaps *caps;
 
     caps = gst_pad_get_current_caps (dvdec->srcpad);
-    if (!caps)
-      goto not_negotiated;
-
     gst_dvdec_negotiate_pool (dvdec, caps, &dvdec->vinfo);
     gst_caps_unref (caps);
   }

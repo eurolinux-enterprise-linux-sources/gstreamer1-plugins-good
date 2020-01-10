@@ -45,9 +45,15 @@
 #endif
 
 #include "gstsplitfilesrc.h"
-#include "gstsplitutils.h"
+#include "patternspec.h"
 
 #include <string.h>
+
+#ifdef G_OS_WIN32
+#define DEFAULT_PATTERN_MATCH_MODE MATCH_MODE_UTF8
+#else
+#define DEFAULT_PATTERN_MATCH_MODE MATCH_MODE_AUTO
+#endif
 
 enum
 {
@@ -122,8 +128,8 @@ gst_split_file_src_class_init (GstSplitFileSrcClass * klass)
   GST_DEBUG_CATEGORY_INIT (splitfilesrc_debug, "splitfilesrc", 0,
       "splitfilesrc element");
 
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_split_file_src_pad_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_split_file_src_pad_template));
 
   gst_element_class_set_static_metadata (gstelement_class, "Split-File Source",
       "Source/File",
@@ -231,6 +237,84 @@ gst_split_file_src_get_property (GObject * object, guint prop_id,
   }
 }
 
+static int
+gst_split_file_src_array_sortfunc (gchar ** a, gchar ** b)
+{
+  return strcmp (*a, *b);
+}
+
+static gchar **
+gst_split_file_src_find_files (GstSplitFileSrc * src, const gchar * dirname,
+    const gchar * basename, GError ** err)
+{
+  PatternSpec *pspec;
+  GPtrArray *files;
+  const gchar *name;
+  GDir *dir;
+
+  if (dirname == NULL || basename == NULL)
+    goto invalid_location;
+
+  GST_INFO_OBJECT (src, "checking in directory '%s' for pattern '%s'",
+      dirname, basename);
+
+  dir = g_dir_open (dirname, 0, err);
+  if (dir == NULL)
+    return NULL;
+
+  if (DEFAULT_PATTERN_MATCH_MODE == MATCH_MODE_UTF8 &&
+      !g_utf8_validate (basename, -1, NULL)) {
+    goto not_utf8;
+  }
+
+  /* mode will be AUTO on linux/unix and UTF8 on win32 */
+  pspec = pattern_spec_new (basename, DEFAULT_PATTERN_MATCH_MODE);
+
+  files = g_ptr_array_new ();
+
+  while ((name = g_dir_read_name (dir))) {
+    GST_TRACE_OBJECT (src, "check: %s", name);
+    if (pattern_match_string (pspec, name)) {
+      GST_DEBUG_OBJECT (src, "match: %s", name);
+      g_ptr_array_add (files, g_build_filename (dirname, name, NULL));
+    }
+  }
+
+  if (files->len == 0)
+    goto no_matches;
+
+  g_ptr_array_sort (files, (GCompareFunc) gst_split_file_src_array_sortfunc);
+  g_ptr_array_add (files, NULL);
+
+  pattern_spec_free (pspec);
+  g_dir_close (dir);
+
+  return (gchar **) g_ptr_array_free (files, FALSE);
+
+/* ERRORS */
+invalid_location:
+  {
+    g_set_error_literal (err, G_FILE_ERROR, G_FILE_ERROR_INVAL,
+        "No filename specified.");
+    return NULL;
+  }
+not_utf8:
+  {
+    g_dir_close (dir);
+    g_set_error_literal (err, G_FILE_ERROR, G_FILE_ERROR_INVAL,
+        "Filename pattern must be UTF-8 on Windows.");
+    return NULL;
+  }
+no_matches:
+  {
+    pattern_spec_free (pspec);
+    g_dir_close (dir);
+    g_set_error_literal (err, G_FILE_ERROR, G_FILE_ERROR_NOENT,
+        "Found no files matching the pattern.");
+    return NULL;
+  }
+}
+
 static gboolean
 gst_split_file_src_start (GstBaseSrc * basesrc)
 {
@@ -251,7 +335,7 @@ gst_split_file_src_start (GstBaseSrc * basesrc)
   }
   GST_OBJECT_UNLOCK (src);
 
-  files = gst_split_util_find_files (dirname, basename, &err);
+  files = gst_split_file_src_find_files (src, dirname, basename, &err);
 
   if (files == NULL || *files == NULL)
     goto no_files;
@@ -368,37 +452,24 @@ gst_split_file_src_stop (GstBaseSrc * basesrc)
   return TRUE;
 }
 
-static gint
-gst_split_file_src_part_search (GstFilePart * part, guint64 * offset,
-    gpointer user_data)
-{
-  if (*offset > part->stop)
-    return -1;                  /* The target is after this part */
-  else if (*offset < part->start)
-    return 1;                   /* The target is before this part */
-  else
-    return 0;                   /* This is the target part */
-}
-
 static gboolean
 gst_split_file_src_find_part_for_offset (GstSplitFileSrc * src, guint64 offset,
     guint * part_number)
 {
-  gboolean res = TRUE;
   GstFilePart *part;
+  guint i;
 
-  part =
-      gst_util_array_binary_search (src->parts, src->num_parts,
-      sizeof (GstFilePart),
-      (GCompareDataFunc) gst_split_file_src_part_search,
-      GST_SEARCH_MODE_AFTER, &offset, NULL);
+  /* TODO: could use gst_util_array_binary_search() here */
+  part = src->parts;
+  for (i = 0; i < src->num_parts; ++i) {
+    if (offset >= part->start && offset <= part->stop) {
+      *part_number = i;
+      return TRUE;
+    }
+    ++part;
+  }
 
-  if (part)
-    *part_number = part - src->parts;
-  else
-    res = FALSE;
-
-  return res;
+  return FALSE;
 }
 
 static GstFlowReturn

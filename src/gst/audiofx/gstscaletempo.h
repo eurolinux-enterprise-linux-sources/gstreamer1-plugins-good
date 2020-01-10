@@ -41,7 +41,6 @@ struct _GstScaletempo
   GstBaseTransform element;
 
   gdouble scale;
-  gboolean reverse;
 
   /* parameters */
   guint ms_stride;
@@ -49,7 +48,7 @@ struct _GstScaletempo
   guint ms_search;
 
   /* caps */
-  GstAudioFormat format;
+  gboolean use_int;
   guint samples_per_frame;      /* AKA number of channels */
   guint bytes_per_sample;
   guint bytes_per_frame;
@@ -81,7 +80,7 @@ struct _GstScaletempo
   guint (*best_overlap_offset) (GstScaletempo * scaletempo);
 
   /* gstreamer */
-  GstSegment in_segment, out_segment;
+  gint64 segment_start;
   GstClockTime latency;
 
   /* threads */

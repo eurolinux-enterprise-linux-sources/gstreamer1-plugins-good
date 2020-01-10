@@ -48,7 +48,6 @@
 #endif
 
 #include <gst/gst.h>
-#include <gst/gst-i18n-plugin.h>
 #include <gst/audio/audio-channels.h>
 #include "gstosxaudioringbuffer.h"
 #include "gstosxaudiosink.h"
@@ -62,6 +61,7 @@ GST_DEBUG_CATEGORY_STATIC (osx_audio_debug);
 #include "gstosxcoreaudio.h"
 
 static void gst_osx_audio_ring_buffer_dispose (GObject * object);
+static void gst_osx_audio_ring_buffer_finalize (GObject * object);
 static gboolean gst_osx_audio_ring_buffer_open_device (GstAudioRingBuffer *
     buf);
 static gboolean gst_osx_audio_ring_buffer_close_device (GstAudioRingBuffer *
@@ -95,6 +95,7 @@ gst_osx_audio_ring_buffer_class_init (GstOsxAudioRingBufferClass * klass)
   ring_parent_class = g_type_class_peek_parent (klass);
 
   gobject_class->dispose = gst_osx_audio_ring_buffer_dispose;
+  gobject_class->finalize = gst_osx_audio_ring_buffer_finalize;
 
   gstringbuffer_class->open_device =
       GST_DEBUG_FUNCPTR (gst_osx_audio_ring_buffer_open_device);
@@ -138,25 +139,20 @@ gst_osx_audio_ring_buffer_dispose (GObject * object)
   G_OBJECT_CLASS (ring_parent_class)->dispose (object);
 }
 
+static void
+gst_osx_audio_ring_buffer_finalize (GObject * object)
+{
+  G_OBJECT_CLASS (ring_parent_class)->finalize (object);
+}
+
 static gboolean
 gst_osx_audio_ring_buffer_open_device (GstAudioRingBuffer * buf)
 {
-  GstObject *osxel = GST_OBJECT_PARENT (buf);
-  GstOsxAudioRingBuffer *osxbuf = GST_OSX_AUDIO_RING_BUFFER (buf);
+  GstOsxAudioRingBuffer *osxbuf;
 
-  if (!gst_core_audio_select_device (osxbuf->core_audio)) {
-    GST_ELEMENT_ERROR (osxel, RESOURCE, NOT_FOUND,
-        (_("CoreAudio device not found")), (NULL));
-    return FALSE;
-  }
+  osxbuf = GST_OSX_AUDIO_RING_BUFFER (buf);
 
-  if (!gst_core_audio_open (osxbuf->core_audio)) {
-    GST_ELEMENT_ERROR (osxel, RESOURCE, OPEN_READ,
-        (_("CoreAudio device could not be opened")), (NULL));
-    return FALSE;
-  }
-
-  return TRUE;
+  return gst_core_audio_open (osxbuf->core_audio);
 }
 
 static gboolean
@@ -210,12 +206,10 @@ gst_osx_audio_ring_buffer_acquire (GstAudioRingBuffer * buf,
       } else {
         format.mFormatFlags |= kAudioFormatFlagIsAlignedHigh;
       }
+      if (GST_AUDIO_INFO_IS_BIG_ENDIAN (&spec->info)) {
+        format.mFormatFlags |= kAudioFormatFlagIsBigEndian;
+      }
     }
-
-    if (GST_AUDIO_INFO_IS_BIG_ENDIAN (&spec->info)) {
-      format.mFormatFlags |= kAudioFormatFlagIsBigEndian;
-    }
-
     format.mBytesPerFrame = GST_AUDIO_INFO_BPF (&spec->info);
     format.mBitsPerChannel = depth;
     format.mBytesPerPacket = GST_AUDIO_INFO_BPF (&spec->info);
@@ -231,9 +225,10 @@ gst_osx_audio_ring_buffer_acquire (GstAudioRingBuffer * buf,
   GST_DEBUG_OBJECT (osxbuf, "Format: " CORE_AUDIO_FORMAT,
       CORE_AUDIO_FORMAT_ARGS (format));
 
-  /* gst_audio_ring_buffer_set_channel_positions is not called
-   * since the AUs perform channel reordering themselves.
-   * (see gst_core_audio_set_channel_layout) */
+  if (GST_IS_OSX_AUDIO_SINK (GST_OBJECT_PARENT (buf))) {
+    gst_audio_ring_buffer_set_channel_positions (buf,
+        GST_OSX_AUDIO_SINK (GST_OBJECT_PARENT (buf))->channel_positions);
+  }
 
   buf->size = spec->segtotal * spec->segsize;
   buf->memory = g_malloc0 (buf->size);
@@ -259,7 +254,7 @@ gst_osx_audio_ring_buffer_release (GstAudioRingBuffer * buf)
 
   osxbuf = GST_OSX_AUDIO_RING_BUFFER (buf);
 
-  gst_core_audio_uninitialize (osxbuf->core_audio);
+  gst_core_audio_unitialize (osxbuf->core_audio);
 
   g_free (buf->memory);
   buf->memory = NULL;

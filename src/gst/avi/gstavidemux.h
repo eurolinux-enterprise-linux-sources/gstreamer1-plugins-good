@@ -120,7 +120,6 @@ typedef struct {
 
   gint           index_id;
   gboolean is_raw;
-  gsize alignment;
 } GstAviStream;
 
 typedef enum {
@@ -183,7 +182,6 @@ typedef struct _GstAviDemux {
 
   /* segment in TIME */
   GstSegment     segment;
-  guint32        segment_seqnum;
 
   /* pending tags/events */
   GstEvent      *seg_event;

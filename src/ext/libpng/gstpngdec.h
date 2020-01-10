@@ -56,7 +56,6 @@ struct _GstPngDec
   gint color_type;
 
   gboolean image_ready;
-  gsize read_data;
 };
 
 struct _GstPngDecClass

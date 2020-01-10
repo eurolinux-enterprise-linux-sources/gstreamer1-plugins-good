@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: gst-plugins-good 0.10.25.3\n"
 "Report-Msgid-Bugs-To: http://bugzilla.gnome.org/\n"
-"POT-Creation-Date: 2017-02-23 15:16+0200\n"
+"POT-Creation-Date: 2014-12-18 12:05+0100\n"
 "PO-Revision-Date: 2010-10-25 10:11+0200\n"
 "Last-Translator: Luca Ferretti <elle.uca@infinito.it>\n"
 "Language-Team: Italian <tp@lists.linux.it>\n"
@@ -45,15 +45,17 @@ msgstr "Impossibile stabilire la connessione al server."
 msgid "Secure connection setup failed."
 msgstr "Impostazione della connessione sicura non riuscita."
 
-#, fuzzy
 msgid ""
-"A network error occurred, or the server closed the connection unexpectedly."
+"A network error occured, or the server closed the connection unexpectedly."
 msgstr ""
 "Si è verificato un errore di rete, oppure il server ha chiuso la connessione "
 "in modo inatteso."
 
 msgid "Server sent bad data."
 msgstr "In server ha inviato dati errati."
+
+msgid "Internal data stream error."
+msgstr "Errore interno nello stream dei dati."
 
 msgid "No or invalid input audio, AVI stream will be corrupt."
 msgstr ""
@@ -101,6 +103,9 @@ msgstr ""
 "abilitare altri protocolli di trasporto oppure in alternativa potrebbe "
 "mancare il corretto plugin GStreamer di tipo estensione RTSP."
 
+msgid "Internal data flow error."
+msgstr "Errore interno nel flusso di dati."
+
 msgid ""
 "Could not open audio device for playback. Device is being used by another "
 "application."
@@ -146,12 +151,6 @@ msgstr ""
 
 msgid "Could not open audio device for recording."
 msgstr "Impossibile aprire il dispositivo audio per la registrazione."
-
-msgid "CoreAudio device not found"
-msgstr ""
-
-msgid "CoreAudio device could not be opened"
-msgstr ""
 
 msgid "Record Source"
 msgstr "Sorgente registrazione"
@@ -263,12 +262,11 @@ msgid "Video device returned invalid dimensions."
 msgstr ""
 
 #, fuzzy
-msgid "Video device uses an unsupported interlacing method."
+msgid "Video devices uses an unsupported interlacing method."
 msgstr "Il driver del device «%s» non supporta alcun metodo di cattura noto."
 
-#, fuzzy
-msgid "Video device uses an unsupported pixel format."
-msgstr "Il driver del device «%s» non supporta alcun metodo di cattura noto."
+msgid "Video devices uses an unsupported pixel format."
+msgstr ""
 
 msgid "Failed to configure internal buffer pool."
 msgstr ""
@@ -452,12 +450,6 @@ msgstr ""
 
 msgid "Cannot operate without a clock"
 msgstr "Impossibile operare senza un clock"
-
-#~ msgid "Internal data stream error."
-#~ msgstr "Errore interno nello stream dei dati."
-
-#~ msgid "Internal data flow error."
-#~ msgstr "Errore interno nel flusso di dati."
 
 #, fuzzy
 #~ msgid "Device '%s' does not support video capture"

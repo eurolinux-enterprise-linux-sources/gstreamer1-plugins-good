@@ -250,10 +250,7 @@ gst_v4l2sink_sync_overlay_fields (GstV4l2Sink * v4l2sink)
     struct v4l2_format format;
 
     memset (&format, 0x00, sizeof (struct v4l2_format));
-    if (v4l2sink->v4l2object->device_caps & V4L2_CAP_VIDEO_OUTPUT_OVERLAY)
-      format.type = V4L2_BUF_TYPE_VIDEO_OUTPUT_OVERLAY;
-    else
-      format.type = V4L2_BUF_TYPE_VIDEO_OVERLAY;
+    format.type = V4L2_BUF_TYPE_VIDEO_OVERLAY;
 
     if (v4l2_ioctl (fd, VIDIOC_G_FMT, &format) < 0) {
       GST_WARNING_OBJECT (v4l2sink, "VIDIOC_G_FMT failed");
@@ -321,11 +318,6 @@ gst_v4l2sink_sync_crop_fields (GstV4l2Sink * v4l2sink)
 
     if (v4l2_ioctl (fd, VIDIOC_S_CROP, &crop) < 0) {
       GST_WARNING_OBJECT (v4l2sink, "VIDIOC_S_CROP failed");
-      return;
-    }
-
-    if (v4l2_ioctl (fd, VIDIOC_G_CROP, &crop) < 0) {
-      GST_WARNING_OBJECT (v4l2sink, "VIDIOC_G_CROP failed");
       return;
     }
 
@@ -493,13 +485,12 @@ gst_v4l2sink_get_caps (GstBaseSink * bsink, GstCaps * filter)
 static gboolean
 gst_v4l2sink_set_caps (GstBaseSink * bsink, GstCaps * caps)
 {
-  GstV4l2Error error = GST_V4L2_ERROR_INIT;
   GstV4l2Sink *v4l2sink = GST_V4L2SINK (bsink);
   GstV4l2Object *obj = v4l2sink->v4l2object;
 
   LOG_CAPS (v4l2sink, caps);
 
-  if (!GST_V4L2_IS_OPEN (obj)) {
+  if (!GST_V4L2_IS_OPEN (v4l2sink->v4l2object)) {
     GST_DEBUG_OBJECT (v4l2sink, "device is not open");
     return FALSE;
   }
@@ -511,16 +502,16 @@ gst_v4l2sink_set_caps (GstBaseSink * bsink, GstCaps * caps)
   if (!gst_v4l2_object_stop (obj))
     goto stop_failed;
 
-  if (!gst_v4l2_object_set_format (obj, caps, &error))
+  if (!gst_v4l2_object_set_format (v4l2sink->v4l2object, caps))
     goto invalid_format;
 
   gst_v4l2sink_sync_overlay_fields (v4l2sink);
   gst_v4l2sink_sync_crop_fields (v4l2sink);
 
-  GST_INFO_OBJECT (v4l2sink, "outputting buffers via mode %u", obj->mode);
+  GST_INFO_OBJECT (v4l2sink, "outputting buffers via mmap()");
 
-  v4l2sink->video_width = GST_V4L2_WIDTH (obj);
-  v4l2sink->video_height = GST_V4L2_HEIGHT (obj);
+  v4l2sink->video_width = GST_V4L2_WIDTH (v4l2sink->v4l2object);
+  v4l2sink->video_height = GST_V4L2_HEIGHT (v4l2sink->v4l2object);
 
   /* TODO: videosink width/height should be scaled according to
    * pixel-aspect-ratio
@@ -539,7 +530,6 @@ stop_failed:
 invalid_format:
   {
     /* error already posted */
-    gst_v4l2_error (v4l2sink, &error);
     GST_DEBUG_OBJECT (v4l2sink, "can't set format");
     return FALSE;
   }

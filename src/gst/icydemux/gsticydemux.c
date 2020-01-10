@@ -103,8 +103,10 @@ gst_icydemux_class_init (GstICYDemuxClass * klass)
 
   gstelement_class->change_state = gst_icydemux_change_state;
 
-  gst_element_class_add_static_pad_template (gstelement_class, &src_factory);
-  gst_element_class_add_static_pad_template (gstelement_class, &sink_factory);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&src_factory));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&sink_factory));
 
   gst_element_class_set_static_metadata (gstelement_class, "ICY tag demuxer",
       "Codec/Demuxer/Metadata",
@@ -323,7 +325,6 @@ gst_icydemux_parse_and_send_tags (GstICYDemux * icydemux)
   GstTagList *tags;
   const guint8 *data;
   int length, i;
-  gboolean tags_found = FALSE;
   gchar *buffer;
   gchar **strings;
 
@@ -341,7 +342,6 @@ gst_icydemux_parse_and_send_tags (GstICYDemux * icydemux)
   for (i = 0; strings[i]; i++) {
     if (!g_ascii_strncasecmp (strings[i], "StreamTitle=", 12)) {
       char *title = gst_icydemux_unicodify (strings[i] + 13);
-      tags_found = TRUE;
 
       if (title && *title) {
         gst_tag_list_add (tags, GST_TAG_MERGE_REPLACE, GST_TAG_TITLE,
@@ -350,7 +350,6 @@ gst_icydemux_parse_and_send_tags (GstICYDemux * icydemux)
       }
     } else if (!g_ascii_strncasecmp (strings[i], "StreamUrl=", 10)) {
       char *url = gst_icydemux_unicodify (strings[i] + 11);
-      tags_found = TRUE;
 
       if (url && *url) {
         gst_tag_list_add (tags, GST_TAG_MERGE_REPLACE, GST_TAG_HOMEPAGE,
@@ -365,7 +364,7 @@ gst_icydemux_parse_and_send_tags (GstICYDemux * icydemux)
   gst_adapter_unmap (icydemux->meta_adapter);
   gst_adapter_flush (icydemux->meta_adapter, length);
 
-  if (tags_found)
+  if (!gst_tag_list_is_empty (tags))
     gst_icydemux_tag_found (icydemux, tags);
   else
     gst_tag_list_unref (tags);
@@ -552,7 +551,6 @@ gst_icydemux_chain (GstPad * pad, GstObject * parent, GstBuffer * buf)
 
   if (icydemux->meta_interval == 0) {
     ret = gst_icydemux_typefind_or_forward (icydemux, buf);
-    buf = NULL;
     goto done;
   }
 

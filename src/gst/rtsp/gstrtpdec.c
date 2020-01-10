@@ -325,15 +325,15 @@ gst_rtp_dec_class_init (GstRTPDecClass * g_class)
   gstelement_class->release_pad = GST_DEBUG_FUNCPTR (gst_rtp_dec_release_pad);
 
   /* sink pads */
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_dec_recv_rtp_sink_template);
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_dec_recv_rtcp_sink_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_dec_recv_rtp_sink_template));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_dec_recv_rtcp_sink_template));
   /* src pads */
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_dec_recv_rtp_src_template);
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_dec_rtcp_src_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_dec_recv_rtp_src_template));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_dec_rtcp_src_template));
 
   gst_element_class_set_static_metadata (gstelement_class, "RTP Decoder",
       "Codec/Parser/Network",
@@ -357,7 +357,6 @@ gst_rtp_dec_finalize (GObject * object)
 
   rtpdec = GST_RTP_DEC (object);
 
-  gst_object_unref (rtpdec->provided_clock);
   g_slist_foreach (rtpdec->sessions, (GFunc) free_session, NULL);
   g_slist_free (rtpdec->sessions);
 
@@ -373,7 +372,6 @@ gst_rtp_dec_query_src (GstPad * pad, GstObject * parent, GstQuery * query)
     case GST_QUERY_LATENCY:
     {
       /* we pretend to be live with a 3 second latency */
-      /* FIXME: Do we really have infinite maximum latency? */
       gst_query_set_latency (query, TRUE, 3 * GST_SECOND, -1);
       res = TRUE;
       break;

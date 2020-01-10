@@ -336,9 +336,7 @@ const gchar* gst_keycode_to_keyname(gint16 keycode)
     NSOpenGLPFAColorSize, 24,
     NSOpenGLPFAAlphaSize, 8,
     NSOpenGLPFADepthSize, 24,
-#if MAC_OS_X_VERSION_MAX_ALLOWED < 1090
     NSOpenGLPFAWindow,
-#endif
     0
   };
 
@@ -575,9 +573,7 @@ const gchar* gst_keycode_to_keyname(gint16 keycode)
       NSOpenGLPFAColorSize, 24,
       NSOpenGLPFAAlphaSize, 8,
       NSOpenGLPFADepthSize, 24,
-#if MAC_OS_X_VERSION_MAX_ALLOWED < 1060
       NSOpenGLPFAFullScreen,
-#endif
       NSOpenGLPFAScreenMask,
       CGDisplayIDToOpenGLDisplayMask (kCGDirectMainDisplay),
       0
@@ -606,9 +602,7 @@ const gchar* gst_keycode_to_keyname(gint16 keycode)
       GST_WARNING ("CGCaptureAllDisplays() failed");
       return;
     }
-#if MAC_OS_X_VERSION_MAX_ALLOWED < 1070
     [fullScreenContext setFullScreen];
-#endif
     [fullScreenContext makeCurrentContext];
 
     fullscreen = YES;
@@ -654,11 +648,9 @@ const gchar* gst_keycode_to_keyname(gint16 keycode)
   [self reshape];
 }
 
-#ifndef GSTREAMER_GLIB_COCOA_NSAPPLICATION
 - (void) setMainThread: (NSThread *) thread {
   mainThread = thread;
 }
-#endif
 
 - (void) haveSuperviewReal:(NSMutableArray *)closure {
 	BOOL haveSuperview = [self superview] != nil;

@@ -163,6 +163,7 @@ GST_START_TEST (test_caps_transform)
   fail_unless (bus != NULL);
 
   gst_bus_add_watch (bus, bus_handler, loop);
+  gst_object_unref (bus);
 
   conversions_test_size = G_N_ELEMENTS (conversion_table);
   for (itr = 0; itr < conversions_test_size; itr++) {
@@ -199,8 +200,6 @@ GST_START_TEST (test_caps_transform)
         "couldn't set pipeline to READY state");
   }
 
-  gst_bus_remove_watch (bus);
-  gst_object_unref (bus);
   g_main_loop_unref (loop);
 
   videobox_test_deinit_context (&ctx);
@@ -221,4 +220,19 @@ videobox_suite (void)
   return s;
 }
 
-GST_CHECK_MAIN (videobox);
+int
+main (int argc, char **argv)
+{
+  int nf;
+
+  Suite *s = videobox_suite ();
+  SRunner *sr = srunner_create (s);
+
+  gst_check_init (&argc, &argv);
+
+  srunner_run_all (sr, CK_NORMAL);
+  nf = srunner_ntests_failed (sr);
+  srunner_free (sr);
+
+  return nf;
+}

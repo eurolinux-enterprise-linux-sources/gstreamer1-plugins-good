@@ -114,10 +114,10 @@ gst_speex_dec_class_init (GstSpeexDecClass * klass)
       g_param_spec_boolean ("enh", "Enh", "Enable perceptual enhancement",
           DEFAULT_ENH, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &speex_dec_src_factory);
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &speex_dec_sink_factory);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&speex_dec_src_factory));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&speex_dec_sink_factory));
   gst_element_class_set_static_metadata (gstelement_class,
       "Speex audio decoder", "Codec/Decoder/Audio",
       "decode speex streams to audio", "Wim Taymans <wim@fluendo.com>");
@@ -156,9 +156,6 @@ static void
 gst_speex_dec_init (GstSpeexDec * dec)
 {
   gst_audio_decoder_set_needs_format (GST_AUDIO_DECODER (dec), TRUE);
-  gst_audio_decoder_set_use_default_pad_acceptcaps (GST_AUDIO_DECODER_CAST
-      (dec), TRUE);
-  GST_PAD_SET_ACCEPT_TEMPLATE (GST_AUDIO_DECODER_SINK_PAD (dec));
 
   dec->enh = DEFAULT_ENH;
 

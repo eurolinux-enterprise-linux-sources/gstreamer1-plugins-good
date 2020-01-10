@@ -47,15 +47,14 @@ struct _GstGdkPixbufDec
 
   GstPad *sinkpad, *srcpad;
 
-  GstClockTime      last_timestamp;
-  GdkPixbufLoader  *pixbuf_loader;
+  GstClockTime    last_timestamp;
+  GdkPixbufLoader *pixbuf_loader;
 
   gint in_fps_n, in_fps_d;
 
-  GstVideoInfo   info;
+  GstVideoInfo info;
   GstBufferPool *pool;
-  GList         *pending_events;
-  gboolean       packetized;
+  GList *pending_events;
 };
 
 struct _GstGdkPixbufDecClass

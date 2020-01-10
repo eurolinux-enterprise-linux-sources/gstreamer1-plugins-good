@@ -5,7 +5,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: gst-plugins-good 0.10.23.2\n"
 "Report-Msgid-Bugs-To: http://bugzilla.gnome.org/\n"
-"POT-Creation-Date: 2017-02-23 15:16+0200\n"
+"POT-Creation-Date: 2014-12-18 12:05+0100\n"
 "PO-Revision-Date: 2010-08-16 03:22+0300\n"
 "Last-Translator: Lucian Adrian Grijincu <lucian.grijincu@gmail.com>\n"
 "Language-Team: Romanian <translation-team-ro@lists.sourceforge.net>\n"
@@ -50,11 +50,14 @@ msgid "Secure connection setup failed."
 msgstr ""
 
 msgid ""
-"A network error occurred, or the server closed the connection unexpectedly."
+"A network error occured, or the server closed the connection unexpectedly."
 msgstr ""
 
 msgid "Server sent bad data."
 msgstr ""
+
+msgid "Internal data stream error."
+msgstr "Eroare internă a fluxului de date."
 
 msgid "No or invalid input audio, AVI stream will be corrupt."
 msgstr ""
@@ -101,6 +104,9 @@ msgstr ""
 "multor protocoale de transport sau de altfel s-ar putea să lipsească modulul "
 "corect de extensie GStreamer RTSP."
 
+msgid "Internal data flow error."
+msgstr "Eroare internă a fluxului de date."
+
 msgid ""
 "Could not open audio device for playback. Device is being used by another "
 "application."
@@ -146,12 +152,6 @@ msgstr ""
 
 msgid "Could not open audio device for recording."
 msgstr "Nu s-a putut deschide dispozitivul audio pentru înregistrare."
-
-msgid "CoreAudio device not found"
-msgstr ""
-
-msgid "CoreAudio device could not be opened"
-msgstr ""
 
 msgid "Record Source"
 msgstr "Sursă înregistrare"
@@ -267,16 +267,13 @@ msgid "Video device returned invalid dimensions."
 msgstr ""
 
 #, fuzzy
-msgid "Video device uses an unsupported interlacing method."
+msgid "Video devices uses an unsupported interlacing method."
 msgstr ""
 "Driverul pentru dispozitivul „%s” nu suport nici o metodă de captură "
 "cunoscută."
 
-#, fuzzy
-msgid "Video device uses an unsupported pixel format."
+msgid "Video devices uses an unsupported pixel format."
 msgstr ""
-"Driverul pentru dispozitivul „%s” nu suport nici o metodă de captură "
-"cunoscută."
 
 msgid "Failed to configure internal buffer pool."
 msgstr ""
@@ -450,12 +447,6 @@ msgstr "Schimbarea rezoluției pe durata rulării nu este incă suportată."
 
 msgid "Cannot operate without a clock"
 msgstr "Nu se poate opera fără un ceas"
-
-#~ msgid "Internal data stream error."
-#~ msgstr "Eroare internă a fluxului de date."
-
-#~ msgid "Internal data flow error."
-#~ msgstr "Eroare internă a fluxului de date."
 
 #, fuzzy
 #~ msgid "Device '%s' does not support video capture"

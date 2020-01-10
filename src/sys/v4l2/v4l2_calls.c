@@ -74,16 +74,11 @@ gst_v4l2_get_capabilities (GstV4l2Object * v4l2object)
   if (v4l2_ioctl (v4l2object->video_fd, VIDIOC_QUERYCAP, &v4l2object->vcap) < 0)
     goto cap_failed;
 
-  if (v4l2object->vcap.capabilities & V4L2_CAP_DEVICE_CAPS)
-    v4l2object->device_caps = v4l2object->vcap.device_caps;
-  else
-    v4l2object->device_caps = v4l2object->vcap.capabilities;
-
   GST_LOG_OBJECT (e, "driver:      '%s'", v4l2object->vcap.driver);
   GST_LOG_OBJECT (e, "card:        '%s'", v4l2object->vcap.card);
   GST_LOG_OBJECT (e, "bus_info:    '%s'", v4l2object->vcap.bus_info);
   GST_LOG_OBJECT (e, "version:     %08x", v4l2object->vcap.version);
-  GST_LOG_OBJECT (e, "capabilites: %08x", v4l2object->device_caps);
+  GST_LOG_OBJECT (e, "capabilites: %08x", v4l2object->vcap.capabilities);
 
   return TRUE;
 
@@ -489,17 +484,16 @@ gst_v4l2_adjust_buf_type (GstV4l2Object * v4l2object)
    * in a contiguous manner. In this case the first v4l2 plane
    * contains all the gst planes.
    */
+#define CHECK_CAPS (V4L2_CAP_VIDEO_OUTPUT_MPLANE | V4L2_CAP_VIDEO_M2M_MPLANE)
   switch (v4l2object->type) {
     case V4L2_BUF_TYPE_VIDEO_OUTPUT:
-      if (v4l2object->device_caps &
-          (V4L2_CAP_VIDEO_OUTPUT_MPLANE | V4L2_CAP_VIDEO_M2M_MPLANE)) {
+      if (v4l2object->vcap.capabilities & CHECK_CAPS) {
         GST_DEBUG ("adjust type to multi-planar output");
         v4l2object->type = V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE;
       }
       break;
     case V4L2_BUF_TYPE_VIDEO_CAPTURE:
-      if (v4l2object->device_caps &
-          (V4L2_CAP_VIDEO_CAPTURE_MPLANE | V4L2_CAP_VIDEO_M2M_MPLANE)) {
+      if (v4l2object->vcap.capabilities & CHECK_CAPS) {
         GST_DEBUG ("adjust type to multi-planar capture");
         v4l2object->type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
       }
@@ -507,6 +501,7 @@ gst_v4l2_adjust_buf_type (GstV4l2Object * v4l2object)
     default:
       break;
   }
+#undef CHECK_CAPS
 }
 
 /******************************************************
@@ -561,23 +556,23 @@ gst_v4l2_open (GstV4l2Object * v4l2object)
 
   /* do we need to be a capture device? */
   if (GST_IS_V4L2SRC (v4l2object->element) &&
-      !(v4l2object->device_caps & (V4L2_CAP_VIDEO_CAPTURE |
+      !(v4l2object->vcap.capabilities & (V4L2_CAP_VIDEO_CAPTURE |
               V4L2_CAP_VIDEO_CAPTURE_MPLANE)))
     goto not_capture;
 
   if (GST_IS_V4L2SINK (v4l2object->element) &&
-      !(v4l2object->device_caps & (V4L2_CAP_VIDEO_OUTPUT |
+      !(v4l2object->vcap.capabilities & (V4L2_CAP_VIDEO_OUTPUT |
               V4L2_CAP_VIDEO_OUTPUT_MPLANE)))
     goto not_output;
 
   if (GST_IS_V4L2_VIDEO_DEC (v4l2object->element) &&
       /* Today's M2M device only expose M2M */
-      !((v4l2object->device_caps & (V4L2_CAP_VIDEO_M2M |
+      !((v4l2object->vcap.capabilities & (V4L2_CAP_VIDEO_M2M |
                   V4L2_CAP_VIDEO_M2M_MPLANE)) ||
           /* But legacy driver may expose both CAPTURE and OUTPUT */
-          ((v4l2object->device_caps &
+          ((v4l2object->vcap.capabilities &
                   (V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_VIDEO_CAPTURE_MPLANE)) &&
-              (v4l2object->device_caps &
+              (v4l2object->vcap.capabilities &
                   (V4L2_CAP_VIDEO_OUTPUT | V4L2_CAP_VIDEO_OUTPUT_MPLANE)))))
     goto not_m2m;
 
@@ -630,7 +625,7 @@ not_capture:
     GST_ELEMENT_ERROR (v4l2object->element, RESOURCE, NOT_FOUND,
         (_("Device '%s' is not a capture device."),
             v4l2object->videodev),
-        ("Capabilities: 0x%x", v4l2object->device_caps));
+        ("Capabilities: 0x%x", v4l2object->vcap.capabilities));
     goto error;
   }
 not_output:
@@ -638,7 +633,7 @@ not_output:
     GST_ELEMENT_ERROR (v4l2object->element, RESOURCE, NOT_FOUND,
         (_("Device '%s' is not a output device."),
             v4l2object->videodev),
-        ("Capabilities: 0x%x", v4l2object->device_caps));
+        ("Capabilities: 0x%x", v4l2object->vcap.capabilities));
     goto error;
   }
 not_m2m:
@@ -646,7 +641,7 @@ not_m2m:
     GST_ELEMENT_ERROR (v4l2object->element, RESOURCE, NOT_FOUND,
         (_("Device '%s' is not a M2M device."),
             v4l2object->videodev),
-        ("Capabilities: 0x%x", v4l2object->device_caps));
+        ("Capabilities: 0x%x", v4l2object->vcap.capabilities));
     goto error;
   }
 error:
@@ -675,7 +670,6 @@ gst_v4l2_dup (GstV4l2Object * v4l2object, GstV4l2Object * other)
   GST_V4L2_CHECK_NOT_ACTIVE (v4l2object);
 
   v4l2object->vcap = other->vcap;
-  v4l2object->device_caps = other->device_caps;
   gst_v4l2_adjust_buf_type (v4l2object);
 
   v4l2object->video_fd = v4l2_dup (other->video_fd);
@@ -848,7 +842,7 @@ gst_v4l2_set_frequency (GstV4l2Object * v4l2object,
 
   freq.tuner = tunernum;
   /* fill in type - ignore error */
-  (void) v4l2_ioctl (v4l2object->video_fd, VIDIOC_G_FREQUENCY, &freq);
+  v4l2_ioctl (v4l2object->video_fd, VIDIOC_G_FREQUENCY, &freq);
   freq.frequency = frequency / channel->freq_multiplicator;
 
   if (v4l2_ioctl (v4l2object->video_fd, VIDIOC_S_FREQUENCY, &freq) < 0)
@@ -929,9 +923,9 @@ gst_v4l2_get_attribute (GstV4l2Object * v4l2object,
   /* ERRORS */
 ctrl_failed:
   {
-    GST_WARNING_OBJECT (v4l2object,
-        _("Failed to get value for control %d on device '%s'."),
-        attribute_num, v4l2object->videodev);
+    GST_ELEMENT_WARNING (v4l2object->element, RESOURCE, SETTINGS,
+        (_("Failed to get value for control %d on device '%s'."),
+            attribute_num, v4l2object->videodev), GST_ERROR_SYSTEM);
     return FALSE;
   }
 }
@@ -964,9 +958,9 @@ gst_v4l2_set_attribute (GstV4l2Object * v4l2object,
   /* ERRORS */
 ctrl_failed:
   {
-    GST_WARNING_OBJECT (v4l2object,
-        _("Failed to set value %d for control %d on device '%s'."),
-        value, attribute_num, v4l2object->videodev);
+    GST_ELEMENT_WARNING (v4l2object->element, RESOURCE, SETTINGS,
+        (_("Failed to set value %d for control %d on device '%s'."),
+            value, attribute_num, v4l2object->videodev), GST_ERROR_SYSTEM);
     return FALSE;
   }
 }
@@ -1040,7 +1034,7 @@ gst_v4l2_get_input (GstV4l2Object * v4l2object, gint * input)
 
   /* ERRORS */
 input_failed:
-  if (v4l2object->device_caps & V4L2_CAP_TUNER) {
+  if (v4l2object->vcap.capabilities & V4L2_CAP_TUNER) {
     /* only give a warning message if driver actually claims to have tuner
      * support
      */
@@ -1065,7 +1059,7 @@ gst_v4l2_set_input (GstV4l2Object * v4l2object, gint input)
 
   /* ERRORS */
 input_failed:
-  if (v4l2object->device_caps & V4L2_CAP_TUNER) {
+  if (v4l2object->vcap.capabilities & V4L2_CAP_TUNER) {
     /* only give a warning message if driver actually claims to have tuner
      * support
      */
@@ -1097,7 +1091,7 @@ gst_v4l2_get_output (GstV4l2Object * v4l2object, gint * output)
 
   /* ERRORS */
 output_failed:
-  if (v4l2object->device_caps & V4L2_CAP_TUNER) {
+  if (v4l2object->vcap.capabilities & V4L2_CAP_TUNER) {
     /* only give a warning message if driver actually claims to have tuner
      * support
      */
@@ -1122,7 +1116,7 @@ gst_v4l2_set_output (GstV4l2Object * v4l2object, gint output)
 
   /* ERRORS */
 output_failed:
-  if (v4l2object->device_caps & V4L2_CAP_TUNER) {
+  if (v4l2object->vcap.capabilities & V4L2_CAP_TUNER) {
     /* only give a warning message if driver actually claims to have tuner
      * support
      */

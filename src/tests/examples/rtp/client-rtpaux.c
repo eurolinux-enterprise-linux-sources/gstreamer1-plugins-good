@@ -18,7 +18,6 @@
  * Boston, MA 02110-1301, USA.
  */
 #include <gst/gst.h>
-#include <gst/rtp/rtp.h>
 #include <stdlib.h>
 
 /*
@@ -163,13 +162,10 @@ request_pt_map (GstElement * rtpbin, guint session, guint pt,
     gpointer user_data)
 {
   SessionData *data = (SessionData *) user_data;
-  gchar *caps_str;
   g_print ("Looking for caps for pt %u in session %u, have %u\n", pt, session,
       data->sessionNum);
   if (session == data->sessionNum) {
-    caps_str = gst_caps_to_string (data->caps);
-    g_print ("Returning %s\n", caps_str);
-    g_free (caps_str);
+    g_print ("Returning %s\n", gst_caps_to_string (data->caps));
     return gst_caps_ref (data->caps);
   }
   return NULL;
@@ -356,8 +352,7 @@ main (int argc, char **argv)
 
   rtpBin = gst_element_factory_make ("rtpbin", NULL);
   gst_bin_add (GST_BIN (pipe), rtpBin);
-  g_object_set (rtpBin, "latency", 200, "do-retransmission", TRUE,
-      "rtp-profile", GST_RTP_PROFILE_AVPF, NULL);
+  g_object_set (rtpBin, "latency", 200, "do-retransmission", TRUE, NULL);
 
   videoSession = make_video_session (0);
   audioSession = make_audio_session (1);

@@ -7,7 +7,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: gst-plugins-good 0.10.23.2\n"
 "Report-Msgid-Bugs-To: http://bugzilla.gnome.org/\n"
-"POT-Creation-Date: 2017-02-23 15:16+0200\n"
+"POT-Creation-Date: 2014-12-18 12:05+0100\n"
 "PO-Revision-Date: 2010-07-16 19:34+0300\n"
 "Last-Translator: Žygimantas Beručka <uid0@akl.lt>\n"
 "Language-Team: Lithuanian <komp_lt@konferencijos.lt>\n"
@@ -51,11 +51,14 @@ msgid "Secure connection setup failed."
 msgstr ""
 
 msgid ""
-"A network error occurred, or the server closed the connection unexpectedly."
+"A network error occured, or the server closed the connection unexpectedly."
 msgstr ""
 
 msgid "Server sent bad data."
 msgstr ""
+
+msgid "Internal data stream error."
+msgstr "Vidinė duomenų srauto klaida."
 
 msgid "No or invalid input audio, AVI stream will be corrupt."
 msgstr "Nėra įvesties garso arba jis netinkamas, AVI srautas bus sugadintas."
@@ -99,6 +102,9 @@ msgid ""
 msgstr ""
 "Nerasta palaikomų srautų. Jums gali reikėti leisti daugiau transporto "
 "protokolų, arba jūs neturite tinkamo GStreamer RTSP papildinio įskiepio."
+
+msgid "Internal data flow error."
+msgstr "Vidinė duomenų srauto klaida."
 
 msgid ""
 "Could not open audio device for playback. Device is being used by another "
@@ -144,12 +150,6 @@ msgstr ""
 
 msgid "Could not open audio device for recording."
 msgstr "Nepavyko atverti garso įrenginio įrašymui."
-
-msgid "CoreAudio device not found"
-msgstr ""
-
-msgid "CoreAudio device could not be opened"
-msgstr ""
 
 msgid "Record Source"
 msgstr "Įrašymo šaltinis"
@@ -259,12 +259,11 @@ msgid "Video device returned invalid dimensions."
 msgstr ""
 
 #, fuzzy
-msgid "Video device uses an unsupported interlacing method."
+msgid "Video devices uses an unsupported interlacing method."
 msgstr "Įrenginio „%s“ tvarkyklė nepalaiko jokių žinomų įrašymo būdų."
 
-#, fuzzy
-msgid "Video device uses an unsupported pixel format."
-msgstr "Įrenginio „%s“ tvarkyklė nepalaiko jokių žinomų įrašymo būdų."
+msgid "Video devices uses an unsupported pixel format."
+msgstr ""
 
 msgid "Failed to configure internal buffer pool."
 msgstr ""
@@ -427,12 +426,6 @@ msgstr "Galimybės keisti skiriamąją gebą operacijos vykdymo metu dar nėra."
 
 msgid "Cannot operate without a clock"
 msgstr "Negali veikti be laikrodžio"
-
-#~ msgid "Internal data stream error."
-#~ msgstr "Vidinė duomenų srauto klaida."
-
-#~ msgid "Internal data flow error."
-#~ msgstr "Vidinė duomenų srauto klaida."
 
 #, fuzzy
 #~ msgid "Device '%s' does not support video capture"

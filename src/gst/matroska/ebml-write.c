@@ -215,8 +215,7 @@ gst_ebml_writer_send_segment_event (GstEbmlWrite * ebml, guint64 new_pos)
 
   GST_INFO ("seeking to %" G_GUINT64_FORMAT, new_pos);
 
-  gst_segment_init (&segment,
-      ebml->streamable ? GST_FORMAT_TIME : GST_FORMAT_BYTES);
+  gst_segment_init (&segment, GST_FORMAT_BYTES);
   segment.start = new_pos;
   segment.stop = -1;
   segment.position = 0;
@@ -256,13 +255,9 @@ gst_ebml_write_flush_cache (GstEbmlWrite * ebml, gboolean is_keyframe,
     if (GST_BUFFER_OFFSET (buffer) != ebml->last_pos) {
       gst_ebml_writer_send_segment_event (ebml, GST_BUFFER_OFFSET (buffer));
       GST_BUFFER_FLAG_SET (buffer, GST_BUFFER_FLAG_DISCONT);
-    } else {
-      GST_BUFFER_FLAG_UNSET (buffer, GST_BUFFER_FLAG_DISCONT);
     }
     if (ebml->writing_streamheader) {
       GST_BUFFER_FLAG_SET (buffer, GST_BUFFER_FLAG_HEADER);
-    } else {
-      GST_BUFFER_FLAG_UNSET (buffer, GST_BUFFER_FLAG_HEADER);
     }
     if (!is_keyframe) {
       GST_BUFFER_FLAG_SET (buffer, GST_BUFFER_FLAG_DELTA_UNIT);
@@ -462,16 +457,12 @@ gst_ebml_write_element_push (GstEbmlWrite * ebml, GstBuffer * buf,
     GST_BUFFER_OFFSET_END (buf) = ebml->pos;
     if (ebml->writing_streamheader) {
       GST_BUFFER_FLAG_SET (buf, GST_BUFFER_FLAG_HEADER);
-    } else {
-      GST_BUFFER_FLAG_UNSET (buf, GST_BUFFER_FLAG_HEADER);
     }
     GST_BUFFER_FLAG_SET (buf, GST_BUFFER_FLAG_DELTA_UNIT);
 
     if (GST_BUFFER_OFFSET (buf) != ebml->last_pos) {
       gst_ebml_writer_send_segment_event (ebml, GST_BUFFER_OFFSET (buf));
       GST_BUFFER_FLAG_SET (buf, GST_BUFFER_FLAG_DISCONT);
-    } else {
-      GST_BUFFER_FLAG_UNSET (buf, GST_BUFFER_FLAG_DISCONT);
     }
     ebml->last_pos = ebml->pos;
     ebml->last_write_result = gst_pad_push (ebml->srcpad, buf);

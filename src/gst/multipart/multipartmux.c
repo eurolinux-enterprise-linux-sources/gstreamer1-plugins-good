@@ -47,8 +47,8 @@ GST_DEBUG_CATEGORY_STATIC (gst_multipart_mux_debug);
 
 enum
 {
-  PROP_0,
-  PROP_BOUNDARY
+  ARG_0,
+  ARG_BOUNDARY
       /* FILL ME */
 };
 
@@ -114,15 +114,17 @@ gst_multipart_mux_class_init (GstMultipartMuxClass * klass)
   gobject_class->get_property = gst_multipart_mux_get_property;
   gobject_class->set_property = gst_multipart_mux_set_property;
 
-  g_object_class_install_property (G_OBJECT_CLASS (klass), PROP_BOUNDARY,
+  g_object_class_install_property (G_OBJECT_CLASS (klass), ARG_BOUNDARY,
       g_param_spec_string ("boundary", "Boundary", "Boundary string",
           DEFAULT_BOUNDARY, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
   gstelement_class->request_new_pad = gst_multipart_mux_request_new_pad;
   gstelement_class->change_state = gst_multipart_mux_change_state;
 
-  gst_element_class_add_static_pad_template (gstelement_class, &src_factory);
-  gst_element_class_add_static_pad_template (gstelement_class, &sink_factory);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&src_factory));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&sink_factory));
 
   gst_element_class_set_static_metadata (gstelement_class, "Multipart muxer",
       "Codec/Muxer", "mux multipart streams", "Wim Taymans <wim@fluendo.com>");
@@ -151,8 +153,8 @@ gst_multipart_mux_init (GstMultipartMux * multipart_mux)
 
   multipart_mux->collect = gst_collect_pads_new ();
   gst_collect_pads_set_event_function (multipart_mux->collect,
-      (GstCollectPadsEventFunction)
-      GST_DEBUG_FUNCPTR (gst_multipart_mux_sink_event), multipart_mux);
+      (GstCollectPadsEventFunction) GST_DEBUG_FUNCPTR (gst_multipart_mux_sink_event),
+      multipart_mux);
   gst_collect_pads_set_function (multipart_mux->collect,
       (GstCollectPadsFunction) GST_DEBUG_FUNCPTR (gst_multipart_mux_collected),
       multipart_mux);
@@ -310,20 +312,13 @@ gst_multipart_mux_compare_pads (GstMultipartMux * multipart_mux,
   if (new == NULL || new->buffer == NULL)
     return -1;
 
-  if (GST_CLOCK_TIME_IS_VALID (old->dts_timestamp) &&
-      GST_CLOCK_TIME_IS_VALID (new->dts_timestamp)) {
-    oldtime = old->dts_timestamp;
-    newtime = new->dts_timestamp;
-  } else {
-    oldtime = old->pts_timestamp;
-    newtime = new->pts_timestamp;
-  }
-
   /* no timestamp on old buffer, it must go first */
+  oldtime = old->timestamp;
   if (oldtime == GST_CLOCK_TIME_NONE)
     return -1;
 
   /* no timestamp on new buffer, it must go first */
+  newtime = new->timestamp;
   if (newtime == GST_CLOCK_TIME_NONE)
     return 1;
 
@@ -362,22 +357,14 @@ gst_multipart_mux_queue_pads (GstMultipartMux * mux)
 
       buf = gst_collect_pads_pop (mux->collect, data);
 
-      /* Store timestamps with segment_start and preroll */
-      if (buf && GST_BUFFER_PTS_IS_VALID (buf)) {
-        pad->pts_timestamp =
+      /* Store timestamp with segment_start and preroll */
+      if (buf && GST_BUFFER_TIMESTAMP_IS_VALID (buf)) {
+        pad->timestamp =
             gst_segment_to_running_time (&data->segment, GST_FORMAT_TIME,
-            GST_BUFFER_PTS (buf));
+            GST_BUFFER_TIMESTAMP (buf));
       } else {
-        pad->pts_timestamp = GST_CLOCK_TIME_NONE;
+        pad->timestamp = GST_CLOCK_TIME_NONE;
       }
-      if (buf && GST_BUFFER_DTS_IS_VALID (buf)) {
-        pad->dts_timestamp =
-            gst_segment_to_running_time (&data->segment, GST_FORMAT_TIME,
-            GST_BUFFER_DTS (buf));
-      } else {
-        pad->dts_timestamp = GST_CLOCK_TIME_NONE;
-      }
-
 
       pad->buffer = buf;
     }
@@ -477,13 +464,10 @@ gst_multipart_mux_collected (GstCollectPads * pads, GstMultipartMux * mux)
     GstClockTime time;
     GstSegment segment;
 
-    if (best->dts_timestamp != GST_CLOCK_TIME_NONE) {
-      time = best->dts_timestamp;
-    } else if (best->pts_timestamp != GST_CLOCK_TIME_NONE) {
-      time = best->pts_timestamp;
-    } else {
+    if (best->timestamp != -1)
+      time = best->timestamp;
+    else
       time = 0;
-    }
 
     /* for the segment, we take the first timestamp we see, we don't know the
      * length and the position is 0 */
@@ -518,10 +502,9 @@ gst_multipart_mux_collected (GstCollectPads * pads, GstMultipartMux * mux)
   gst_buffer_fill (headerbuf, 0, header, headerlen);
   g_free (header);
 
-  /* the header has the same timestamps as the data buffer (which we will push
+  /* the header has the same timestamp as the data buffer (which we will push
    * below) and has a duration of 0 */
-  GST_BUFFER_PTS (headerbuf) = best->pts_timestamp;
-  GST_BUFFER_DTS (headerbuf) = best->dts_timestamp;
+  GST_BUFFER_TIMESTAMP (headerbuf) = best->timestamp;
   GST_BUFFER_DURATION (headerbuf) = 0;
   GST_BUFFER_OFFSET (headerbuf) = mux->offset;
   mux->offset += headerlen;
@@ -540,9 +523,8 @@ gst_multipart_mux_collected (GstCollectPads * pads, GstMultipartMux * mux)
   databuf = gst_buffer_make_writable (best->buffer);
   best->buffer = NULL;
 
-  /* we need to updated the timestamps to match the running_time */
-  GST_BUFFER_PTS (databuf) = best->pts_timestamp;
-  GST_BUFFER_DTS (databuf) = best->dts_timestamp;
+  /* we need to updated the timestamp to match the running_time */
+  GST_BUFFER_TIMESTAMP (databuf) = best->timestamp;
   GST_BUFFER_OFFSET (databuf) = mux->offset;
   mux->offset += gst_buffer_get_size (databuf);
   GST_BUFFER_OFFSET_END (databuf) = mux->offset;
@@ -559,10 +541,9 @@ gst_multipart_mux_collected (GstCollectPads * pads, GstMultipartMux * mux)
   footerbuf = gst_buffer_new_allocate (NULL, 2, NULL);
   gst_buffer_fill (footerbuf, 0, "\r\n", 2);
 
-  /* the footer has the same timestamps as the data buffer and has a
+  /* the footer has the same timestamp as the data buffer and has a
    * duration of 0 */
-  GST_BUFFER_PTS (footerbuf) = best->pts_timestamp;
-  GST_BUFFER_DTS (footerbuf) = best->dts_timestamp;
+  GST_BUFFER_TIMESTAMP (footerbuf) = best->timestamp;
   GST_BUFFER_DURATION (footerbuf) = 0;
   GST_BUFFER_OFFSET (footerbuf) = mux->offset;
   mux->offset += 2;
@@ -619,7 +600,7 @@ gst_multipart_mux_get_property (GObject * object,
   mux = GST_MULTIPART_MUX (object);
 
   switch (prop_id) {
-    case PROP_BOUNDARY:
+    case ARG_BOUNDARY:
       g_value_set_string (value, mux->boundary);
       break;
     default:
@@ -637,7 +618,7 @@ gst_multipart_mux_set_property (GObject * object,
   mux = GST_MULTIPART_MUX (object);
 
   switch (prop_id) {
-    case PROP_BOUNDARY:
+    case ARG_BOUNDARY:
       g_free (mux->boundary);
       mux->boundary = g_strdup (g_value_get_string (value));
       break;

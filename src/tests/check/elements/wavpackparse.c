@@ -116,9 +116,6 @@ GST_START_TEST (test_parsing_valid_frames)
   /* should decode the buffer without problems */
   fail_unless_equals_int (gst_pad_push (mysrcpad, inbuffer), GST_FLOW_OK);
 
-  /* inform of no further data */
-  fail_unless (gst_pad_push_event (mysrcpad, gst_event_new_eos ()));
-
   num_buffers = g_list_length (buffers);
   /* should get 2 buffers, each one complete wavpack frame */
   fail_unless_equals_int (num_buffers, 2);
@@ -180,9 +177,6 @@ GST_START_TEST (test_parsing_invalid_first_header)
   /* should decode the buffer without problems */
   fail_unless_equals_int (gst_pad_push (mysrcpad, inbuffer), GST_FLOW_OK);
 
-  /* inform of no further data */
-  fail_unless (gst_pad_push_event (mysrcpad, gst_event_new_eos ()));
-
   num_buffers = g_list_length (buffers);
 
   /* should get 1 buffers, the second non-broken one */
@@ -231,4 +225,19 @@ wavpackparse_suite (void)
   return s;
 }
 
-GST_CHECK_MAIN (wavpackparse);
+int
+main (int argc, char **argv)
+{
+  int nf;
+
+  Suite *s = wavpackparse_suite ();
+  SRunner *sr = srunner_create (s);
+
+  gst_check_init (&argc, &argv);
+
+  srunner_run_all (sr, CK_NORMAL);
+  nf = srunner_ntests_failed (sr);
+  srunner_free (sr);
+
+  return nf;
+}

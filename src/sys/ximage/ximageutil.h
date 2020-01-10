@@ -50,6 +50,7 @@ typedef struct _GstMetaXImage GstMetaXImage;
  * GstXContext:
  * @disp: the X11 Display of this context
  * @screen: the default Screen of Display @disp
+ * @screen_num: the Screen number of @screen
  * @visual: the default Visual of Screen @screen
  * @root: the root Window of Display @disp
  * @white: the value of a white pixel on Screen @screen
@@ -77,6 +78,7 @@ struct _GstXContext {
   Display *disp;
 
   Screen *screen;
+  gint screen_num;
 
   Visual *visual;
 

@@ -22,12 +22,10 @@
 #endif
 
 #include <gst/rtp/gstrtpbuffer.h>
-#include <gst/audio/audio.h>
 
 #include <stdlib.h>
 #include <string.h>
 #include "gstrtpqcelpdepay.h"
-#include "gstrtputils.h"
 
 GST_DEBUG_CATEGORY_STATIC (rtpqcelpdepay_debug);
 #define GST_CAT_DEFAULT (rtpqcelpdepay_debug)
@@ -47,7 +45,7 @@ enum
 
 enum
 {
-  PROP_0
+  ARG_0
 };
 
 static GstStaticPadTemplate gst_rtp_qcelp_depay_sink_template =
@@ -76,7 +74,7 @@ static void gst_rtp_qcelp_depay_finalize (GObject * object);
 static gboolean gst_rtp_qcelp_depay_setcaps (GstRTPBaseDepayload * depayload,
     GstCaps * caps);
 static GstBuffer *gst_rtp_qcelp_depay_process (GstRTPBaseDepayload * depayload,
-    GstRTPBuffer * rtp);
+    GstBuffer * buf);
 
 #define gst_rtp_qcelp_depay_parent_class parent_class
 G_DEFINE_TYPE (GstRtpQCELPDepay, gst_rtp_qcelp_depay,
@@ -95,13 +93,13 @@ gst_rtp_qcelp_depay_class_init (GstRtpQCELPDepayClass * klass)
 
   gobject_class->finalize = gst_rtp_qcelp_depay_finalize;
 
-  gstrtpbasedepayload_class->process_rtp_packet = gst_rtp_qcelp_depay_process;
+  gstrtpbasedepayload_class->process = gst_rtp_qcelp_depay_process;
   gstrtpbasedepayload_class->set_caps = gst_rtp_qcelp_depay_setcaps;
 
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_qcelp_depay_src_template);
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_qcelp_depay_sink_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_qcelp_depay_src_template));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_qcelp_depay_sink_template));
 
   gst_element_class_set_static_metadata (gstelement_class,
       "RTP QCELP depayloader", "Codec/Depayloader/Network/RTP",
@@ -250,8 +248,7 @@ create_erasure_buffer (GstRtpQCELPDepay * depay)
 }
 
 static GstBuffer *
-gst_rtp_qcelp_depay_process (GstRTPBaseDepayload * depayload,
-    GstRTPBuffer * rtp)
+gst_rtp_qcelp_depay_process (GstRTPBaseDepayload * depayload, GstBuffer * buf)
 {
   GstRtpQCELPDepay *depay;
   GstBuffer *outbuf;
@@ -259,17 +256,20 @@ gst_rtp_qcelp_depay_process (GstRTPBaseDepayload * depayload,
   guint payload_len, offset, index;
   guint8 *payload;
   guint LLL, NNN;
+  GstRTPBuffer rtp = { NULL };
 
   depay = GST_RTP_QCELP_DEPAY (depayload);
 
-  payload_len = gst_rtp_buffer_get_payload_len (rtp);
+  gst_rtp_buffer_map (buf, GST_MAP_READ, &rtp);
+
+  payload_len = gst_rtp_buffer_get_payload_len (&rtp);
 
   if (payload_len < 2)
     goto too_small;
 
-  timestamp = GST_BUFFER_PTS (rtp->buffer);
+  timestamp = GST_BUFFER_TIMESTAMP (buf);
 
-  payload = gst_rtp_buffer_get_payload (rtp);
+  payload = gst_rtp_buffer_get_payload (&rtp);
 
   /*  0 1 2 3 4 5 6 7
    * +-+-+-+-+-+-+-+-+
@@ -351,14 +351,11 @@ gst_rtp_qcelp_depay_process (GstRTPBaseDepayload * depayload,
       outbuf = create_erasure_buffer (depay);
     } else {
       /* each frame goes into its buffer */
-      outbuf = gst_rtp_buffer_get_payload_subbuffer (rtp, offset, frame_len);
+      outbuf = gst_rtp_buffer_get_payload_subbuffer (&rtp, offset, frame_len);
     }
 
-    GST_BUFFER_PTS (outbuf) = timestamp;
+    GST_BUFFER_TIMESTAMP (outbuf) = timestamp;
     GST_BUFFER_DURATION (outbuf) = FRAME_DURATION;
-
-    gst_rtp_drop_meta (GST_ELEMENT_CAST (depayload), outbuf,
-        g_quark_from_static_string (GST_META_TAG_AUDIO_STR));
 
     if (!depay->interleaved || index == 0) {
       /* not interleaved or first frame in packet, just push */
@@ -396,6 +393,7 @@ gst_rtp_qcelp_depay_process (GstRTPBaseDepayload * depayload,
     flush_packets (depay);
   }
 
+  gst_rtp_buffer_unmap (&rtp);
   return NULL;
 
   /* ERRORS */
@@ -403,24 +401,28 @@ too_small:
   {
     GST_ELEMENT_WARNING (depay, STREAM, DECODE,
         (NULL), ("QCELP RTP payload too small (%d)", payload_len));
+    gst_rtp_buffer_unmap (&rtp);
     return NULL;
   }
 invalid_lll:
   {
     GST_ELEMENT_WARNING (depay, STREAM, DECODE,
         (NULL), ("QCELP RTP invalid LLL received (%d)", LLL));
+    gst_rtp_buffer_unmap (&rtp);
     return NULL;
   }
 invalid_nnn:
   {
     GST_ELEMENT_WARNING (depay, STREAM, DECODE,
         (NULL), ("QCELP RTP invalid NNN received (%d)", NNN));
+    gst_rtp_buffer_unmap (&rtp);
     return NULL;
   }
 invalid_frame:
   {
     GST_ELEMENT_WARNING (depay, STREAM, DECODE,
         (NULL), ("QCELP RTP invalid frame received"));
+    gst_rtp_buffer_unmap (&rtp);
     return NULL;
   }
 }

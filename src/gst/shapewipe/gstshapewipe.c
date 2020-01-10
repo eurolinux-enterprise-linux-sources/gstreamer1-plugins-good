@@ -156,12 +156,12 @@ gst_shape_wipe_class_init (GstShapeWipeClass * klass)
       "Adds a shape wipe transition to a video stream",
       "Sebastian Dröge <sebastian.droege@collabora.co.uk>");
 
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &video_sink_pad_template);
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &mask_sink_pad_template);
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &src_pad_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&video_sink_pad_template));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&mask_sink_pad_template));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&src_pad_template));
 }
 
 static void
@@ -329,9 +329,8 @@ gst_shape_wipe_video_sink_getcaps (GstShapeWipe * self, GstPad * pad,
 {
   GstCaps *templ, *ret, *tmp;
 
-  ret = gst_pad_get_current_caps (pad);
-  if (ret != NULL)
-    return ret;
+  if (gst_pad_has_current_caps (pad))
+    return gst_pad_get_current_caps (pad);
 
   templ = gst_pad_get_pad_template_caps (pad);
   tmp = gst_pad_peer_query_caps (self->srcpad, NULL);
@@ -452,9 +451,8 @@ gst_shape_wipe_mask_sink_getcaps (GstShapeWipe * self, GstPad * pad,
   GstCaps *ret, *tmp, *tcaps;
   guint i, n;
 
-  ret = gst_pad_get_current_caps (pad);
-  if (ret != NULL)
-    return ret;
+  if (gst_pad_has_current_caps (pad))
+    return gst_pad_get_current_caps (pad);
 
   tcaps = gst_pad_get_pad_template_caps (self->video_sinkpad);
   tmp = gst_pad_peer_query_caps (self->video_sinkpad, NULL);
@@ -537,13 +535,10 @@ gst_shape_wipe_src_getcaps (GstPad * pad, GstCaps * filter)
   GstShapeWipe *self = GST_SHAPE_WIPE (gst_pad_get_parent (pad));
   GstCaps *templ, *ret, *tmp;
 
-  ret = gst_pad_get_current_caps (pad);
-  if (ret != NULL)
-    return ret;
-
-  ret = gst_pad_get_current_caps (self->video_sinkpad);
-  if (ret != NULL)
-    return ret;
+  if (gst_pad_has_current_caps (pad))
+    return gst_pad_get_current_caps (pad);
+  else if (gst_pad_has_current_caps (self->video_sinkpad))
+    return gst_pad_get_current_caps (self->video_sinkpad);
 
   templ = gst_pad_get_pad_template_caps (self->video_sinkpad);
   tmp = gst_pad_peer_query_caps (self->video_sinkpad, NULL);

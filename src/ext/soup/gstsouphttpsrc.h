@@ -59,12 +59,18 @@ struct _GstSoupHTTPSrc {
   gchar *proxy_id;             /* Authentication user id for proxy URI. */
   gchar *proxy_pw;             /* Authentication user password for proxy URI. */
   gchar **cookies;             /* HTTP request cookies. */
+  GMainContext *context;       /* I/O context. */
+  GMainLoop *loop;             /* Event loop. */
   SoupSession *session;        /* Async context. */
+  GstSoupHTTPSrcSessionIOStatus session_io_status;
+                               /* Async I/O status. */
   SoupMessage *msg;            /* Request message. */
   GstFlowReturn ret;           /* Return code from callback. */
+  GstBuffer **outbuf;          /* Return buffer allocated by callback. */
+  gboolean interrupted;        /* Signal unlock(). */
+  gboolean retry;              /* Should attempt to reconnect. */
   gint retry_count;            /* Number of retries since we received data */
   gint max_retries;            /* Maximum number of retries */
-  gchar *method;               /* HTTP method */
 
   gboolean got_headers;        /* Already received headers from the server */
   gboolean have_size;          /* Received and parsed Content-Length
@@ -84,15 +90,6 @@ struct _GstSoupHTTPSrc {
   gboolean ssl_strict;
   gchar *ssl_ca_file;
   gboolean ssl_use_system_ca_file;
-  GTlsDatabase *tls_database;
-  GTlsInteraction *tls_interaction;
-
-  GCancellable *cancellable;
-  GInputStream *input_stream;
-
-  gint reduce_blocksize_count;
-  gint increase_blocksize_count;
-  guint minimum_blocksize;
 
   /* Shoutcast/icecast metadata extraction handling. */
   gboolean iradio_mode;
@@ -110,7 +107,7 @@ struct _GstSoupHTTPSrc {
   guint timeout;
 
   GMutex mutex;
-  GCond have_headers_cond;
+  GCond request_finished_cond;
 
   GstEvent *http_headers_event;
 };

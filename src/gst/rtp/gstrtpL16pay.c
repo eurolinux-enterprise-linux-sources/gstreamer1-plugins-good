@@ -27,7 +27,7 @@
  * <refsect2>
  * <title>Example pipeline</title>
  * |[
- * gst-launch-1.0 -v audiotestsrc ! audioconvert ! rtpL16pay ! udpsink
+ * gst-launch -v audiotestsrc ! audioconvert ! rtpL16pay ! udpsink
  * ]| This example pipeline will payload raw audio. Refer to
  * the rtpL16depay example to depayload and play the RTP stream.
  * </refsect2>
@@ -104,10 +104,10 @@ gst_rtp_L16_pay_class_init (GstRtpL16PayClass * klass)
   gstrtpbasepayload_class->get_caps = gst_rtp_L16_pay_getcaps;
   gstrtpbasepayload_class->handle_buffer = gst_rtp_L16_pay_handle_buffer;
 
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_L16_pay_src_template);
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_L16_pay_sink_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_L16_pay_src_template));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_L16_pay_sink_template));
 
   gst_element_class_set_static_metadata (gstelement_class,
       "RTP audio payloader", "Codec/Payloader/Network/RTP",
@@ -208,16 +208,16 @@ gst_rtp_L16_pay_getcaps (GstRTPBasePayload * rtppayload, GstPad * pad,
       if (gst_structure_get_int (structure, "channels", &channels)) {
         gst_caps_set_simple (caps, "channels", G_TYPE_INT, channels, NULL);
       } else if (gst_structure_get_int (structure, "payload", &pt)) {
-        if (pt == GST_RTP_PAYLOAD_L16_STEREO)
+        if (pt == 10)
           gst_caps_set_simple (caps, "channels", G_TYPE_INT, 2, NULL);
-        else if (pt == GST_RTP_PAYLOAD_L16_MONO)
+        else if (pt == 11)
           gst_caps_set_simple (caps, "channels", G_TYPE_INT, 1, NULL);
       }
 
       if (gst_structure_get_int (structure, "clock-rate", &rate)) {
         gst_caps_set_simple (caps, "rate", G_TYPE_INT, rate, NULL);
       } else if (gst_structure_get_int (structure, "payload", &pt)) {
-        if (pt == GST_RTP_PAYLOAD_L16_STEREO || pt == GST_RTP_PAYLOAD_L16_MONO)
+        if (pt == 10 || pt == 11)
           gst_caps_set_simple (caps, "rate", G_TYPE_INT, 44100, NULL);
       }
 

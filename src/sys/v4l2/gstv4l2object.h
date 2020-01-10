@@ -25,7 +25,6 @@
 #define __GST_V4L2_OBJECT_H__
 
 #include "ext/videodev2.h"
-#include "v4l2-utils.h"
 
 #include <gst/gst.h>
 #include <gst/base/gstpushsrc.h>
@@ -119,11 +118,8 @@ struct _GstV4l2Object {
   gboolean prefered_non_contiguous;
 
   /* This will be set if supported in decide_allocation. It can be used to
-   * calculate the minimum latency. */
-  guint32 min_buffers;
-
-  /* This will be set if supported in propose allocation. */
-  guint32 min_buffers_for_output;
+   * calculate the minimum latency of a m2m decoder. */
+  guint32 min_buffers_for_capture;
 
   /* wanted mode */
   GstV4l2IOMode req_mode;
@@ -133,8 +129,6 @@ struct _GstV4l2Object {
 
   /* the video device's capabilities */
   struct v4l2_capability vcap;
-  /* opened device specific capabilities */
-  guint32 device_caps;
 
   /* the video device's window properties */
   struct v4l2_window vwin;
@@ -250,11 +244,7 @@ GstCaps*      gst_v4l2_object_get_raw_caps (void);
 
 GstCaps*      gst_v4l2_object_get_codec_caps (void);
 
-gint          gst_v4l2_object_extrapolate_stride (const GstVideoFormatInfo * finfo,
-                                                  gint plane, gint stride);
-
-gboolean      gst_v4l2_object_set_format  (GstV4l2Object * v4l2object, GstCaps * caps, GstV4l2Error *error);
-gboolean      gst_v4l2_object_try_format  (GstV4l2Object * v4l2object, GstCaps * caps, GstV4l2Error *error);
+gboolean      gst_v4l2_object_set_format  (GstV4l2Object * v4l2object, GstCaps * caps);
 
 gboolean      gst_v4l2_object_caps_equal  (GstV4l2Object * v4l2object, GstCaps * caps);
 
@@ -263,8 +253,6 @@ gboolean      gst_v4l2_object_unlock_stop (GstV4l2Object * v4l2object);
 
 gboolean      gst_v4l2_object_stop        (GstV4l2Object * v4l2object);
 
-GstCaps *     gst_v4l2_object_probe_caps  (GstV4l2Object * v4l2object,
-                                           GstCaps * filter);
 GstCaps *     gst_v4l2_object_get_caps    (GstV4l2Object * v4l2object,
                                            GstCaps * filter);
 

@@ -1,18 +1,18 @@
 # Danish translation of gst-plugins-good.
-# Copyright (C) 2016 gst.
+# Copyright (C) 2014 gst.
 # This file is distributed under the same license as the gst-plugins-good package.
 # Mogens Jaeger <mogens@jaeger.tf>, 2007.
-# Joe Hansen <joedalton2@yahoo.dk>, 2008, 2009, 2010, 2011, 2012, 2013, 2014, 2015, 2016.
+# Joe Hansen <joedalton2@yahoo.dk>, 2008, 2009, 2010, 2011, 2012, 2013, 2014.
 #
 # gain -> forhøjelse
 # boost -> øgning?
 #
 msgid ""
 msgstr ""
-"Project-Id-Version: gst-plugins-good-1.7.2\n"
+"Project-Id-Version: gst-plugins-good-1.3.90\n"
 "Report-Msgid-Bugs-To: http://bugzilla.gnome.org/\n"
-"POT-Creation-Date: 2017-02-23 15:16+0200\n"
-"PO-Revision-Date: 2016-03-27 23:54+0200\n"
+"POT-Creation-Date: 2014-12-18 12:05+0100\n"
+"PO-Revision-Date: 2014-06-29 23:54+0200\n"
 "Last-Translator: Joe Hansen <joedalton2@yahoo.dk>\n"
 "Language-Team: Danish <dansk@dansk-gruppen.dk>\n"
 "Language: da\n"
@@ -50,12 +50,15 @@ msgid "Secure connection setup failed."
 msgstr "Opsætning af sikker forbindelse mislykkedes."
 
 msgid ""
-"A network error occurred, or the server closed the connection unexpectedly."
+"A network error occured, or the server closed the connection unexpectedly."
 msgstr ""
 "Der opstod en netværksfejl, eller serveren lukkede uventet forbindelsen."
 
 msgid "Server sent bad data."
 msgstr "Server sendte ugyldige data."
+
+msgid "Internal data stream error."
+msgstr "Intern datastrømsfejl."
 
 msgid "No or invalid input audio, AVI stream will be corrupt."
 msgstr "Ingen eller defekt inddatalyd, AVI-sekvens vil blive ødelagt."
@@ -104,6 +107,9 @@ msgstr ""
 "transportprotokoller eller mangler måske det korrekte udvidelsesmodul til "
 "GStreamer RTSP."
 
+msgid "Internal data flow error."
+msgstr "Intern datastrømsfejl."
+
 msgid ""
 "Could not open audio device for playback. Device is being used by another "
 "application."
@@ -149,12 +155,6 @@ msgstr ""
 
 msgid "Could not open audio device for recording."
 msgstr "Kunne ikke åbne lydenhed til optagelse."
-
-msgid "CoreAudio device not found"
-msgstr "CoreAudio-enhed blev ikke fundet"
-
-msgid "CoreAudio device could not be opened"
-msgstr "CoreAudio-enhed kunne ikke åbnes"
 
 msgid "Record Source"
 msgstr "Optagelseskilde"
@@ -261,12 +261,10 @@ msgid "Video device returned invalid dimensions."
 msgstr "Videoenhed returnerede ugyldige dimensioner."
 
 # http://en.wikipedia.org/wiki/Interlaced_video
-#, fuzzy
-msgid "Video device uses an unsupported interlacing method."
+msgid "Video devices uses an unsupported interlacing method."
 msgstr "Videoenheder bruger en interlace-metode, der ikke er understøttet."
 
-#, fuzzy
-msgid "Video device uses an unsupported pixel format."
+msgid "Video devices uses an unsupported pixel format."
 msgstr "Videoenheder bruger et billedpunktsformat, der ikke er understøttet."
 
 msgid "Failed to configure internal buffer pool."
@@ -427,12 +425,6 @@ msgstr "Ændring af opløsning under kørsel er endnu ikke understøttet."
 
 msgid "Cannot operate without a clock"
 msgstr "Kan ikke fungere uden et ur"
-
-#~ msgid "Internal data stream error."
-#~ msgstr "Intern datastrømsfejl."
-
-#~ msgid "Internal data flow error."
-#~ msgstr "Intern datastrømsfejl."
 
 #~ msgid "Device '%s' does not support video capture"
 #~ msgstr "Enheden »%s« understøtter ikke videooptagelse"

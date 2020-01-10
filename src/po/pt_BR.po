@@ -1,20 +1,18 @@
 # Brazilian Portuguese translation of gst-plugins-good.
 # This file is distributed under the same license as the gst-plugins-good package.
-# Copyright (C) 2008-2016 Free Software Foundation, Inc.
-# Fabrício Godoy <skarllot@gmail.com>, 2008-2016.
+# Copyright (C) 2008-2013 Free Software Foundation, Inc.
+# Fabrício Godoy <skarllot@gmail.com>, 2008-2013.
 #
 # data flow -> fluxo de dados
 # streaming -> fluxo contínuo
 # clock -> temporizador
-# plane (overlay plane) -> plano de sobreposição
-# pool -> coleção, conjunto, agrupamento
 #
 msgid ""
 msgstr ""
-"Project-Id-Version: gst-plugins-good-1.7.2\n"
+"Project-Id-Version: gst-plugins-good-1.2.1\n"
 "Report-Msgid-Bugs-To: http://bugzilla.gnome.org/\n"
-"POT-Creation-Date: 2017-02-23 15:16+0200\n"
-"PO-Revision-Date: 2016-05-06 17:49-0300\n"
+"POT-Creation-Date: 2014-12-18 12:05+0100\n"
+"PO-Revision-Date: 2013-12-29 17:48-0200\n"
 "Last-Translator: Fabrício Godoy <skarllot@gmail.com>\n"
 "Language-Team: Brazilian Portuguese <ldpbr-translation@lists.sourceforge."
 "net>\n"
@@ -54,12 +52,15 @@ msgid "Secure connection setup failed."
 msgstr "Configuração de conexão segura falhou."
 
 msgid ""
-"A network error occurred, or the server closed the connection unexpectedly."
+"A network error occured, or the server closed the connection unexpectedly."
 msgstr ""
 "Um erro de rede ocorreu, ou o servidor fechou a conexão inesperadamente."
 
 msgid "Server sent bad data."
 msgstr "O servidor enviou dados ruins."
+
+msgid "Internal data stream error."
+msgstr "Erro interno no fluxo de dados."
 
 msgid "No or invalid input audio, AVI stream will be corrupt."
 msgstr "Entrada de áudio nula ou inválida, o fluxo AVI pode estar corrompido."
@@ -107,6 +108,9 @@ msgstr ""
 "protocolos de transporte sejam permitidos ou senão o plug-in de extensão "
 "GStreamer RTSP pode estar incorreto."
 
+msgid "Internal data flow error."
+msgstr "Erro interno no fluxo de dados."
+
 msgid ""
 "Could not open audio device for playback. Device is being used by another "
 "application."
@@ -152,12 +156,6 @@ msgstr ""
 
 msgid "Could not open audio device for recording."
 msgstr "Não foi possível abrir o dispositivo de áudio para gravação."
-
-msgid "CoreAudio device not found"
-msgstr "Dispositivo CoreAudio não encontrado"
-
-msgid "CoreAudio device could not be opened"
-msgstr "Dispositivo CoreAudio não pôde ser aberto"
 
 msgid "Record Source"
 msgstr "Origem de gravação"
@@ -249,10 +247,9 @@ msgstr "O dispositivo \"%s\" não realiza captura a %dx%d"
 msgid "Device '%s' cannot capture in the specified format"
 msgstr "O dispositivo \"%s\" não realiza captura no formato especificado"
 
-#, c-format
+#, fuzzy, c-format
 msgid "Device '%s' does support non-contiguous planes"
-msgstr ""
-"O dispositivo \"%s\" não tem suporte a planos de sobreposição não-contínuos"
+msgstr "O dispositivo \"%s\" não tem suporte a captura de vídeo"
 
 #, c-format
 msgid "Could not get parameters on device '%s'"
@@ -261,29 +258,30 @@ msgstr "Não foi possível obter os parâmetros no dispositivo \"%s\""
 msgid "Video device did not accept new frame rate setting."
 msgstr "O dispositivo de vídeo não aceita definir uma nova taxa de quadros."
 
+#, fuzzy
 msgid "Video device did not provide output format."
-msgstr "O dispositivo de vídeo não forneceu um formato de saída."
+msgstr "O dispositivo de vídeo não aceita definir uma nova taxa de quadros."
 
 msgid "Video device returned invalid dimensions."
-msgstr "O dispositivo de vídeo retornou dimensões inválidas."
-
-#, fuzzy
-msgid "Video device uses an unsupported interlacing method."
 msgstr ""
-"Os dispositivos de vídeo utilizam um método de entrelaçamento não suportado."
 
 #, fuzzy
-msgid "Video device uses an unsupported pixel format."
-msgstr "Os dispositivos de vídeo utilizam um formato para pixel não suportado."
+msgid "Video devices uses an unsupported interlacing method."
+msgstr "O driver do dispositivo \"%s\" não tem suporte ao método %d de E/S"
 
+msgid "Video devices uses an unsupported pixel format."
+msgstr ""
+
+#, fuzzy
 msgid "Failed to configure internal buffer pool."
-msgstr "Falha ao configurar uma coleção de buffer interno."
+msgstr "O dispositivo de vídeo não pôde reservar um buffer."
 
+#, fuzzy
 msgid "Video device did not suggest any buffer size."
-msgstr "O dispositivo de vídeo não sugeriu nenhum tamanho de buffer."
+msgstr "O dispositivo de vídeo não pôde reservar um buffer."
 
 msgid "No downstream pool to import from."
-msgstr "Nenhuma coleção de fluxo de recebimento para importar."
+msgstr ""
 
 #, c-format
 msgid "Failed to get settings of tuner %d on device '%s'."
@@ -310,35 +308,33 @@ msgid "Failed to change mute state for device '%s'."
 msgstr "Falha ao alternar entre com e sem áudio para o dispositivo \"%s\"."
 
 msgid "Failed to allocated required memory."
-msgstr "Falha ao alocar a memória necessária."
+msgstr ""
 
 msgid "Failed to allocate required memory."
-msgstr "Falha ao alocar a memória necessária."
+msgstr ""
 
-#, c-format
+#, fuzzy, c-format
 msgid "Converter on device %s has no supported input format"
-msgstr ""
-"O conversor no dispositivo %s não tem um formato de entrada com suporte"
+msgstr "O driver do dispositivo \"%s\" não tem suporte ao método %d de E/S"
 
-#, c-format
+#, fuzzy, c-format
 msgid "Converter on device %s has no supported output format"
-msgstr "O conversor no dispositivo %s não tem um formato de saída com suporte"
+msgstr "O dispositivo de vídeo não aceita definir uma nova taxa de quadros."
 
-#, c-format
+#, fuzzy, c-format
 msgid "Encoder on device %s has no supported input format"
-msgstr ""
-"O codificador no dispositivo %s não tem um formato de entrada com suporte"
+msgstr "O dispositivo de vídeo não aceita definir uma nova taxa de quadros."
 
-#, c-format
+#, fuzzy, c-format
 msgid "Encoder on device %s has no supported output format"
-msgstr ""
-"O codificador no dispositivo %s não tem um formato de saída com suporte"
+msgstr "O dispositivo de vídeo não aceita definir uma nova taxa de quadros."
 
+#, fuzzy
 msgid "Failed to start decoding thread."
-msgstr "Falha ao iniciar o segmento de decodificação."
+msgstr "Falha ao decodificar a imagem JPEG"
 
 msgid "Failed to process frame."
-msgstr "Falha ao processar quadro."
+msgstr ""
 
 #, c-format
 msgid ""
@@ -384,14 +380,13 @@ msgstr "O dispositivo \"%s\" não é um dispositivo de captura."
 msgid "Device '%s' is not a output device."
 msgstr "O dispositivo \"%s\" não é um dispositivo de saída."
 
-#, c-format
+#, fuzzy, c-format
 msgid "Device '%s' is not a M2M device."
-msgstr "O dispositivo \"%s\" não é um dispositivo M2M."
+msgstr "O dispositivo \"%s\" não é um dispositivo de saída."
 
-#, c-format
+#, fuzzy, c-format
 msgid "Could not dup device '%s' for reading and writing."
-msgstr ""
-"Não foi possível duplicar o dispositivo \"%s\" para leitura e gravação."
+msgstr "Não foi possível abrir o dispositivo \"%s\" para leitura e gravação."
 
 #, c-format
 msgid "Failed to set norm for device '%s'."
@@ -441,12 +436,6 @@ msgstr "Ainda não há suporte a mudança de resolução enquanto está executan
 
 msgid "Cannot operate without a clock"
 msgstr "Não é possível operar sem um temporizador"
-
-#~ msgid "Internal data stream error."
-#~ msgstr "Erro interno no fluxo de dados."
-
-#~ msgid "Internal data flow error."
-#~ msgstr "Erro interno no fluxo de dados."
 
 #~ msgid "Device '%s' does not support video capture"
 #~ msgstr "O dispositivo \"%s\" não tem suporte a captura de vídeo"

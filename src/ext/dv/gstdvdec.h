@@ -61,6 +61,7 @@ struct _GstDVDec {
   gboolean       PAL;
   gboolean       interlaced;
   gboolean       wide;
+  gint           frame_len;
 
   /* input caps */
   gboolean       sink_negotiated;
@@ -73,6 +74,7 @@ struct _GstDVDec {
   gboolean       need_par;
 
   /* negotiated output */
+  dv_color_space_t space;
   gint           bpp;
   gboolean       src_negotiated;
   

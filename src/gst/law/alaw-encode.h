@@ -40,14 +40,16 @@ typedef struct _GstALawEnc GstALawEnc;
 typedef struct _GstALawEncClass GstALawEncClass;
 
 struct _GstALawEnc {
-  GstAudioEncoder encoder;
+  GstElement element;
+
+  GstPad *sinkpad,*srcpad;
 
   gint channels;
   gint rate;
 };
 
 struct _GstALawEncClass {
-  GstAudioEncoderClass parent_class;
+  GstElementClass parent_class;
 };
 
 GType gst_alaw_enc_get_type(void);

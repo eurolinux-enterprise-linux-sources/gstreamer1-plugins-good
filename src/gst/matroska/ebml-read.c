@@ -28,7 +28,17 @@
 #include "ebml-read.h"
 #include "ebml-ids.h"
 
-#include <gst/math-compat.h>
+#include <math.h>
+
+/* NAN is supposed to be in math.h, Microsoft defines it in xmath.h */
+#ifdef _MSC_VER
+#include <xmath.h>
+#endif
+
+/* If everything goes wrong try 0.0/0.0 which should be NAN */
+#ifndef NAN
+#define NAN (0.0 / 0.0)
+#endif
 
 GST_DEBUG_CATEGORY (ebmlread_debug);
 #define GST_CAT_DEFAULT ebmlread_debug
@@ -211,7 +221,7 @@ gst_ebml_peek_id_full (GstEbmlRead * ebml, guint32 * id, guint64 * length,
       gst_ebml_read_get_pos (ebml), *length, *prefix);
 
 #ifndef GST_DISABLE_GST_DEBUG
-  if (ebmlread_debug->threshold >= GST_LEVEL_LOG) {
+  {
     const guint8 *data = NULL;
     GstByteReader *br = gst_ebml_read_br (ebml);
     guint size = gst_byte_reader_get_remaining (br);

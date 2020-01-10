@@ -2,13 +2,13 @@
 <html>
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
-<title>wavparse: GStreamer Good Plugins 1.0 Plugins Reference Manual</title>
-<meta name="generator" content="DocBook XSL Stylesheets V1.79.1">
+<title>GStreamer Good Plugins 1.0 Plugins Reference Manual: wavparse</title>
+<meta name="generator" content="DocBook XSL Stylesheets V1.78.1">
 <link rel="home" href="index.html" title="GStreamer Good Plugins 1.0 Plugins Reference Manual">
 <link rel="up" href="ch01.html" title="gst-plugins-good Elements">
 <link rel="prev" href="gst-plugins-good-plugins-wavpackparse.html" title="wavpackparse">
 <link rel="next" href="gst-plugins-good-plugins-webmmux.html" title="webmmux">
-<meta name="generator" content="GTK-Doc V1.25 (XML mode)">
+<meta name="generator" content="GTK-Doc V1.21 (XML mode)">
 <link rel="stylesheet" href="style.css" type="text/css">
 </head>
 <body bgcolor="white" text="black" link="#0000FF" vlink="#840084" alink="#0000FF">
@@ -29,20 +29,20 @@
 <div class="refnamediv"><table width="100%"><tr>
 <td valign="top">
 <h2><span class="refentrytitle"><a name="gst-plugins-good-plugins-wavparse.top_of_page"></a>wavparse</span></h2>
-<p>wavparse</p>
+<p>wavparse — Parse a .wav file into raw audio</p>
 </td>
 <td class="gallery_image" valign="top" align="right"></td>
 </tr></table></div>
 <div class="refsect1">
 <a name="gst-plugins-good-plugins-wavparse.properties"></a><h2>Properties</h2>
-<div class="informaltable"><table class="informaltable" border="0">
+<div class="informaltable"><table border="0">
 <colgroup>
 <col width="150px" class="properties_type">
 <col width="300px" class="properties_name">
 <col width="200px" class="properties_flags">
 </colgroup>
 <tbody><tr>
-<td class="property_type"><a href="/usr/share/gtk-doc/html/glibglib-Basic-Types.html#gboolean"><span class="type">gboolean</span></a></td>
+<td class="property_type"><a href="https://developer.gnome.org/glib/unstable/glib-Basic-Types.html#gboolean"><span class="type">gboolean</span></a></td>
 <td class="property_name"><a class="link" href="gst-plugins-good-plugins-wavparse.html#GstWavParse--ignore-length" title="The “ignore-length” property">ignore-length</a></td>
 <td class="property_flags">Read / Write</td>
 </tr></tbody>
@@ -50,7 +50,7 @@
 </div>
 <a name="GstWavParse"></a><div class="refsect1">
 <a name="gst-plugins-good-plugins-wavparse.other"></a><h2>Types and Values</h2>
-<div class="informaltable"><table class="informaltable" width="100%" border="0">
+<div class="informaltable"><table width="100%" border="0">
 <colgroup>
 <col width="150px" class="name">
 <col class="description">
@@ -63,10 +63,10 @@
 </div>
 <div class="refsect1">
 <a name="gst-plugins-good-plugins-wavparse.object-hierarchy"></a><h2>Object Hierarchy</h2>
-<pre class="screen">    <a href="/usr/share/gtk-doc/html/gobjectgobject-The-Base-Object-Type.html#GObject-struct">GObject</a>
-    <span class="lineart">╰──</span> <a href="/usr/share/gtk-doc/html/gobjectgobject-The-Base-Object-Type.html#GInitiallyUnowned">GInitiallyUnowned</a>
-        <span class="lineart">╰──</span> <a href="/usr/share/gtk-doc/html/gstreamer-1.0GstObject.html#GstObject-struct">GstObject</a>
-            <span class="lineart">╰──</span> <a href="/usr/share/gtk-doc/html/gstreamer-1.0GstElement.html#GstElement-struct">GstElement</a>
+<pre class="screen">    <a href="https://developer.gnome.org/gobject/unstable/gobject-The-Base-Object-Type.html#GObject">GObject</a>
+    <span class="lineart">╰──</span> <a href="https://developer.gnome.org/gobject/unstable/gobject-The-Base-Object-Type.html#GInitiallyUnowned">GInitiallyUnowned</a>
+        <span class="lineart">╰──</span> <a href="http://gstreamer.freedesktop.org/data/doc/gstreamer/head/gstreamer/html/GstObject.html">GstObject</a>
+            <span class="lineart">╰──</span> <a href="http://gstreamer.freedesktop.org/data/doc/gstreamer/head/gstreamer/html/GstElement.html">GstElement</a>
                 <span class="lineart">╰──</span> GstWavParse
 </pre>
 </div>
@@ -76,7 +76,7 @@
 <p>Wavparse supports both push and pull mode operations, making it possible to
 stream from a network source.</p>
 <div class="refsect2">
-<a name="id-1.2.267.7.4"></a><h3>Example launch line</h3>
+<a name="id-1.2.167.7.4"></a><h3>Example launch line</h3>
 <div class="informalexample">
   <table class="listing_frame" border="0" cellpadding="0" cellspacing="0">
     <tbody>
@@ -104,7 +104,7 @@ wav file is assumed to contain raw uncompressed samples.
 <div class="refsynopsisdiv">
 <h2>Synopsis</h2>
 <div class="refsect2">
-<a name="id-1.2.267.7.5.1"></a><h3>Element Information</h3>
+<a name="id-1.2.167.7.5.1"></a><h3>Element Information</h3>
 <div class="variablelist"><table border="0" class="variablelist">
 <colgroup>
 <col align="left" valign="top">
@@ -130,7 +130,7 @@ wav file is assumed to contain raw uncompressed samples.
 </div>
 <hr>
 <div class="refsect2">
-<a name="id-1.2.267.7.5.2"></a><h3>Element Pads</h3>
+<a name="id-1.2.167.7.5.2"></a><h3>Element Pads</h3>
 <div class="variablelist"><table border="0" class="variablelist">
 <colgroup>
 <col align="left" valign="top">
@@ -175,27 +175,27 @@ wav file is assumed to contain raw uncompressed samples.
 </tr>
 <tr>
 <td><p><span class="term">details</span></p></td>
-<td>audio/ms-gsm</td>
+<td>audio/ms-gsm, rate=(int)[ 1, 96000 ], channels=(int)[ 1, 2 ]</td>
 </tr>
 <tr>
 <td><p><span class="term"></span></p></td>
-<td> audio/mpeg, mpegversion=(int)1, layer=(int)3</td>
+<td> audio/mpeg, mpegversion=(int)1, layer=(int)3, rate=(int)[ 8000, 48000 ], channels=(int)[ 1, 2 ]</td>
 </tr>
 <tr>
 <td><p><span class="term"></span></p></td>
-<td> audio/mpeg, mpegversion=(int)1, layer=(int)2</td>
+<td> audio/mpeg, mpegversion=(int)1, layer=(int)2, rate=(int)[ 16000, 48000 ], channels=(int)[ 1, 2 ]</td>
 </tr>
 <tr>
 <td><p><span class="term"></span></p></td>
-<td> audio/x-raw, format=(string){ S8, U8, S16LE, U16LE, S24LE, U24LE, S32LE, U32LE }, layout=(string)interleaved</td>
+<td> audio/x-raw, format=(string){ S8, U8, S16LE, U16LE, S24LE, U24LE, S32LE, U32LE }, layout=(string)interleaved, rate=(int)[ 1000, 192000 ], channels=(int)[ 1, 8 ]</td>
 </tr>
 <tr>
 <td><p><span class="term"></span></p></td>
-<td> audio/x-vorbis</td>
+<td> audio/x-vorbis, rate=(int)[ 1000, 192000 ], channels=(int)[ 1, 2 ]</td>
 </tr>
 <tr>
 <td><p><span class="term"></span></p></td>
-<td> audio/x-ac3</td>
+<td> audio/x-ac3, rate=(int)[ 1000, 96000 ], channels=(int)[ 1, 6 ]</td>
 </tr>
 <tr>
 <td><p><span class="term"></span></p></td>
@@ -203,75 +203,75 @@ wav file is assumed to contain raw uncompressed samples.
 </tr>
 <tr>
 <td><p><span class="term"></span></p></td>
-<td> audio/mpeg, mpegversion=(int)4</td>
+<td> audio/mpeg, mpegversion=(int)4, rate=(int)[ 1000, 96000 ], channels=(int)[ 1, 8 ]</td>
 </tr>
 <tr>
 <td><p><span class="term"></span></p></td>
-<td> audio/x-alaw</td>
+<td> audio/x-alaw, rate=(int)[ 1000, 48000 ], channels=(int)[ 1, 2 ]</td>
 </tr>
 <tr>
 <td><p><span class="term"></span></p></td>
-<td> audio/x-mulaw</td>
+<td> audio/x-mulaw, rate=(int)[ 1000, 48000 ], channels=(int)[ 1, 2 ]</td>
 </tr>
 <tr>
 <td><p><span class="term"></span></p></td>
-<td> audio/x-wms, bitrate=(int)[ 0, 2147483647 ], block_align=(int)[ 1, 2147483647 ]</td>
+<td> audio/x-wms, bitrate=(int)[ 0, 2147483647 ], rate=(int)[ 1000, 96000 ], channels=(int)[ 1, 2 ], block_align=(int)[ 1, 2147483647 ]</td>
 </tr>
 <tr>
 <td><p><span class="term"></span></p></td>
-<td> audio/x-adpcm, layout=(string)microsoft, block_align=(int)[ 1, 2147483647 ]</td>
+<td> audio/x-adpcm, layout=(string)microsoft, rate=(int)[ 1000, 96000 ], channels=(int)[ 1, 2 ], block_align=(int)[ 1, 2147483647 ]</td>
 </tr>
 <tr>
 <td><p><span class="term"></span></p></td>
-<td> audio/x-adpcm, layout=(string)dvi, block_align=(int)[ 1, 2147483647 ]</td>
+<td> audio/x-adpcm, layout=(string)dvi, rate=(int)[ 1000, 96000 ], channels=(int)[ 1, 2 ], block_align=(int)[ 1, 2147483647 ]</td>
 </tr>
 <tr>
 <td><p><span class="term"></span></p></td>
-<td> audio/x-truespeech</td>
+<td> audio/x-truespeech, rate=(int)8000, channels=(int)[ 1, 2 ]</td>
 </tr>
 <tr>
 <td><p><span class="term"></span></p></td>
-<td> audio/x-wma, wmaversion=(int)1, bitrate=(int)[ 0, 2147483647 ], block_align=(int)[ 1, 2147483647 ]</td>
+<td> audio/x-wma, wmaversion=(int)1, bitrate=(int)[ 0, 2147483647 ], rate=(int)[ 1000, 96000 ], channels=(int)[ 1, 8 ], block_align=(int)[ 1, 2147483647 ]</td>
 </tr>
 <tr>
 <td><p><span class="term"></span></p></td>
-<td> audio/x-wma, wmaversion=(int)2, bitrate=(int)[ 0, 2147483647 ], block_align=(int)[ 1, 2147483647 ]</td>
+<td> audio/x-wma, wmaversion=(int)2, bitrate=(int)[ 0, 2147483647 ], rate=(int)[ 1000, 96000 ], channels=(int)[ 1, 8 ], block_align=(int)[ 1, 2147483647 ]</td>
 </tr>
 <tr>
 <td><p><span class="term"></span></p></td>
-<td> audio/x-wma, wmaversion=(int)3, bitrate=(int)[ 0, 2147483647 ], block_align=(int)[ 1, 2147483647 ]</td>
+<td> audio/x-wma, wmaversion=(int)3, bitrate=(int)[ 0, 2147483647 ], rate=(int)[ 1000, 96000 ], channels=(int)[ 1, 8 ], block_align=(int)[ 1, 2147483647 ]</td>
 </tr>
 <tr>
 <td><p><span class="term"></span></p></td>
-<td> audio/x-vnd.sony.atrac3</td>
+<td> audio/x-vnd.sony.atrac3, rate=(int)[ 1000, 96000 ], channels=(int)[ 1, 2 ]</td>
 </tr>
 <tr>
 <td><p><span class="term"></span></p></td>
-<td> audio/x-raw, format=(string){ F32LE, F64LE }, layout=(string)interleaved</td>
+<td> audio/x-raw, format=(string){ F32LE, F64LE }, layout=(string)interleaved, rate=(int)[ 1000, 192000 ], channels=(int)[ 1, 8 ]</td>
 </tr>
 <tr>
 <td><p><span class="term"></span></p></td>
-<td> audio/x-voxware, voxwaretype=(int)117</td>
+<td> audio/x-voxware, voxwaretype=(int)117, rate=(int)[ 1000, 96000 ], channels=(int)[ 1, 2 ]</td>
 </tr>
 <tr>
 <td><p><span class="term"></span></p></td>
-<td> audio/x-adpcm, layout=(string)dk4</td>
+<td> audio/x-adpcm, layout=(string)dk4, rate=(int)[ 8000, 96000 ], channels=(int)[ 1, 2 ]</td>
 </tr>
 <tr>
 <td><p><span class="term"></span></p></td>
-<td> audio/x-adpcm, layout=(string)dk3</td>
+<td> audio/x-adpcm, layout=(string)dk3, rate=(int)[ 8000, 96000 ], channels=(int)[ 1, 2 ]</td>
 </tr>
 <tr>
 <td><p><span class="term"></span></p></td>
-<td> audio/x-adpcm, layout=(string)dvi</td>
+<td> audio/x-adpcm, layout=(string)dvi, rate=(int)[ 8000, 96000 ], channels=(int)[ 1, 2 ]</td>
 </tr>
 <tr>
 <td><p><span class="term"></span></p></td>
-<td> audio/AMR</td>
+<td> audio/AMR, rate=(int)8000, channels=(int)1</td>
 </tr>
 <tr>
 <td><p><span class="term"></span></p></td>
-<td> audio/AMR-WB</td>
+<td> audio/AMR-WB, rate=(int)16000, channels=(int)1</td>
 </tr>
 <tr>
 <td><p><span class="term"></span></p></td>
@@ -285,10 +285,11 @@ wav file is assumed to contain raw uncompressed samples.
 </table></div>
 </div>
 </div>
+<p>
+</p>
 </div>
 <div class="refsect1">
 <a name="gst-plugins-good-plugins-wavparse.functions_details"></a><h2>Functions</h2>
-<p></p>
 </div>
 <div class="refsect1">
 <a name="gst-plugins-good-plugins-wavparse.other_details"></a><h2>Types and Values</h2>
@@ -302,7 +303,7 @@ wav file is assumed to contain raw uncompressed samples.
 <a name="gst-plugins-good-plugins-wavparse.property-details"></a><h2>Property Details</h2>
 <div class="refsect2">
 <a name="GstWavParse--ignore-length"></a><h3>The <code class="literal">“ignore-length”</code> property</h3>
-<pre class="programlisting">  “ignore-length”            <a href="/usr/share/gtk-doc/html/glibglib-Basic-Types.html#gboolean"><span class="type">gboolean</span></a></pre>
+<pre class="programlisting">  “ignore-length”            <a href="https://developer.gnome.org/glib/unstable/glib-Basic-Types.html#gboolean"><span class="type">gboolean</span></a></pre>
 <p>This selects whether the length found in a data chunk
 should be ignored. This may be useful for streamed audio
 where the length is unknown until the end of streaming,
@@ -314,6 +315,7 @@ in there and hopes it doesn't break too much.</p>
 </div>
 </div>
 <div class="footer">
-<hr>Generated by GTK-Doc V1.25</div>
+<hr>
+          Generated by GTK-Doc V1.21</div>
 </body>
 </html>

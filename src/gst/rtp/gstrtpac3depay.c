@@ -38,11 +38,9 @@
 #endif
 
 #include <gst/rtp/gstrtpbuffer.h>
-#include <gst/audio/audio.h>
 
 #include <string.h>
 #include "gstrtpac3depay.h"
-#include "gstrtputils.h"
 
 GST_DEBUG_CATEGORY_STATIC (rtpac3depay_debug);
 #define GST_CAT_DEFAULT (rtpac3depay_debug)
@@ -69,7 +67,7 @@ G_DEFINE_TYPE (GstRtpAC3Depay, gst_rtp_ac3_depay, GST_TYPE_RTP_BASE_DEPAYLOAD);
 static gboolean gst_rtp_ac3_depay_setcaps (GstRTPBaseDepayload * depayload,
     GstCaps * caps);
 static GstBuffer *gst_rtp_ac3_depay_process (GstRTPBaseDepayload * depayload,
-    GstRTPBuffer * rtp);
+    GstBuffer * buf);
 
 static void
 gst_rtp_ac3_depay_class_init (GstRtpAC3DepayClass * klass)
@@ -80,10 +78,10 @@ gst_rtp_ac3_depay_class_init (GstRtpAC3DepayClass * klass)
   gstelement_class = (GstElementClass *) klass;
   gstrtpbasedepayload_class = (GstRTPBaseDepayloadClass *) klass;
 
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_ac3_depay_src_template);
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_ac3_depay_sink_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_ac3_depay_src_template));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_ac3_depay_sink_template));
 
   gst_element_class_set_static_metadata (gstelement_class,
       "RTP AC3 depayloader", "Codec/Depayloader/Network/RTP",
@@ -91,7 +89,7 @@ gst_rtp_ac3_depay_class_init (GstRtpAC3DepayClass * klass)
       "Wim Taymans <wim.taymans@gmail.com>");
 
   gstrtpbasedepayload_class->set_caps = gst_rtp_ac3_depay_setcaps;
-  gstrtpbasedepayload_class->process_rtp_packet = gst_rtp_ac3_depay_process;
+  gstrtpbasedepayload_class->process = gst_rtp_ac3_depay_process;
 
   GST_DEBUG_CATEGORY_INIT (rtpac3depay_debug, "rtpac3depay", 0,
       "AC3 Audio RTP Depayloader");
@@ -125,19 +123,22 @@ gst_rtp_ac3_depay_setcaps (GstRTPBaseDepayload * depayload, GstCaps * caps)
 }
 
 static GstBuffer *
-gst_rtp_ac3_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
+gst_rtp_ac3_depay_process (GstRTPBaseDepayload * depayload, GstBuffer * buf)
 {
   GstRtpAC3Depay *rtpac3depay;
   GstBuffer *outbuf;
+  GstRTPBuffer rtp = { NULL, };
   guint8 *payload;
   guint16 FT, NF;
 
   rtpac3depay = GST_RTP_AC3_DEPAY (depayload);
 
-  if (gst_rtp_buffer_get_payload_len (rtp) < 2)
+  gst_rtp_buffer_map (buf, GST_MAP_READ, &rtp);
+
+  if (gst_rtp_buffer_get_payload_len (&rtp) < 2)
     goto empty_packet;
 
-  payload = gst_rtp_buffer_get_payload (rtp);
+  payload = gst_rtp_buffer_get_payload (&rtp);
 
   /* strip off header
    *
@@ -153,14 +154,13 @@ gst_rtp_ac3_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
   GST_DEBUG_OBJECT (rtpac3depay, "FT: %d, NF: %d", FT, NF);
 
   /* We don't bother with fragmented packets yet */
-  outbuf = gst_rtp_buffer_get_payload_subbuffer (rtp, 2, -1);
+  outbuf = gst_rtp_buffer_get_payload_subbuffer (&rtp, 2, -1);
 
-  if (outbuf) {
-    gst_rtp_drop_meta (GST_ELEMENT_CAST (rtpac3depay), outbuf,
-        g_quark_from_static_string (GST_META_TAG_AUDIO_STR));
+  gst_rtp_buffer_unmap (&rtp);
+
+  if (outbuf)
     GST_DEBUG_OBJECT (rtpac3depay, "pushing buffer of size %" G_GSIZE_FORMAT,
         gst_buffer_get_size (outbuf));
-  }
 
   return outbuf;
 
@@ -169,6 +169,7 @@ empty_packet:
   {
     GST_ELEMENT_WARNING (rtpac3depay, STREAM, DECODE,
         ("Empty Payload."), (NULL));
+    gst_rtp_buffer_unmap (&rtp);
     return NULL;
   }
 }

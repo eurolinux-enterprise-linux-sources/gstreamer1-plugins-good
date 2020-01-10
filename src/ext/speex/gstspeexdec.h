@@ -50,7 +50,11 @@ struct _GstSpeexDec {
 
   void                  *state;
   SpeexStereoState      *stereo;
+#ifdef SPEEX_1_0
+  SpeexMode             *mode;
+#else
   const SpeexMode       *mode;
+#endif
   SpeexHeader           *header;
   SpeexCallback         callback;
   SpeexBits             bits;

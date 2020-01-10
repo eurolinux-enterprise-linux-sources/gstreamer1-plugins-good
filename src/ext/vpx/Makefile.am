@@ -2,8 +2,6 @@ plugin_LTLIBRARIES = \
 	libgstvpx.la
 
 libgstvpx_la_SOURCES = \
-    gstvpxdec.c \
-    gstvpxenc.c \
 	gstvp8dec.c \
 	gstvp8enc.c \
 	gstvp8utils.c \
@@ -24,8 +22,6 @@ libgstvpx_la_LDFLAGS = $(GST_PLUGIN_LDFLAGS)
 libgstvpx_la_LIBTOOLFLAGS = $(GST_PLUGIN_LIBTOOLFLAGS)
 
 noinst_HEADERS = \
-    gstvpxdec.h \
-    gstvpxenc.h \
 	gstvp8dec.h \
 	gstvp8enc.h \
 	gstvp9dec.h \

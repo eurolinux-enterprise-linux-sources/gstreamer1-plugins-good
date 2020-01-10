@@ -133,7 +133,8 @@ enum
   PROP_PAYLOAD_TYPE_MAP,
   PROP_NUM_RTX_REQUESTS,
   PROP_NUM_RTX_PACKETS,
-  PROP_NUM_RTX_ASSOC_PACKETS
+  PROP_NUM_RTX_ASSOC_PACKETS,
+  PROP_LAST
 };
 
 static GstStaticPadTemplate src_factory = GST_STATIC_PAD_TEMPLATE ("src",
@@ -198,8 +199,10 @@ gst_rtp_rtx_receive_class_init (GstRtpRtxReceiveClass * klass)
           "correctly associated with retransmission requests", 0, G_MAXUINT,
           0, G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 
-  gst_element_class_add_static_pad_template (gstelement_class, &src_factory);
-  gst_element_class_add_static_pad_template (gstelement_class, &sink_factory);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&src_factory));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&sink_factory));
 
   gst_element_class_set_static_metadata (gstelement_class,
       "RTP Retransmission receiver", "Codec",
@@ -307,12 +310,12 @@ gst_rtp_rtx_receive_src_event (GstPad * pad, GstObject * parent,
         guint ssrc = 0;
         gpointer ssrc2 = 0;
 
-        /* retrieve seqnum of the packet that need to be retransmitted */
+        /* retrieve seqnum of the packet that need to be restransmisted */
         if (!gst_structure_get_uint (s, "seqnum", &seqnum))
           seqnum = -1;
 
-        /* retrieve ssrc of the packet that need to be retransmitted
-         * it's useful when reconstructing the original packet from the rtx packet */
+        /* retrieve ssrc of the packet that need to be restransmisted
+         * it's usefull when reconstructing the original packet from the rtx packet */
         if (!gst_structure_get_uint (s, "ssrc", &ssrc))
           ssrc = -1;
 
@@ -326,7 +329,7 @@ gst_rtp_rtx_receive_src_event (GstPad * pad, GstObject * parent,
         ++rtx->num_rtx_requests;
 
         /* First, we lookup in our map to see if we have already associate this
-         * master stream ssrc with its retransmitted stream.
+         * master stream ssrc with its retransmisted stream.
          * Every ssrc are unique so we can use the same hash table
          * for both retrieving the ssrc1 from ssrc2 and also ssrc2 from ssrc1
          */
@@ -386,19 +389,17 @@ gst_rtp_rtx_receive_src_event (GstPad * pad, GstObject * parent,
           retransmit:
             /* the request has not been already considered
              * insert it for the first time */
+            GST_DEBUG_OBJECT (rtx,
+                "packet number %" G_GUINT32_FORMAT " of master stream %"
+                G_GUINT32_FORMAT " needs to be retransmited", seqnum, ssrc);
             g_hash_table_insert (rtx->seqnum_ssrc1_map,
                 GUINT_TO_POINTER (seqnum),
                 ssrc_assoc_new (ssrc, rtx->last_time));
           }
         }
 
-        GST_DEBUG_OBJECT (rtx,
-            "packet number %" G_GUINT32_FORMAT " of master stream %"
-            G_GUINT32_FORMAT " needs to be retransmitted", seqnum, ssrc);
-
         GST_OBJECT_UNLOCK (rtx);
       }
-
       /* Transfer event upstream so that the request can acutally by translated
        * through gstrtpsession through the network */
       res = gst_pad_event_default (pad, parent, event);
@@ -472,7 +473,6 @@ _gst_rtp_buffer_new_from_rtx (GstRTPBuffer * rtp, guint32 ssrc1,
 
   gst_buffer_copy_into (new_buffer, rtp->buffer,
       GST_BUFFER_COPY_FLAGS | GST_BUFFER_COPY_TIMESTAMPS, 0, -1);
-  GST_BUFFER_FLAG_SET (new_buffer, GST_RTP_BUFFER_FLAG_RETRANSMISSION);
 
   return new_buffer;
 }
@@ -491,7 +491,7 @@ gst_rtp_rtx_receive_chain (GstPad * pad, GstObject * parent, GstBuffer * buffer)
   guint16 orign_seqnum = 0;
   guint8 payload_type = 0;
   guint8 origin_payload_type = 0;
-  gboolean is_rtx;
+  gboolean is_rtx = FALSE;
   gboolean drop = FALSE;
 
   /* map current rtp packet to parse its header */
@@ -532,13 +532,13 @@ gst_rtp_rtx_receive_chain (GstPad * pad, GstObject * parent, GstBuffer * buffer)
     } else {
       SsrcAssoc *assoc;
 
-      /* the current retransmitted packet has its rtx stream not already
+      /* the current retransmisted packet has its rtx stream not already
        * associated to a master stream, so retrieve it from our request
        * history */
       if (g_hash_table_lookup_extended (rtx->seqnum_ssrc1_map,
               GUINT_TO_POINTER (orign_seqnum), NULL, (gpointer *) & assoc)) {
         GST_DEBUG_OBJECT (rtx,
-            "associate retransmitted stream %" G_GUINT32_FORMAT
+            "associate retransmisted stream %" G_GUINT32_FORMAT
             " to master stream %" G_GUINT32_FORMAT " thanks to packet %"
             G_GUINT16_FORMAT "", ssrc, assoc->ssrc, orign_seqnum);
         ssrc1 = GUINT_TO_POINTER (assoc->ssrc);

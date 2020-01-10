@@ -106,8 +106,6 @@ static const GstNamesMap gstnames[] = {
 
 static GstFlowReturn gst_multipart_demux_chain (GstPad * pad,
     GstObject * parent, GstBuffer * buf);
-static gboolean gst_multipart_demux_event (GstPad * pad,
-    GstObject * parent, GstEvent * event);
 
 static GstStateChangeReturn gst_multipart_demux_change_state (GstElement *
     element, GstStateChange transition);
@@ -162,12 +160,13 @@ gst_multipart_demux_class_init (GstMultipartDemuxClass * klass)
 
   gstelement_class->change_state = gst_multipart_demux_change_state;
 
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &multipart_demux_sink_template_factory);
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &multipart_demux_src_template_factory);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&multipart_demux_sink_template_factory));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&multipart_demux_src_template_factory));
   gst_element_class_set_static_metadata (gstelement_class, "Multipart demuxer",
-      "Codec/Demuxer", "demux multipart streams",
+      "Codec/Demuxer",
+      "demux multipart streams",
       "Wim Taymans <wim.taymans@gmail.com>, Sjoerd Simons <sjoerd@luon.net>");
 }
 
@@ -181,8 +180,6 @@ gst_multipart_demux_init (GstMultipartDemux * multipart)
   gst_element_add_pad (GST_ELEMENT_CAST (multipart), multipart->sinkpad);
   gst_pad_set_chain_function (multipart->sinkpad,
       GST_DEBUG_FUNCPTR (gst_multipart_demux_chain));
-  gst_pad_set_event_function (multipart->sinkpad,
-      GST_DEBUG_FUNCPTR (gst_multipart_demux_event));
 
   multipart->adapter = gst_adapter_new ();
   multipart->boundary = DEFAULT_BOUNDARY;
@@ -325,6 +322,7 @@ gst_multipart_find_pad_by_mime (GstMultipartDemux * demux, gchar * mime,
 
     gst_pad_use_fixed_caps (pad);
     gst_pad_set_active (pad, TRUE);
+    gst_element_add_pad (GST_ELEMENT_CAST (demux), pad);
 
     /* prepare and send stream-start */
     if (!demux->have_group_id) {
@@ -348,7 +346,7 @@ gst_multipart_find_pad_by_mime (GstMultipartDemux * demux, gchar * mime,
     if (demux->have_group_id)
       gst_event_set_group_id (event, demux->group_id);
 
-    gst_pad_store_sticky_event (pad, event);
+    gst_pad_push_event (pad, event);
     g_free (stream_id);
     gst_event_unref (event);
 
@@ -357,7 +355,6 @@ gst_multipart_find_pad_by_mime (GstMultipartDemux * demux, gchar * mime,
     caps = gst_caps_from_string (capsname);
     GST_DEBUG_OBJECT (demux, "caps for pad: %s", capsname);
     gst_pad_set_caps (pad, caps);
-    gst_element_add_pad (GST_ELEMENT_CAST (demux), pad);
     gst_caps_unref (caps);
 
     if (created) {
@@ -575,30 +572,6 @@ multipart_find_boundary (GstMultipartDemux * multipart, gint * datalen)
   return MULTIPART_NEED_MORE_DATA;
 }
 
-static gboolean
-gst_multipart_demux_event (GstPad * pad, GstObject * parent, GstEvent * event)
-{
-  GstMultipartDemux *multipart;
-
-  multipart = GST_MULTIPART_DEMUX (parent);
-
-  switch (GST_EVENT_TYPE (event)) {
-    case GST_EVENT_EOS:
-      if (!multipart->srcpads) {
-        GST_ELEMENT_ERROR (multipart, STREAM, WRONG_TYPE,
-            ("This stream contains no valid streams."),
-            ("Got EOS before adding any pads"));
-        gst_event_unref (event);
-        return FALSE;
-      } else {
-        return gst_pad_event_default (pad, parent, event);
-      }
-      break;
-    default:
-      return gst_pad_event_default (pad, parent, event);
-  }
-}
-
 static GstFlowReturn
 gst_multipart_demux_chain (GstPad * pad, GstObject * parent, GstBuffer * buf)
 {
@@ -760,7 +733,7 @@ gst_multipart_set_property (GObject * object, guint prop_id,
 
   switch (prop_id) {
     case PROP_BOUNDARY:
-      /* Not really that useful anymore as we can reliably autoscan */
+      /* Not really that usefull anymore as we can reliably autoscan */
       g_free (filter->boundary);
       filter->boundary = g_value_dup_string (value);
       if (filter->boundary != NULL) {

@@ -33,7 +33,6 @@
 #include <gst/gst.h>
 
 #include "gstrtpdvdepay.h"
-#include "gstrtputils.h"
 
 GST_DEBUG_CATEGORY (rtpdvdepay_debug);
 #define GST_CAT_DEFAULT (rtpdvdepay_debug)
@@ -46,7 +45,7 @@ enum
 
 enum
 {
-  PROP_0,
+  ARG_0,
 };
 
 static GstStaticPadTemplate src_factory = GST_STATIC_PAD_TEMPLATE ("src",
@@ -76,7 +75,7 @@ static GstStateChangeReturn
 gst_rtp_dv_depay_change_state (GstElement * element, GstStateChange transition);
 
 static GstBuffer *gst_rtp_dv_depay_process (GstRTPBaseDepayload * base,
-    GstRTPBuffer * rtp);
+    GstBuffer * in);
 static gboolean gst_rtp_dv_depay_setcaps (GstRTPBaseDepayload * depayload,
     GstCaps * caps);
 
@@ -97,15 +96,17 @@ gst_rtp_dv_depay_class_init (GstRTPDVDepayClass * klass)
   gstelement_class->change_state =
       GST_DEBUG_FUNCPTR (gst_rtp_dv_depay_change_state);
 
-  gst_element_class_add_static_pad_template (gstelement_class, &src_factory);
-  gst_element_class_add_static_pad_template (gstelement_class, &sink_factory);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&src_factory));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&sink_factory));
 
   gst_element_class_set_static_metadata (gstelement_class, "RTP DV Depayloader",
       "Codec/Depayloader/Network/RTP",
       "Depayloads DV from RTP packets (RFC 3189)",
       "Marcel Moreaux <marcelm@spacelabs.nl>, Wim Taymans <wim.taymans@gmail.com>");
 
-  gstrtpbasedepayload_class->process_rtp_packet =
+  gstrtpbasedepayload_class->process =
       GST_DEBUG_FUNCPTR (gst_rtp_dv_depay_process);
   gstrtpbasedepayload_class->set_caps =
       GST_DEBUG_FUNCPTR (gst_rtp_dv_depay_setcaps);
@@ -279,20 +280,13 @@ calculate_difblock_location (guint8 * block)
   return location;
 }
 
-static gboolean
-foreach_metadata_drop (GstBuffer * inbuf, GstMeta ** meta, gpointer user_data)
-{
-  *meta = NULL;
-  return TRUE;
-}
-
 /* Process one RTP packet. Accumulate RTP payload in the proper place in a DV
  * frame, and return that frame if we detect a new frame, or NULL otherwise.
  * We assume a DV frame is 144000 bytes. That should accomodate PAL as well as
  * NTSC.
  */
 static GstBuffer *
-gst_rtp_dv_depay_process (GstRTPBaseDepayload * base, GstRTPBuffer * rtp)
+gst_rtp_dv_depay_process (GstRTPBaseDepayload * base, GstBuffer * in)
 {
   GstBuffer *out = NULL;
   guint8 *payload;
@@ -300,13 +294,15 @@ gst_rtp_dv_depay_process (GstRTPBaseDepayload * base, GstRTPBuffer * rtp)
   guint payload_len, location;
   GstRTPDVDepay *dvdepay = GST_RTP_DV_DEPAY (base);
   gboolean marker;
-  GstMapInfo map;
+  GstRTPBuffer rtp = { NULL, };
 
-  marker = gst_rtp_buffer_get_marker (rtp);
+  gst_rtp_buffer_map (in, GST_MAP_READ, &rtp);
+
+  marker = gst_rtp_buffer_get_marker (&rtp);
 
   /* Check if the received packet contains (the start of) a new frame, we do
    * this by checking the RTP timestamp. */
-  rtp_ts = gst_rtp_buffer_get_timestamp (rtp);
+  rtp_ts = gst_rtp_buffer_get_timestamp (&rtp);
 
   /* we cannot copy the packet yet if the marker is set, we will do that below
    * after taking out the data */
@@ -317,15 +313,13 @@ gst_rtp_dv_depay_process (GstRTPBaseDepayload * base, GstRTPBuffer * rtp)
 
     /* return copy of accumulator. */
     out = gst_buffer_copy (dvdepay->acc);
-    gst_buffer_foreach_meta (dvdepay->acc, foreach_metadata_drop, NULL);
   }
 
   /* Extract the payload */
-  payload_len = gst_rtp_buffer_get_payload_len (rtp);
-  payload = gst_rtp_buffer_get_payload (rtp);
+  payload_len = gst_rtp_buffer_get_payload_len (&rtp);
+  payload = gst_rtp_buffer_get_payload (&rtp);
 
   /* copy all DIF chunks in their place. */
-  gst_buffer_map (dvdepay->acc, &map, GST_MAP_READWRITE);
   while (payload_len >= 80) {
     guint offset;
 
@@ -346,17 +340,14 @@ gst_rtp_dv_depay_process (GstRTPBaseDepayload * base, GstRTPBuffer * rtp)
       offset = location * 80;
 
       /* And copy it in, provided the location is sane. */
-      if (offset <= dvdepay->frame_size - 80) {
-        memcpy (map.data + offset, payload, 80);
-        gst_rtp_copy_meta (GST_ELEMENT_CAST (dvdepay), dvdepay->acc,
-            rtp->buffer, 0);
-      }
+      if (offset <= dvdepay->frame_size - 80)
+        gst_buffer_fill (dvdepay->acc, offset, payload, 80);
     }
 
     payload += 80;
     payload_len -= 80;
   }
-  gst_buffer_unmap (dvdepay->acc, &map);
+  gst_rtp_buffer_unmap (&rtp);
 
   if (marker) {
     GST_DEBUG_OBJECT (dvdepay, "marker bit complete frame %u", rtp_ts);
@@ -366,7 +357,6 @@ gst_rtp_dv_depay_process (GstRTPBaseDepayload * base, GstRTPBuffer * rtp)
        * will change the timestamp but we won't copy the accumulator again because
        * we set the prev_ts to -1. */
       out = gst_buffer_copy (dvdepay->acc);
-      gst_buffer_foreach_meta (dvdepay->acc, foreach_metadata_drop, NULL);
     } else {
       GST_WARNING_OBJECT (dvdepay, "waiting for frame headers %02x",
           dvdepay->header_mask);

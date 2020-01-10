@@ -1,13 +1,7 @@
-GInetSocketAddress GSocketConnectable
-GProxyAddress GSocketConnectable
 GSocket GInitable
-GSocket GInitable GDatagramBased
-GSocketAddress GSocketConnectable
 GdkPixbuf GIcon
 GdkPixbuf GIcon GLoadableIcon
 Gst3GPPMux GstTagSetter GstTagXmpWriter
-Gst3GPPMux GstTagSetter GstTagXmpWriter GstPreset
-GstALawEnc GstPreset
 GstApev2Mux GstTagSetter
 GstAspectRatioCrop GstChildProxy
 GstAudioEncoder GstPreset
@@ -36,7 +30,6 @@ GstHDV1394Src GstURIHandler GstPropertyProbe
 GstHalAudioSink GstChildProxy
 GstHalAudioSrc GstChildProxy
 GstISMLMux GstTagSetter GstTagXmpWriter
-GstISMLMux GstTagSetter GstTagXmpWriter GstPreset
 GstId3v2Mux GstTagSetter
 GstIirEqualizer GstChildProxy
 GstIirEqualizer GstChildProxy GstPreset
@@ -46,9 +39,7 @@ GstIirEqualizerNBands GstChildProxy
 GstIirEqualizerNBands GstChildProxy GstPreset
 GstJpegEnc GstPreset
 GstMJ2Mux GstTagSetter GstTagXmpWriter
-GstMJ2Mux GstTagSetter GstTagXmpWriter GstPreset
 GstMP4Mux GstTagSetter GstTagXmpWriter
-GstMP4Mux GstTagSetter GstTagXmpWriter GstPreset
 GstMatroskaMux GstTagSetter
 GstMatroskaMux GstTagSetter GstTocSetter
 GstMuLawEnc GstPreset
@@ -72,7 +63,6 @@ GstPulseSrc GstStreamVolume GstImplementsInterface GstMixer GstPropertyProbe
 GstPushFileSrc GstChildProxy GstURIHandler
 GstQTMoovRecover GstChildProxy
 GstQTMux GstTagSetter GstTagXmpWriter
-GstQTMux GstTagSetter GstTagXmpWriter GstPreset
 GstRTSPSrc GstChildProxy GstURIHandler
 GstRgVolume GstChildProxy
 GstRtpBin GstChildProxy
@@ -81,8 +71,6 @@ GstSoupHTTPSrc GstURIHandler
 GstSpeexEnc GstPreset GstTagSetter
 GstSpeexEnc GstTagSetter GstPreset
 GstSplitFileSrc GstURIHandler
-GstSplitMuxSink GstChildProxy
-GstSplitMuxSrc GstChildProxy GstURIHandler
 GstSwitchSink GstChildProxy
 GstSwitchSrc GstChildProxy
 GstTagLibMux GstTagSetter
@@ -98,15 +86,12 @@ GstV4l2Src GstURIHandler GstImplementsInterface GstTuner GstColorBalance GstVide
 GstV4l2Src GstURIHandler GstTuner GstColorBalance GstVideoOrientation
 GstVP8Enc GstPreset GstTagSetter
 GstVP9Enc GstPreset GstTagSetter
-GstVPXEnc GstPreset GstTagSetter
 GstVideoBalance GstColorBalance
 GstVideoBalance GstImplementsInterface GstColorBalance
 GstVideoEncoder GstPreset
-GstVideoFlip GstVideoDirection
 GstVideoMixer GstChildProxy
 GstVideoMixer2 GstChildProxy
 GstWavEnc GstTagSetter GstTocSetter
 GstWavpackEnc GstPreset
 GstWebMMux GstTagSetter
 GstWebMMux GstTagSetter GstTocSetter
-GstY4mEncode GstPreset

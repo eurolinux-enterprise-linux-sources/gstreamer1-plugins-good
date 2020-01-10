@@ -78,11 +78,11 @@
 
 enum
 {
-  PROP_0,
-  PROP_UPDATE_FREQ,
-  PROP_SILENT,
-  PROP_DO_QUERY,
-  PROP_FORMAT
+  ARG_0,
+  ARG_UPDATE_FREQ,
+  ARG_SILENT,
+  ARG_DO_QUERY,
+  ARG_FORMAT
 };
 
 GstStaticPadTemplate progress_report_src_template =
@@ -145,30 +145,30 @@ gst_progress_report_class_init (GstProgressReportClass * g_class)
   gobject_class->get_property = gst_progress_report_get_property;
 
   g_object_class_install_property (gobject_class,
-      PROP_UPDATE_FREQ, g_param_spec_int ("update-freq", "Update Frequency",
+      ARG_UPDATE_FREQ, g_param_spec_int ("update-freq", "Update Frequency",
           "Number of seconds between reports when data is flowing", 1, G_MAXINT,
           DEFAULT_UPDATE_FREQ, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
   g_object_class_install_property (gobject_class,
-      PROP_SILENT, g_param_spec_boolean ("silent",
+      ARG_SILENT, g_param_spec_boolean ("silent",
           "Do not print output to stdout", "Do not print output to stdout",
           DEFAULT_SILENT, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
   g_object_class_install_property (gobject_class,
-      PROP_DO_QUERY, g_param_spec_boolean ("do-query",
+      ARG_DO_QUERY, g_param_spec_boolean ("do-query",
           "Use a query instead of buffer metadata to determine stream position",
           "Use a query instead of buffer metadata to determine stream position",
           DEFAULT_DO_QUERY, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
   g_object_class_install_property (gobject_class,
-      PROP_FORMAT, g_param_spec_string ("format", "format",
+      ARG_FORMAT, g_param_spec_string ("format", "format",
           "Format to use for the querying", DEFAULT_FORMAT,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
-  gst_element_class_add_static_pad_template (element_class,
-      &progress_report_sink_template);
-  gst_element_class_add_static_pad_template (element_class,
-      &progress_report_src_template);
+  gst_element_class_add_pad_template (element_class,
+      gst_static_pad_template_get (&progress_report_sink_template));
+  gst_element_class_add_pad_template (element_class,
+      gst_static_pad_template_get (&progress_report_src_template));
 
   gst_element_class_set_static_metadata (element_class, "Progress report",
       "Testing",
@@ -252,9 +252,6 @@ gst_progress_report_do_query (GstProgressReport * filter, GstFormat format,
       cur = gst_segment_to_stream_time (&base->segment, format,
           GST_BUFFER_TIMESTAMP (buf));
       total = base->segment.duration;
-    } else if (format == GST_FORMAT_BUFFERS) {
-      cur = filter->buffer_count;
-      total = -1;
     } else {
       return FALSE;
     }
@@ -414,7 +411,6 @@ gst_progress_report_transform_ip (GstBaseTransform * trans, GstBuffer * buf)
   GST_OBJECT_LOCK (filter);
   need_update =
       ((cur_time.tv_sec - filter->last_report.tv_sec) >= filter->update_freq);
-  filter->buffer_count++;
   GST_OBJECT_UNLOCK (filter);
 
   if (need_update) {
@@ -436,7 +432,6 @@ gst_progress_report_start (GstBaseTransform * trans)
 
   g_get_current_time (&filter->last_report);
   filter->start_time = filter->last_report;
-  filter->buffer_count = 0;
 
   return TRUE;
 }
@@ -457,22 +452,22 @@ gst_progress_report_set_property (GObject * object, guint prop_id,
   filter = GST_PROGRESS_REPORT (object);
 
   switch (prop_id) {
-    case PROP_UPDATE_FREQ:
+    case ARG_UPDATE_FREQ:
       GST_OBJECT_LOCK (filter);
       filter->update_freq = g_value_get_int (value);
       GST_OBJECT_UNLOCK (filter);
       break;
-    case PROP_SILENT:
+    case ARG_SILENT:
       GST_OBJECT_LOCK (filter);
       filter->silent = g_value_get_boolean (value);
       GST_OBJECT_UNLOCK (filter);
       break;
-    case PROP_DO_QUERY:
+    case ARG_DO_QUERY:
       GST_OBJECT_LOCK (filter);
       filter->do_query = g_value_get_boolean (value);
       GST_OBJECT_UNLOCK (filter);
       break;
-    case PROP_FORMAT:
+    case ARG_FORMAT:
       GST_OBJECT_LOCK (filter);
       g_free (filter->format);
       filter->format = g_value_dup_string (value);
@@ -494,22 +489,22 @@ gst_progress_report_get_property (GObject * object, guint prop_id,
   filter = GST_PROGRESS_REPORT (object);
 
   switch (prop_id) {
-    case PROP_UPDATE_FREQ:
+    case ARG_UPDATE_FREQ:
       GST_OBJECT_LOCK (filter);
       g_value_set_int (value, filter->update_freq);
       GST_OBJECT_UNLOCK (filter);
       break;
-    case PROP_SILENT:
+    case ARG_SILENT:
       GST_OBJECT_LOCK (filter);
       g_value_set_boolean (value, filter->silent);
       GST_OBJECT_UNLOCK (filter);
       break;
-    case PROP_DO_QUERY:
+    case ARG_DO_QUERY:
       GST_OBJECT_LOCK (filter);
       g_value_set_boolean (value, filter->do_query);
       GST_OBJECT_UNLOCK (filter);
       break;
-    case PROP_FORMAT:
+    case ARG_FORMAT:
       GST_OBJECT_LOCK (filter);
       g_value_set_string (value, filter->format);
       GST_OBJECT_UNLOCK (filter);

@@ -108,27 +108,29 @@
 
 typedef struct st_dtmf_key
 {
+  const char *event_name;
+  int event_encoding;
   float low_frequency;
   float high_frequency;
 } DTMF_KEY;
 
 static const DTMF_KEY DTMF_KEYS[] = {
-  {941, 1336},
-  {697, 1209},
-  {697, 1336},
-  {697, 1477},
-  {770, 1209},
-  {770, 1336},
-  {770, 1477},
-  {852, 1209},
-  {852, 1336},
-  {852, 1477},
-  {941, 1209},
-  {941, 1477},
-  {697, 1633},
-  {770, 1633},
-  {852, 1633},
-  {941, 1633},
+  {"DTMF_KEY_EVENT_0", 0, 941, 1336},
+  {"DTMF_KEY_EVENT_1", 1, 697, 1209},
+  {"DTMF_KEY_EVENT_2", 2, 697, 1336},
+  {"DTMF_KEY_EVENT_3", 3, 697, 1477},
+  {"DTMF_KEY_EVENT_4", 4, 770, 1209},
+  {"DTMF_KEY_EVENT_5", 5, 770, 1336},
+  {"DTMF_KEY_EVENT_6", 6, 770, 1477},
+  {"DTMF_KEY_EVENT_7", 7, 852, 1209},
+  {"DTMF_KEY_EVENT_8", 8, 852, 1336},
+  {"DTMF_KEY_EVENT_9", 9, 852, 1477},
+  {"DTMF_KEY_EVENT_S", 10, 941, 1209},
+  {"DTMF_KEY_EVENT_P", 11, 941, 1477},
+  {"DTMF_KEY_EVENT_A", 12, 697, 1633},
+  {"DTMF_KEY_EVENT_B", 13, 770, 1633},
+  {"DTMF_KEY_EVENT_C", 14, 852, 1633},
+  {"DTMF_KEY_EVENT_D", 15, 941, 1633},
 };
 
 #define MAX_DTMF_EVENTS 16
@@ -158,6 +160,8 @@ GST_DEBUG_CATEGORY_STATIC (gst_rtp_dtmf_depay_debug);
 
 enum
 {
+
+
   /* FILL ME */
   LAST_SIGNAL
 };
@@ -167,6 +171,11 @@ enum
   PROP_0,
   PROP_UNIT_TIME,
   PROP_MAX_DURATION
+};
+
+enum
+{
+  ARG_0
 };
 
 static GstStaticPadTemplate gst_rtp_dtmf_depay_src_template =
@@ -212,10 +221,10 @@ gst_rtp_dtmf_depay_class_init (GstRtpDTMFDepayClass * klass)
   gstelement_class = GST_ELEMENT_CLASS (klass);
   gstrtpbasedepayload_class = GST_RTP_BASE_DEPAYLOAD_CLASS (klass);
 
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_dtmf_depay_src_template);
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_dtmf_depay_sink_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_dtmf_depay_src_template));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_dtmf_depay_sink_template));
 
   GST_DEBUG_CATEGORY_INIT (gst_rtp_dtmf_depay_debug,
       "rtpdtmfdepay", 0, "rtpdtmfdepay element");
@@ -334,7 +343,7 @@ gst_dtmf_src_generate_tone (GstRtpDTMFDepay * rtpdtmfdepay,
   double amplitude, f1, f2;
   double volume_factor;
   DTMF_KEY key = DTMF_KEYS[payload.event];
-  guint32 clock_rate;
+  guint32 clock_rate = 8000 /* default */ ;
   GstRTPBaseDepayload *depayload = GST_RTP_BASE_DEPAYLOAD (rtpdtmfdepay);
   gint volume;
   static GstAllocationParams params = { 0, 1, 0, 0, };

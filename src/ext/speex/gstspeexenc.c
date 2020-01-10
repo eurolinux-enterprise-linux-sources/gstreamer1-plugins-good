@@ -211,8 +211,10 @@ gst_speex_enc_class_init (GstSpeexEncClass * klass)
           "The last status message", NULL,
           G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
 
-  gst_element_class_add_static_pad_template (gstelement_class, &src_factory);
-  gst_element_class_add_static_pad_template (gstelement_class, &sink_factory);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&src_factory));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&sink_factory));
   gst_element_class_set_static_metadata (gstelement_class,
       "Speex audio encoder", "Codec/Encoder/Audio",
       "Encodes audio in Speex format", "Wim Taymans <wim@fluendo.com>");
@@ -240,7 +242,6 @@ gst_speex_enc_init (GstSpeexEnc * enc)
   /* arrange granulepos marking (and required perfect ts) */
   gst_audio_encoder_set_mark_granule (benc, TRUE);
   gst_audio_encoder_set_perfect_timestamp (benc, TRUE);
-  GST_PAD_SET_ACCEPT_TEMPLATE (GST_AUDIO_ENCODER_SINK_PAD (enc));
 }
 
 static gboolean
@@ -252,7 +253,6 @@ gst_speex_enc_start (GstAudioEncoder * benc)
   speex_bits_init (&enc->bits);
   enc->tags = gst_tag_list_new_empty ();
   enc->header_sent = FALSE;
-  enc->encoded_samples = 0;
 
   return TRUE;
 }
@@ -511,9 +511,6 @@ gst_speex_enc_sink_event (GstAudioEncoder * benc, GstEvent * event)
       }
       break;
     }
-    case GST_EVENT_SEGMENT:
-      enc->encoded_samples = 0;
-      break;
     default:
       break;
   }
@@ -533,8 +530,6 @@ gst_speex_enc_encode (GstSpeexEnc * enc, GstBuffer * buf)
   gsize bsize, size;
   GstBuffer *outbuf;
   GstFlowReturn ret = GST_FLOW_OK;
-  GstSegment *segment;
-  GstClockTime duration;
 
   if (G_LIKELY (buf)) {
     gst_buffer_map (buf, &map, GST_MAP_READ);
@@ -543,28 +538,6 @@ gst_speex_enc_encode (GstSpeexEnc * enc, GstBuffer * buf)
 
     if (G_UNLIKELY (bsize % bytes)) {
       GST_DEBUG_OBJECT (enc, "draining; adding silence samples");
-
-      /* If encoding part of a frame, and we have no set stop time on
-       * the output segment, we update the segment stop time to reflect
-       * the last sample. This will let oggmux set the last page's
-       * granpos to tell a decoder the dummy samples should be clipped.
-       */
-      segment = &GST_AUDIO_ENCODER_OUTPUT_SEGMENT (enc);
-      GST_DEBUG_OBJECT (enc, "existing output segment %" GST_SEGMENT_FORMAT,
-          segment);
-      if (!GST_CLOCK_TIME_IS_VALID (segment->stop)) {
-        int input_samples = bsize / (enc->channels * 2);
-        GST_DEBUG_OBJECT (enc,
-            "No stop time and partial frame, updating segment");
-        duration =
-            gst_util_uint64_scale (enc->encoded_samples + input_samples,
-            GST_SECOND, enc->rate);
-        segment->stop = segment->start + duration;
-        GST_DEBUG_OBJECT (enc, "new output segment %" GST_SEGMENT_FORMAT,
-            segment);
-        gst_pad_push_event (GST_AUDIO_ENCODER_SRC_PAD (enc),
-            gst_event_new_segment (segment));
-      }
 
       size = ((bsize / bytes) + 1) * bytes;
       data0 = data = g_malloc0 (size);
@@ -630,7 +603,6 @@ gst_speex_enc_encode (GstSpeexEnc * enc, GstBuffer * buf)
 
   ret = gst_audio_encoder_finish_frame (GST_AUDIO_ENCODER (enc),
       outbuf, samples);
-  enc->encoded_samples += frame_size;
 
 done:
   g_free (data0);
@@ -640,17 +612,16 @@ done:
 /*
  * (really really) FIXME: move into core (dixit tpm)
  */
-/*
+/**
  * _gst_caps_set_buffer_array:
- * @caps: (transfer full): a #GstCaps
+ * @caps: a #GstCaps
  * @field: field in caps to set
  * @buf: header buffers
  *
  * Adds given buffers to an array of buffers set as the given @field
  * on the given @caps.  List of buffer arguments must be NULL-terminated.
  *
- * Returns: (transfer full): input caps with a streamheader field added, or NULL
- *     if some error occurred
+ * Returns: input caps with a streamheader field added, or NULL if some error
  */
 static GstCaps *
 _gst_caps_set_buffer_array (GstCaps * caps, const gchar * field,

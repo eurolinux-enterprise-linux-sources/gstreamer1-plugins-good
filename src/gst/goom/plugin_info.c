@@ -106,6 +106,8 @@ setOptimizedMethods (PluginInfo * p)
   }
 #endif /* HAVE_CPU_PPC */
 #endif
+
+  cpuFlavour = 0;               /* trick compiler into thinking variable is used */
 }
 
 void

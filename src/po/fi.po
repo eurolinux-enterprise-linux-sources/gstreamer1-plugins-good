@@ -11,7 +11,7 @@ msgid ""
 msgstr ""
 "Project-Id-Version: gst-plugins-good 0.10.25.3\n"
 "Report-Msgid-Bugs-To: http://bugzilla.gnome.org/\n"
-"POT-Creation-Date: 2017-02-23 15:16+0200\n"
+"POT-Creation-Date: 2014-12-18 12:05+0100\n"
 "PO-Revision-Date: 2010-11-17 23:03+0200\n"
 "Last-Translator: Tommi Vainikainen <Tommi.Vainikainen@iki.fi>\n"
 "Language-Team: Finnish <translation-team-fi@lists.sourceforge.net>\n"
@@ -50,13 +50,15 @@ msgstr "Yhteyttä palvelimeen ei voitu avata."
 msgid "Secure connection setup failed."
 msgstr "Turvallisen yhteyden avaus epäonnistui."
 
-#, fuzzy
 msgid ""
-"A network error occurred, or the server closed the connection unexpectedly."
+"A network error occured, or the server closed the connection unexpectedly."
 msgstr "Tapahtui verkkovirhe tai palvelin sulki yhteyden yllättäen."
 
 msgid "Server sent bad data."
 msgstr "Palvelin lähetti virheellistä dataa."
+
+msgid "Internal data stream error."
+msgstr "Sisäisen tietovirran virhe."
 
 msgid "No or invalid input audio, AVI stream will be corrupt."
 msgstr ""
@@ -104,6 +106,9 @@ msgstr ""
 "siirtoprotokollia, tai vaihtoehtoisesti sinulta saattaa puuttua oikea "
 "GStreamer-RTSP-laajennusliitännäinen."
 
+msgid "Internal data flow error."
+msgstr "Sisäisen tietovirran virhe."
+
 msgid ""
 "Could not open audio device for playback. Device is being used by another "
 "application."
@@ -149,12 +154,6 @@ msgstr ""
 
 msgid "Could not open audio device for recording."
 msgstr "Äänilaitetta ei voitu avata nauhoitusta varten."
-
-msgid "CoreAudio device not found"
-msgstr ""
-
-msgid "CoreAudio device could not be opened"
-msgstr ""
 
 msgid "Record Source"
 msgstr "Nauhoituslähde"
@@ -264,12 +263,11 @@ msgid "Video device returned invalid dimensions."
 msgstr ""
 
 #, fuzzy
-msgid "Video device uses an unsupported interlacing method."
+msgid "Video devices uses an unsupported interlacing method."
 msgstr "Laitteen ”%s” ajuri ei tue mitään tunnettua kaappaustapaa."
 
-#, fuzzy
-msgid "Video device uses an unsupported pixel format."
-msgstr "Laitteen ”%s” ajuri ei tue mitään tunnettua kaappaustapaa."
+msgid "Video devices uses an unsupported pixel format."
+msgstr ""
 
 msgid "Failed to configure internal buffer pool."
 msgstr ""
@@ -432,12 +430,6 @@ msgstr "Resoluution vaihto käytön aikana ei ole vielä mahdollista."
 
 msgid "Cannot operate without a clock"
 msgstr "Ei voitu toimia ilman kelloa"
-
-#~ msgid "Internal data stream error."
-#~ msgstr "Sisäisen tietovirran virhe."
-
-#~ msgid "Internal data flow error."
-#~ msgstr "Sisäisen tietovirran virhe."
 
 #, fuzzy
 #~ msgid "Device '%s' does not support video capture"

@@ -1,7 +1,5 @@
 /* GStreamer
  * Copyright (C) <2007> Wim Taymans <wim.taymans@gmail.com>
- * Copyright (C)  2015 Kurento (http://kurento.org/)
- *   @author: Miguel París <mparisdiaz@gmail.com>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -23,7 +21,7 @@
 #define __RTP_SOURCE_H__
 
 #include <gst/gst.h>
-#include <gst/rtp/rtp.h>
+#include <gst/rtp/gstrtcpbuffer.h>
 #include <gst/net/gstnetaddressmeta.h>
 #include <gio/gio.h>
 
@@ -176,9 +174,6 @@ struct _RTPSource {
   guint64       bytes_received;
 
   GQueue       *packets;
-  RTPPacketRateCtx packet_rate_ctx;
-  guint32       max_dropout_time;
-  guint32       max_misorder_time;
 
   RTPSourceCallbacks callbacks;
   gpointer           user_data;

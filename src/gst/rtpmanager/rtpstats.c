@@ -1,7 +1,5 @@
 /* GStreamer
  * Copyright (C) <2007> Wim Taymans <wim.taymans@gmail.com>
- * Copyright (C)  2015 Kurento (http://kurento.org/)
- *   @author: Miguel París <mparisdiaz@gmail.com>
  *
  * This library is free software; you can redistribute it and/or
  * modify it under the terms of the GNU Library General Public
@@ -20,92 +18,6 @@
  */
 
 #include "rtpstats.h"
-
-void
-gst_rtp_packet_rate_ctx_reset (RTPPacketRateCtx * ctx, guint32 clock_rate)
-{
-  ctx->clock_rate = clock_rate;
-  ctx->probed = FALSE;
-  ctx->avg_packet_rate = -1;
-  ctx->last_ts = -1;
-}
-
-guint32
-gst_rtp_packet_rate_ctx_update (RTPPacketRateCtx * ctx, guint16 seqnum,
-    guint32 ts)
-{
-  guint64 new_ts, diff_ts;
-  gint diff_seqnum;
-  guint32 new_packet_rate;
-
-  if (ctx->clock_rate <= 0) {
-    return ctx->avg_packet_rate;
-  }
-
-  new_ts = ctx->last_ts;
-  gst_rtp_buffer_ext_timestamp (&new_ts, ts);
-
-  if (!ctx->probed) {
-    ctx->last_seqnum = seqnum;
-    ctx->last_ts = new_ts;
-    ctx->probed = TRUE;
-    return ctx->avg_packet_rate;
-  }
-
-  diff_seqnum = gst_rtp_buffer_compare_seqnum (ctx->last_seqnum, seqnum);
-  if (diff_seqnum <= 0 || new_ts <= ctx->last_ts) {
-    return ctx->avg_packet_rate;
-  }
-
-  diff_ts = new_ts - ctx->last_ts;
-  diff_ts = gst_util_uint64_scale_int (diff_ts, GST_SECOND, ctx->clock_rate);
-  new_packet_rate = gst_util_uint64_scale (diff_seqnum, GST_SECOND, diff_ts);
-
-  /* The goal is that higher packet rates "win".
-   * If there's a sudden burst, the average will go up fast,
-   * but it will go down again slowly.
-   * This is useful for bursty cases, where a lot of packets are close
-   * to each other and should allow a higher reorder/dropout there.
-   * Round up the new average.
-   */
-  if (ctx->avg_packet_rate > new_packet_rate) {
-    ctx->avg_packet_rate = (7 * ctx->avg_packet_rate + new_packet_rate + 7) / 8;
-  } else {
-    ctx->avg_packet_rate = (ctx->avg_packet_rate + new_packet_rate + 1) / 2;
-  }
-
-  ctx->last_seqnum = seqnum;
-  ctx->last_ts = new_ts;
-
-  return ctx->avg_packet_rate;
-}
-
-guint32
-gst_rtp_packet_rate_ctx_get (RTPPacketRateCtx * ctx)
-{
-  return ctx->avg_packet_rate;
-}
-
-guint32
-gst_rtp_packet_rate_ctx_get_max_dropout (RTPPacketRateCtx * ctx, gint32 time_ms)
-{
-  if (time_ms <= 0 || !ctx->probed) {
-    return RTP_DEF_DROPOUT;
-  }
-
-  return MAX (RTP_MIN_DROPOUT, ctx->avg_packet_rate * time_ms / 1000);
-}
-
-guint32
-gst_rtp_packet_rate_ctx_get_max_misorder (RTPPacketRateCtx * ctx,
-    gint32 time_ms)
-{
-  if (time_ms <= 0 || !ctx->probed) {
-    return RTP_DEF_MISORDER;
-  }
-
-  return MAX (RTP_MIN_MISORDER, ctx->avg_packet_rate * time_ms / 1000);
-}
 
 /**
  * rtp_stats_init_defaults:
@@ -208,8 +120,6 @@ rtp_stats_set_bandwidths (RTPSessionStats * stats, guint rtp_bw,
  * rtp_stats_calculate_rtcp_interval:
  * @stats: an #RTPSessionStats struct
  * @sender: if we are a sender
- * @profile: RTP profile of this session
- * @ptp: if this session is a point-to-point session
  * @first: if this is the first time
  *
  * Calculate the RTCP interval. The result of this function is the amount of
@@ -219,31 +129,22 @@ rtp_stats_set_bandwidths (RTPSessionStats * stats, guint rtp_bw,
  */
 GstClockTime
 rtp_stats_calculate_rtcp_interval (RTPSessionStats * stats, gboolean we_send,
-    GstRTPProfile profile, gboolean ptp, gboolean first)
+    gboolean first)
 {
   gdouble members, senders, n;
   gdouble avg_rtcp_size, rtcp_bw;
   gdouble interval;
   gdouble rtcp_min_time;
 
-  if (profile == GST_RTP_PROFILE_AVPF || profile == GST_RTP_PROFILE_SAVPF) {
-    /* RFC 4585 3.4d), 3.5.1 */
-
-    if (first && !ptp)
-      rtcp_min_time = 1.0;
-    else
-      rtcp_min_time = 0.0;
-  } else {
-    /* Very first call at application start-up uses half the min
-     * delay for quicker notification while still allowing some time
-     * before reporting for randomization and to learn about other
-     * sources so the report interval will converge to the correct
-     * interval more quickly.
-     */
-    rtcp_min_time = stats->min_interval;
-    if (first)
-      rtcp_min_time /= 2.0;
-  }
+  /* Very first call at application start-up uses half the min
+   * delay for quicker notification while still allowing some time
+   * before reporting for randomization and to learn about other
+   * sources so the report interval will converge to the correct
+   * interval more quickly.
+   */
+  rtcp_min_time = stats->min_interval;
+  if (first)
+    rtcp_min_time /= 2.0;
 
   /* Dedicate a fraction of the RTCP bandwidth to senders unless
    * the number of senders is large enough that their share is
@@ -265,10 +166,10 @@ rtp_stats_calculate_rtcp_interval (RTPSessionStats * stats, gboolean we_send,
 
   /* no bandwidth for RTCP, return NONE to signal that we don't want to send
    * RTCP packets */
-  if (rtcp_bw <= 0.0001)
+  if (rtcp_bw <= 0.00001)
     return GST_CLOCK_TIME_NONE;
 
-  avg_rtcp_size = 8.0 * stats->avg_rtcp_packet_size;
+  avg_rtcp_size = stats->avg_rtcp_packet_size;
   /*
    * The effective number of sites times the average packet size is
    * the total number of octets sent when each site sends a report.
@@ -348,7 +249,7 @@ rtp_stats_calculate_bye_interval (RTPSessionStats * stats)
   if (rtcp_bw <= 0.0001)
     return GST_CLOCK_TIME_NONE;
 
-  avg_rtcp_size = 8.0 * stats->avg_rtcp_packet_size;
+  avg_rtcp_size = stats->avg_rtcp_packet_size;
   /*
    * The effective number of sites times the average packet size is
    * the total number of octets sent when each site sends a report.

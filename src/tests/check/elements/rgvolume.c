@@ -162,7 +162,7 @@ send_caps_event (GstElement * element)
   GstCaps *caps;
   gboolean res;
 
-  caps = gst_caps_from_string ("audio/x-raw, format = " GST_AUDIO_NE (F32) ", "
+  caps = gst_caps_from_string ("audio/x-raw, format = F32LE, "
       "layout = interleaved, rate = 8000, channels = 1");
   res = gst_pad_push_event (mysrcpad, gst_event_new_caps (caps));
   fail_unless (res, "CAPS event not handled");
@@ -383,14 +383,8 @@ GST_START_TEST (test_events)
       GST_TAG_TRACK_GAIN, +4.95, GST_TAG_TRACK_PEAK, 0.59463,
       GST_TAG_ALBUM_GAIN, -1.54, GST_TAG_ALBUM_PEAK, 0.693415,
       GST_TAG_ARTIST, "Foobar", NULL);
-  gst_tag_list_ref (tag_list);
   event = gst_event_new_tag (tag_list);
   new_event = send_tag_event (element, event);
-
-  /* Make sure our tags weren't modified in place while we still got a ref */
-  fail_unless_equals_int (5, gst_tag_list_n_tags (tag_list));
-  gst_tag_list_unref (tag_list);
-
   gst_event_parse_tag (new_event, &tag_list);
   fail_unless (gst_tag_list_get_string (tag_list, GST_TAG_ARTIST, &artist));
   fail_unless (g_str_equal (artist, "Foobar"));
@@ -675,4 +669,19 @@ rgvolume_suite (void)
   return s;
 }
 
-GST_CHECK_MAIN (rgvolume);
+int
+main (int argc, char **argv)
+{
+  gint nf;
+
+  Suite *s = rgvolume_suite ();
+  SRunner *sr = srunner_create (s);
+
+  gst_check_init (&argc, &argv);
+
+  srunner_run_all (sr, CK_ENV);
+  nf = srunner_ntests_failed (sr);
+  srunner_free (sr);
+
+  return nf;
+}

@@ -39,14 +39,8 @@
 /* The GIO modules directory. */
 #undef GIO_MODULE_DIR
 
-/* The GIO install prefix. */
-#undef GIO_PREFIX
-
 /* GStreamer API Version */
 #define GST_API_VERSION "1.0"
-
-/* Define if extra runtime checks should be enabled */
-#undef GST_ENABLE_EXTRA_CHECKS
 
 /* Defined if gcov is enabled to force a rebuild due to config.h changing */
 #undef GST_GCOV_ENABLED
@@ -64,13 +58,10 @@
 #define GST_PACKAGE_ORIGIN "Unknown package origin"
 
 /* GStreamer package release date/time for plugins as YYYY-MM-DD */
-#define GST_PACKAGE_RELEASE_DATETIME "2017-02-23"
+#define GST_PACKAGE_RELEASE_DATETIME "2014-12-18"
 
 /* Define if static plugins should be built */
 #undef GST_PLUGIN_BUILD_STATIC
-
-/* Define if Video4Linux probe shall be run at plugin load */
-#undef GST_V4L2_ENABLE_PROBE
 
 /* Define to enable aalib ASCII Art library (used by aasink). */
 #undef HAVE_AALIB
@@ -99,14 +90,8 @@
 /* Define to 1 if you have the `cosh' function. */
 #undef HAVE_COSH
 
-/* Define if the target CPU is AARCH64 */
-#undef HAVE_CPU_AARCH64
-
 /* Define if the target CPU is an Alpha */
 #undef HAVE_CPU_ALPHA
-
-/* Define if the target CPU is an ARC */
-#undef HAVE_CPU_ARC
 
 /* Define if the target CPU is an ARM */
 #undef HAVE_CPU_ARM
@@ -274,12 +259,6 @@
 /* Define to 1 if you have the <process.h> header file. */
 #define HAVE_PROCESS_H 1
 
-/* Define if you have POSIX threads libraries and header files. */
-#undef HAVE_PTHREAD
-
-/* Have PTHREAD_PRIO_INHERIT. */
-#undef HAVE_PTHREAD_PRIO_INHERIT
-
 /* Define to enable pulseaudio plug-in (used by pulseaudio). */
 #undef HAVE_PULSE
 
@@ -358,9 +337,6 @@
 /* Define to enable VPX decoder (used by vpx). */
 #undef HAVE_VPX
 
-/* Defined if the VPX library version is 1.4 or bigger */
-#undef HAVE_VPX_1_4
-
 /* Define to enable Win32 WaveForm (used by waveformsink). */
 #undef HAVE_WAVEFORM
 
@@ -370,13 +346,7 @@
 /* Define to enable X libraries and plugins (used by ximagesrc). */
 #undef HAVE_X
 
-/* Defined if Xdamage is available */
-#undef HAVE_XDAMAGE
-
-/* Defined if Xfixes is available */
-#undef HAVE_XFIXES
-
-/* Defined if XShm is available */
+/* Define to enable X Shared Memory extension. */
 #undef HAVE_XSHM
 
 /* Define to enable zlib support for qtdemux/matroska. */
@@ -388,7 +358,8 @@
 /* gettext locale dir */
 #define LOCALEDIR PREFIX "\\share\\locale"
 
-/* Define to the sub-directory where libtool stores uninstalled libraries. */
+/* Define to the sub-directory in which libtool stores uninstalled libraries.
+   */
 #undef LT_OBJDIR
 
 /* Name of package */
@@ -401,7 +372,7 @@
 #define PACKAGE_NAME "GStreamer Good Plug-ins"
 
 /* Define to the full name and version of this package. */
-#define PACKAGE_STRING "GStreamer Good Plug-ins 1.10.4"
+#define PACKAGE_STRING "GStreamer Good Plug-ins 1.4.5"
 
 /* Define to the one symbol short name of this package. */
 #define PACKAGE_TARNAME "gst-plugins-good"
@@ -410,7 +381,7 @@
 #undef PACKAGE_URL
 
 /* Define to the version of this package. */
-#define PACKAGE_VERSION "1.10.4"
+#define PACKAGE_VERSION "1.4.5"
 
 /* directory where plugins are located */
 #ifdef _DEBUG
@@ -418,10 +389,6 @@
 #else
 #  define PLUGINDIR PREFIX "\\lib\\gstreamer-0.11"
 #endif
-
-/* Define to necessary symbol if this constant uses a non-standard name on
-   your system. */
-#undef PTHREAD_CREATE_JOINABLE
 
 /* The size of `char', as computed by sizeof. */
 #undef SIZEOF_CHAR
@@ -438,6 +405,9 @@
 /* The size of `void*', as computed by sizeof. */
 #undef SIZEOF_VOIDP
 
+/* defined if speex 1.0.x API detected */
+#undef SPEEX_1_0
+
 /* Define to 1 if you have the ANSI C header files. */
 #undef STDC_HEADERS
 
@@ -445,7 +415,10 @@
 #undef TARGET_CPU
 
 /* Version number of package */
-#define VERSION "1.10.4"
+#define VERSION "1.4.5"
+
+/* old wavpack API */
+#undef WAVPACK_OLD_API
 
 /* Define WORDS_BIGENDIAN to 1 if your processor stores words with the most
    significant byte first (like Motorola and SPARC, unlike Intel). */
@@ -458,3 +431,6 @@
 #  undef WORDS_BIGENDIAN
 # endif
 #endif
+
+/* Define to 1 if the X Window System is missing or not being used. */
+#undef X_DISPLAY_MISSING

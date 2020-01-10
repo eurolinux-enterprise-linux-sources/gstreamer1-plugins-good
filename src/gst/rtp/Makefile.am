@@ -38,22 +38,16 @@ libgstrtp_la_SOURCES = \
 	gstrtpgsmpay.c \
 	gstrtpamrdepay.c \
 	gstrtpamrpay.c \
-	gstrtph261pay.c \
-	gstrtph261depay.c \
 	gstrtph263pdepay.c \
 	gstrtph263ppay.c \
 	gstrtph263depay.c \
 	gstrtph263pay.c \
 	gstrtph264depay.c \
 	gstrtph264pay.c \
-	gstrtph265depay.c \
-	gstrtph265pay.c \
 	gstrtpj2kdepay.c \
 	gstrtpj2kpay.c \
 	gstrtpjpegdepay.c \
 	gstrtpjpegpay.c \
-	gstrtpklvdepay.c \
-	gstrtpklvpay.c \
 	gstrtpL16depay.c \
 	gstrtpL16pay.c \
 	gstrtpL24depay.c \
@@ -68,8 +62,6 @@ libgstrtp_la_SOURCES = \
 	gstrtpmp4gpay.c \
 	gstrtpmp4adepay.c \
 	gstrtpmp4apay.c \
-	gstrtpopusdepay.c \
-	gstrtpopuspay.c \
 	gstrtpqcelpdepay.c \
 	gstrtpqdmdepay.c \
 	gstrtpsbcdepay.c \
@@ -85,13 +77,10 @@ libgstrtp_la_SOURCES = \
 	gstrtpvorbispay.c  \
 	gstrtpvp8depay.c \
 	gstrtpvp8pay.c \
-	gstrtpvp9depay.c \
-	gstrtpvp9pay.c \
 	gstrtpvrawdepay.c  \
 	gstrtpvrawpay.c \
 	gstrtpstreampay.c \
-	gstrtpstreamdepay.c \
-	gstrtputils.c
+	gstrtpstreamdepay.c
 
 libgstrtp_la_CFLAGS = $(GST_PLUGINS_BASE_CFLAGS) $(GST_BASE_CFLAGS) \
 	$(GST_CFLAGS) -Dvp8_norm=gst_rtpvp8_vp8_norm \
@@ -150,24 +139,16 @@ noinst_HEADERS =			\
 	gstrtpmpapay.h \
 	gstrtpmpvdepay.h \
 	gstrtpmpvpay.h \
-	gstrtph261pay.h \
-	gstrtph261depay.h \
 	gstrtph263pdepay.h \
 	gstrtph263ppay.h \
 	gstrtph263depay.h \
 	gstrtph263pay.h \
 	gstrtph264depay.h \
 	gstrtph264pay.h \
-	gstrtph265depay.h \
-	gstrtph265pay.h \
-	gstrtph265types.h \
 	gstrtpj2kdepay.h \
 	gstrtpj2kpay.h \
-	gstrtpj2kcommon.h \
 	gstrtpjpegdepay.h \
 	gstrtpjpegpay.h \
-	gstrtpklvdepay.h \
-	gstrtpklvpay.h \
 	gstrtpmp1sdepay.h \
 	gstrtpmp2tdepay.h \
 	gstrtpmp2tpay.h \
@@ -177,8 +158,6 @@ noinst_HEADERS =			\
 	gstrtpmp4gpay.h	\
 	gstrtpmp4adepay.h \
 	gstrtpmp4apay.h \
-	gstrtpopusdepay.h \
-	gstrtpopuspay.h \
 	gstasteriskh263.h \
 	gstrtpqcelpdepay.h \
 	gstrtpqdmdepay.h \
@@ -195,12 +174,23 @@ noinst_HEADERS =			\
 	gstrtpvorbispay.h \
 	gstrtpvp8depay.h \
 	gstrtpvp8pay.h \
-	gstrtpvp9depay.h \
-	gstrtpvp9pay.h \
 	gstrtpvrawdepay.h \
 	gstrtpvrawpay.h \
 	gstrtpstreampay.h \
-	gstrtpstreamdepay.h \
-	gstrtputils.h
+	gstrtpstreamdepay.h
 
 EXTRA_DIST = dboolhuff.LICENSE
+
+Android.mk: Makefile.am $(BUILT_SOURCES)
+	androgenizer \
+	-:PROJECT libgstrtp -:SHARED libgstrtp \
+	 -:TAGS eng debug \
+         -:REL_TOP $(top_srcdir) -:ABS_TOP $(abs_top_srcdir) \
+	 -:SOURCES $(libgstrtp_la_SOURCES) \
+	 -:CFLAGS $(DEFS) $(DEFAULT_INCLUDES) $(libgstrtp_la_CFLAGS) \
+	 -:LDFLAGS $(libgstrtp_la_LDFLAGS) \
+	  $(libgstrtp_la_LIBADD) \
+	  -ldl \
+	 -:PASSTHROUGH LOCAL_ARM_MODE:=arm \
+	      LOCAL_MODULE_PATH:='$$(TARGET_OUT)/lib/gstreamer-0.10' \
+	> $@

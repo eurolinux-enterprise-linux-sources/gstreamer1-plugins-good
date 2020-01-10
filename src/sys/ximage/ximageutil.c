@@ -36,24 +36,6 @@ gst_meta_ximage_api_get_type (void)
   return type;
 }
 
-static gboolean
-gst_meta_ximage_init (GstMeta * meta, gpointer params, GstBuffer * buffer)
-{
-  GstMetaXImage *emeta = (GstMetaXImage *) meta;
-
-  emeta->parent = NULL;
-  emeta->ximage = NULL;
-#ifdef HAVE_XSHM
-  emeta->SHMInfo.shmaddr = ((void *) -1);
-  emeta->SHMInfo.shmid = -1;
-  emeta->SHMInfo.readOnly = TRUE;
-#endif
-  emeta->width = emeta->height = emeta->size = 0;
-  emeta->return_func = NULL;
-
-  return TRUE;
-}
-
 const GstMetaInfo *
 gst_meta_ximage_get_info (void)
 {
@@ -62,7 +44,7 @@ gst_meta_ximage_get_info (void)
   if (g_once_init_enter (&meta_ximage_info)) {
     const GstMetaInfo *meta =
         gst_meta_register (gst_meta_ximage_api_get_type (), "GstMetaXImageSrc",
-        sizeof (GstMetaXImage), (GstMetaInitFunction) gst_meta_ximage_init,
+        sizeof (GstMetaXImage), (GstMetaInitFunction) NULL,
         (GstMetaFreeFunction) NULL, (GstMetaTransformFunction) NULL);
     g_once_init_leave (&meta_ximage_info, meta);
   }
@@ -193,17 +175,18 @@ ximageutil_xcontext_get (GstElement * parent, const gchar * display_name)
     return NULL;
   }
   xcontext->screen = DefaultScreenOfDisplay (xcontext->disp);
-  xcontext->visual = DefaultVisualOfScreen (xcontext->screen);
-  xcontext->root = RootWindowOfScreen (xcontext->screen);
-  xcontext->white = WhitePixelOfScreen (xcontext->screen);
-  xcontext->black = BlackPixelOfScreen (xcontext->screen);
+  xcontext->screen_num = DefaultScreen (xcontext->disp);
+  xcontext->visual = DefaultVisual (xcontext->disp, xcontext->screen_num);
+  xcontext->root = DefaultRootWindow (xcontext->disp);
+  xcontext->white = XWhitePixel (xcontext->disp, xcontext->screen_num);
+  xcontext->black = XBlackPixel (xcontext->disp, xcontext->screen_num);
   xcontext->depth = DefaultDepthOfScreen (xcontext->screen);
 
-  xcontext->width = WidthOfScreen (xcontext->screen);
-  xcontext->height = HeightOfScreen (xcontext->screen);
+  xcontext->width = DisplayWidth (xcontext->disp, xcontext->screen_num);
+  xcontext->height = DisplayHeight (xcontext->disp, xcontext->screen_num);
 
-  xcontext->widthmm = WidthMMOfScreen (xcontext->screen);
-  xcontext->heightmm = HeightMMOfScreen (xcontext->screen);
+  xcontext->widthmm = DisplayWidthMM (xcontext->disp, xcontext->screen_num);
+  xcontext->heightmm = DisplayHeightMM (xcontext->disp, xcontext->screen_num);
 
   xcontext->caps = NULL;
 
@@ -337,6 +320,8 @@ gst_ximagesrc_buffer_dispose (GstBuffer * ximage)
   GstElement *parent;
   GstMetaXImage *meta;
   gboolean ret = TRUE;
+
+  g_return_val_if_fail (ximage != NULL, FALSE);
 
   meta = GST_META_XIMAGE_GET (ximage);
 

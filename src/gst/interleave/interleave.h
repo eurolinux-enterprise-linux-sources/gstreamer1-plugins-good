@@ -60,8 +60,6 @@ struct _GstInterleave
   GValueArray *input_channel_positions;
   gboolean channel_positions_from_input;
 
-  gint default_channels_ordering_map[64];
-
   GstCaps *sinkcaps;
   gint configured_sinkpads_counter;
 
@@ -69,6 +67,8 @@ struct _GstInterleave
   guint64 offset;
 
   GstEvent *pending_segment;
+
+  GstPadEventFunction collect_event;
 
   GstInterleaveFunc func;
 

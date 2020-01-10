@@ -26,7 +26,6 @@
 #include <gst/rtp/gstrtpbuffer.h>
 
 #include "gstrtpmp4gdepay.h"
-#include "gstrtputils.h"
 
 GST_DEBUG_CATEGORY_STATIC (rtpmp4gdepay_debug);
 #define GST_CAT_DEFAULT (rtpmp4gdepay_debug)
@@ -135,7 +134,7 @@ static void gst_rtp_mp4g_depay_finalize (GObject * object);
 static gboolean gst_rtp_mp4g_depay_setcaps (GstRTPBaseDepayload * depayload,
     GstCaps * caps);
 static GstBuffer *gst_rtp_mp4g_depay_process (GstRTPBaseDepayload * depayload,
-    GstRTPBuffer * rtp);
+    GstBuffer * buf);
 static gboolean gst_rtp_mp4g_depay_handle_event (GstRTPBaseDepayload * filter,
     GstEvent * event);
 
@@ -158,14 +157,14 @@ gst_rtp_mp4g_depay_class_init (GstRtpMP4GDepayClass * klass)
 
   gstelement_class->change_state = gst_rtp_mp4g_depay_change_state;
 
-  gstrtpbasedepayload_class->process_rtp_packet = gst_rtp_mp4g_depay_process;
+  gstrtpbasedepayload_class->process = gst_rtp_mp4g_depay_process;
   gstrtpbasedepayload_class->set_caps = gst_rtp_mp4g_depay_setcaps;
   gstrtpbasedepayload_class->handle_event = gst_rtp_mp4g_depay_handle_event;
 
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_mp4g_depay_src_template);
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_mp4g_depay_sink_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_mp4g_depay_src_template));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_mp4g_depay_sink_template));
 
   gst_element_class_set_static_metadata (gstelement_class,
       "RTP MPEG4 ES depayloader", "Codec/Depayloader/Network/RTP",
@@ -348,7 +347,6 @@ gst_rtp_mp4g_depay_flush_queue (GstRtpMP4GDepay * rtpmp4gdepay)
     }
 
     GST_DEBUG_OBJECT (rtpmp4gdepay, "pushing AU_index %u", AU_index);
-    gst_rtp_drop_meta (GST_ELEMENT_CAST (rtpmp4gdepay), outbuf, 0);
     gst_rtp_base_depayload_push (GST_RTP_BASE_DEPAYLOAD (rtpmp4gdepay), outbuf);
     rtpmp4gdepay->next_AU_index = AU_index + 1;
   }
@@ -369,7 +367,6 @@ gst_rtp_mp4g_depay_queue (GstRtpMP4GDepay * rtpmp4gdepay, GstBuffer * outbuf)
 
     /* we received the expected packet, push it and flush as much as we can from
      * the queue */
-    gst_rtp_drop_meta (GST_ELEMENT_CAST (rtpmp4gdepay), outbuf, 0);
     gst_rtp_base_depayload_push (GST_RTP_BASE_DEPAYLOAD (rtpmp4gdepay), outbuf);
     rtpmp4gdepay->next_AU_index++;
 
@@ -382,7 +379,6 @@ gst_rtp_mp4g_depay_queue (GstRtpMP4GDepay * rtpmp4gdepay, GstBuffer * outbuf)
         GST_DEBUG_OBJECT (rtpmp4gdepay, "pushing expected AU_index %u",
             AU_index);
         outbuf = g_queue_pop_head (rtpmp4gdepay->packets);
-        gst_rtp_drop_meta (GST_ELEMENT_CAST (rtpmp4gdepay), outbuf, 0);
         gst_rtp_base_depayload_push (GST_RTP_BASE_DEPAYLOAD (rtpmp4gdepay),
             outbuf);
         rtpmp4gdepay->next_AU_index++;
@@ -422,21 +418,22 @@ gst_rtp_mp4g_depay_queue (GstRtpMP4GDepay * rtpmp4gdepay, GstBuffer * outbuf)
 }
 
 static GstBuffer *
-gst_rtp_mp4g_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
+gst_rtp_mp4g_depay_process (GstRTPBaseDepayload * depayload, GstBuffer * buf)
 {
   GstRtpMP4GDepay *rtpmp4gdepay;
   GstBuffer *outbuf = NULL;
   GstClockTime timestamp;
+  GstRTPBuffer rtp = { NULL };
 
   rtpmp4gdepay = GST_RTP_MP4G_DEPAY (depayload);
 
   /* flush remaining data on discont */
-  if (GST_BUFFER_IS_DISCONT (rtp->buffer)) {
+  if (GST_BUFFER_IS_DISCONT (buf)) {
     GST_DEBUG_OBJECT (rtpmp4gdepay, "received DISCONT");
     gst_adapter_clear (rtpmp4gdepay->adapter);
   }
 
-  timestamp = GST_BUFFER_PTS (rtp->buffer);
+  timestamp = GST_BUFFER_TIMESTAMP (buf);
 
   {
     gint payload_len, payload_AU;
@@ -446,13 +443,14 @@ gst_rtp_mp4g_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
     guint AU_size, AU_index, AU_index_delta, payload_AU_size;
     gboolean M;
 
-    payload_len = gst_rtp_buffer_get_payload_len (rtp);
-    payload = gst_rtp_buffer_get_payload (rtp);
+    gst_rtp_buffer_map (buf, GST_MAP_READ, &rtp);
+    payload_len = gst_rtp_buffer_get_payload_len (&rtp);
+    payload = gst_rtp_buffer_get_payload (&rtp);
 
     GST_DEBUG_OBJECT (rtpmp4gdepay, "received payload of %d", payload_len);
 
-    rtptime = gst_rtp_buffer_get_timestamp (rtp);
-    M = gst_rtp_buffer_get_marker (rtp);
+    rtptime = gst_rtp_buffer_get_timestamp (&rtp);
+    M = gst_rtp_buffer_get_marker (&rtp);
 
     if (rtpmp4gdepay->sizelength > 0) {
       gint num_AU_headers, AU_headers_bytes, i;
@@ -560,15 +558,6 @@ gst_rtp_mp4g_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
               /* use number of packets and of previous frame */
               cd = diff / rtpmp4gdepay->prev_AU_num;
               GST_DEBUG_OBJECT (depayload, "guessing constantDuration %d", cd);
-              if (!GST_BUFFER_IS_DISCONT (rtp->buffer)) {
-                /* rfc3640 - 3.2.3.2
-                 * if we see two consecutive packets with AU_index of 0 and
-                 * there has been no discontinuity, we must conclude that this
-                 * value of constantDuration is correct from now on. */
-                GST_DEBUG_OBJECT (depayload,
-                    "constantDuration of %d detected", cd);
-                rtpmp4gdepay->constantDuration = cd;
-              }
             } else {
               /* assume this frame has the same number of packets as the
                * previous one */
@@ -661,7 +650,7 @@ gst_rtp_mp4g_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
         /* collect stuff in the adapter, strip header from payload and push in
          * the adapter */
         outbuf =
-            gst_rtp_buffer_get_payload_subbuffer (rtp, payload_AU, AU_size);
+            gst_rtp_buffer_get_payload_subbuffer (&rtp, payload_AU, AU_size);
         gst_adapter_push (rtpmp4gdepay->adapter, outbuf);
 
         if (M) {
@@ -674,19 +663,12 @@ gst_rtp_mp4g_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
 
           /* copy some of the fields we calculated above on the buffer. We also
            * copy the AU_index so that we can sort the packets in our queue. */
-          GST_BUFFER_PTS (outbuf) = timestamp;
+          GST_BUFFER_TIMESTAMP (outbuf) = timestamp;
           GST_BUFFER_OFFSET (outbuf) = AU_index;
 
-          if (rtpmp4gdepay->constantDuration != 0) {
-            /* if we have constantDuration, calculate timestamp for next AU
-             * in this RTP packet. */
-            timestamp += (rtpmp4gdepay->constantDuration * GST_SECOND) /
-                depayload->clock_rate;
-          } else {
-            /* otherwise, make sure we don't use the timestamp again for other
-             * AUs. */
-            timestamp = GST_CLOCK_TIME_NONE;
-          }
+          /* make sure we don't use the timestamp again for other AUs in this
+           * RTP packet. */
+          timestamp = -1;
 
           GST_DEBUG_OBJECT (depayload,
               "pushing buffer of size %" G_GSIZE_FORMAT,
@@ -700,7 +682,7 @@ gst_rtp_mp4g_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
       }
     } else {
       /* push complete buffer in adapter */
-      outbuf = gst_rtp_buffer_get_payload_subbuffer (rtp, 0, payload_len);
+      outbuf = gst_rtp_buffer_get_payload_subbuffer (&rtp, 0, payload_len);
       gst_adapter_push (rtpmp4gdepay->adapter, outbuf);
 
       /* if this was the last packet of the VOP, create and push a buffer */
@@ -714,11 +696,13 @@ gst_rtp_mp4g_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
         GST_DEBUG ("gst_rtp_mp4g_depay_chain: pushing buffer of size %"
             G_GSIZE_FORMAT, gst_buffer_get_size (outbuf));
 
+        gst_rtp_buffer_unmap (&rtp);
         return outbuf;
       }
     }
   }
 
+  gst_rtp_buffer_unmap (&rtp);
   return NULL;
 
   /* ERRORS */
@@ -726,6 +710,7 @@ short_payload:
   {
     GST_ELEMENT_WARNING (rtpmp4gdepay, STREAM, DECODE,
         ("Packet payload was too short."), (NULL));
+    gst_rtp_buffer_unmap (&rtp);
     return NULL;
   }
 }

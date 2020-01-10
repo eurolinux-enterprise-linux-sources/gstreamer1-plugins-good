@@ -24,9 +24,7 @@
 #include <string.h>
 
 #include <gst/rtp/gstrtpbuffer.h>
-#include <gst/audio/audio.h>
 #include "gstrtpqdmdepay.h"
-#include "gstrtputils.h"
 
 GST_DEBUG_CATEGORY (rtpqdm2depay_debug);
 #define GST_CAT_DEFAULT rtpqdm2depay_debug
@@ -62,7 +60,7 @@ static GstStateChangeReturn gst_rtp_qdm2_depay_change_state (GstElement *
     element, GstStateChange transition);
 
 static GstBuffer *gst_rtp_qdm2_depay_process (GstRTPBaseDepayload * depayload,
-    GstRTPBuffer * rtp);
+    GstBuffer * buf);
 gboolean gst_rtp_qdm2_depay_setcaps (GstRTPBaseDepayload * filter,
     GstCaps * caps);
 
@@ -77,17 +75,17 @@ gst_rtp_qdm2_depay_class_init (GstRtpQDM2DepayClass * klass)
   gstelement_class = (GstElementClass *) klass;
   gstrtpbasedepayload_class = (GstRTPBaseDepayloadClass *) klass;
 
-  gstrtpbasedepayload_class->process_rtp_packet = gst_rtp_qdm2_depay_process;
+  gstrtpbasedepayload_class->process = gst_rtp_qdm2_depay_process;
   gstrtpbasedepayload_class->set_caps = gst_rtp_qdm2_depay_setcaps;
 
   gobject_class->finalize = gst_rtp_qdm2_depay_finalize;
 
   gstelement_class->change_state = gst_rtp_qdm2_depay_change_state;
 
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_qdm2_depay_src_template);
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &gst_rtp_qdm2_depay_sink_template);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_qdm2_depay_src_template));
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&gst_rtp_qdm2_depay_sink_template));
 
   gst_element_class_set_static_metadata (gstelement_class,
       "RTP QDM2 depayloader",
@@ -225,11 +223,12 @@ add_packet (GstRtpQDM2Depay * depay, guint32 pid, guint32 len, guint8 * data)
 }
 
 static GstBuffer *
-gst_rtp_qdm2_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
+gst_rtp_qdm2_depay_process (GstRTPBaseDepayload * depayload, GstBuffer * buf)
 {
   GstRtpQDM2Depay *rtpqdm2depay;
   GstBuffer *outbuf = NULL;
   guint16 seq;
+  GstRTPBuffer rtp = { NULL };
 
   rtpqdm2depay = GST_RTP_QDM2_DEPAY (depayload);
 
@@ -239,19 +238,20 @@ gst_rtp_qdm2_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
     guint avail;
     guint pos = 0;
 
-    payload_len = gst_rtp_buffer_get_payload_len (rtp);
+    gst_rtp_buffer_map (buf, GST_MAP_READ, &rtp);
+    payload_len = gst_rtp_buffer_get_payload_len (&rtp);
     if (payload_len < 3)
       goto bad_packet;
 
-    payload = gst_rtp_buffer_get_payload (rtp);
-    seq = gst_rtp_buffer_get_seq (rtp);
+    payload = gst_rtp_buffer_get_payload (&rtp);
+    seq = gst_rtp_buffer_get_seq (&rtp);
     if (G_UNLIKELY (seq != rtpqdm2depay->nextseq)) {
       GST_DEBUG ("GAP in sequence number, Resetting data !");
       /* Flush previous data */
       flush_data (rtpqdm2depay);
       /* And store new timestamp */
       rtpqdm2depay->ptimestamp = rtpqdm2depay->timestamp;
-      rtpqdm2depay->timestamp = GST_BUFFER_PTS (rtp->buffer);
+      rtpqdm2depay->timestamp = GST_BUFFER_TIMESTAMP (buf);
       /* And that previous data will be pushed at the bottom */
     }
     rtpqdm2depay->nextseq = seq + 1;
@@ -273,7 +273,7 @@ gst_rtp_qdm2_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
           GST_DEBUG ("Headers");
           /* Store the incoming timestamp */
           rtpqdm2depay->ptimestamp = rtpqdm2depay->timestamp;
-          rtpqdm2depay->timestamp = GST_BUFFER_PTS (rtp->buffer);
+          rtpqdm2depay->timestamp = GST_BUFFER_TIMESTAMP (buf);
           /* flush the internal data if needed */
           flush_data (rtpqdm2depay);
           if (G_UNLIKELY (!rtpqdm2depay->configured)) {
@@ -356,12 +356,13 @@ gst_rtp_qdm2_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
     if (G_UNLIKELY (avail)) {
       GST_DEBUG ("Pushing out %d bytes of collected data", avail);
       outbuf = gst_adapter_take_buffer (rtpqdm2depay->adapter, avail);
-      GST_BUFFER_PTS (outbuf) = rtpqdm2depay->ptimestamp;
+      GST_BUFFER_TIMESTAMP (outbuf) = rtpqdm2depay->ptimestamp;
       GST_DEBUG ("Outgoing buffer timestamp %" GST_TIME_FORMAT,
           GST_TIME_ARGS (rtpqdm2depay->ptimestamp));
     }
   }
 
+  gst_rtp_buffer_unmap (&rtp);
   return outbuf;
 
   /* ERRORS */
@@ -369,6 +370,7 @@ bad_packet:
   {
     GST_ELEMENT_WARNING (rtpqdm2depay, STREAM, DECODE,
         (NULL), ("Packet was too short"));
+    gst_rtp_buffer_unmap (&rtp);
     return NULL;
   }
 }

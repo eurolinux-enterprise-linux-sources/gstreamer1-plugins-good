@@ -54,15 +54,17 @@
 #include "gstwavparse.h"
 #include "gst/riff/riff-media.h"
 #include <gst/base/gsttypefindhelper.h>
-#include <gst/pbutils/descriptions.h>
 #include <gst/gst-i18n-plugin.h>
 
 GST_DEBUG_CATEGORY_STATIC (wavparse_debug);
 #define GST_CAT_DEFAULT (wavparse_debug)
 
-/* Data size chunk of RF64,
- * see http://tech.ebu.ch/docs/tech/tech3306-2009.pdf */
-#define GST_RS64_TAG_DS64 GST_MAKE_FOURCC ('d','s','6','4')
+#define GST_BWF_TAG_iXML GST_MAKE_FOURCC ('i','X','M','L')
+#define GST_BWF_TAG_qlty GST_MAKE_FOURCC ('q','l','t','y')
+#define GST_BWF_TAG_mext GST_MAKE_FOURCC ('m','e','x','t')
+#define GST_BWF_TAG_levl GST_MAKE_FOURCC ('l','e','v','l')
+#define GST_BWF_TAG_link GST_MAKE_FOURCC ('l','i','n','k')
+#define GST_BWF_TAG_axml GST_MAKE_FOURCC ('a','x','m','l')
 
 static void gst_wavparse_dispose (GObject * object);
 
@@ -180,8 +182,8 @@ gst_wavparse_class_init (GstWavParseClass * klass)
   gstelement_class->send_event = gst_wavparse_send_event;
 
   /* register pads */
-  gst_element_class_add_static_pad_template (gstelement_class,
-      &sink_template_factory);
+  gst_element_class_add_pad_template (gstelement_class,
+      gst_static_pad_template_get (&sink_template_factory));
 
   src_template = gst_pad_template_new ("src", GST_PAD_SRC,
       GST_PAD_ALWAYS, gst_riff_create_audio_template_caps ());
@@ -342,7 +344,8 @@ gst_wavparse_time_to_bytepos (GstWavParse * wav, gint64 ts, gint64 * bytepos)
     *bytepos = gst_util_uint64_scale_ceil (ts, (guint64) wav->bps, GST_SECOND);
     return TRUE;
   } else if (wav->fact) {
-    guint64 bps = gst_util_uint64_scale (wav->datasize, wav->rate, wav->fact);
+    guint64 bps =
+        gst_util_uint64_scale_int (wav->datasize, wav->rate, wav->fact);
     *bytepos = gst_util_uint64_scale_ceil (ts, bps, GST_SECOND);
     return TRUE;
   }
@@ -370,14 +373,12 @@ gst_wavparse_perform_seek (GstWavParse * wav, GstEvent * event)
   gboolean update;
   GstSegment seeksegment = { 0, };
   gint64 last_stop;
-  guint32 seqnum = 0;
 
   if (event) {
     GST_DEBUG_OBJECT (wav, "doing seek with event");
 
     gst_event_parse_seek (event, &rate, &format, &flags,
         &cur_type, &cur, &stop_type, &stop);
-    seqnum = gst_event_get_seqnum (event);
 
     /* no negative rates yet */
     if (rate < 0.0)
@@ -443,7 +444,6 @@ gst_wavparse_perform_seek (GstWavParse * wav, GstEvent * event)
       /* BYTE seek event */
       event = gst_event_new_seek (rate, GST_FORMAT_BYTES, flags, cur_type, cur,
           stop_type, stop);
-      gst_event_set_seqnum (event, seqnum);
       res = gst_pad_push_event (wav->sinkpad, event);
     }
     return res;
@@ -459,13 +459,8 @@ gst_wavparse_perform_seek (GstWavParse * wav, GstEvent * event)
    * as it completes one iteration (and thus might block when the sink is
    * blocking in preroll). */
   if (flush) {
-    GstEvent *fevent;
     GST_DEBUG_OBJECT (wav, "sending flush start");
-
-    fevent = gst_event_new_flush_start ();
-    gst_event_set_seqnum (fevent, seqnum);
-    gst_pad_push_event (wav->sinkpad, gst_event_ref (fevent));
-    gst_pad_push_event (wav->srcpad, fevent);
+    gst_pad_push_event (wav->srcpad, gst_event_new_flush_start ());
   } else {
     gst_pad_pause_task (wav->sinkpad);
   }
@@ -533,9 +528,6 @@ gst_wavparse_perform_seek (GstWavParse * wav, GstEvent * event)
   if (gst_pad_peer_query_duration (wav->sinkpad, bformat, &upstream_size))
     wav->end_offset = MIN (wav->end_offset, upstream_size);
 
-  if (wav->datasize > 0 && wav->end_offset > wav->datastart + wav->datasize)
-    wav->end_offset = wav->datastart + wav->datasize;
-
   /* this is the range of bytes we will use for playback */
   wav->offset = MIN (wav->offset, wav->end_offset);
   wav->dataleft = wav->end_offset - wav->offset;
@@ -547,15 +539,9 @@ gst_wavparse_perform_seek (GstWavParse * wav, GstEvent * event)
 
   /* prepare for streaming again */
   if (flush) {
-    GstEvent *fevent;
-
     /* if we sent a FLUSH_START, we now send a FLUSH_STOP */
     GST_DEBUG_OBJECT (wav, "sending flush stop");
-
-    fevent = gst_event_new_flush_stop (TRUE);
-    gst_event_set_seqnum (fevent, seqnum);
-    gst_pad_push_event (wav->sinkpad, gst_event_ref (fevent));
-    gst_pad_push_event (wav->srcpad, fevent);
+    gst_pad_push_event (wav->srcpad, gst_event_new_flush_stop (TRUE));
   }
 
   /* now we did the seek and can activate the new segment values */
@@ -576,7 +562,6 @@ gst_wavparse_perform_seek (GstWavParse * wav, GstEvent * event)
   if (wav->start_segment)
     gst_event_unref (wav->start_segment);
   wav->start_segment = gst_event_new_segment (&wav->segment);
-  gst_event_set_seqnum (wav->start_segment, seqnum);
 
   /* mark discont if we are going to stream from another position. */
   if (last_stop != wav->segment.position) {
@@ -708,7 +693,7 @@ gst_wavparse_calculate_duration (GstWavParse * wav)
     return TRUE;
   } else if (wav->fact) {
     wav->duration =
-        gst_util_uint64_scale_ceil (GST_SECOND, wav->fact, wav->rate);
+        gst_util_uint64_scale_int_ceil (GST_SECOND, wav->fact, wav->rate);
     GST_INFO_OBJECT (wav, "Got duration (fact) %" GST_TIME_FORMAT,
         GST_TIME_ARGS (wav->duration));
     return TRUE;
@@ -1045,31 +1030,6 @@ gst_wavparse_create_toc (GstWavParse * wav)
 
 #define MAX_BUFFER_SIZE 4096
 
-static gboolean
-parse_ds64 (GstWavParse * wav, GstBuffer * buf)
-{
-  GstMapInfo map;
-  guint32 dataSizeLow, dataSizeHigh;
-  guint32 sampleCountLow, sampleCountHigh;
-
-  gst_buffer_map (buf, &map, GST_MAP_READ);
-  dataSizeLow = GST_READ_UINT32_LE (map.data + 2 * 4);
-  dataSizeHigh = GST_READ_UINT32_LE (map.data + 3 * 4);
-  sampleCountLow = GST_READ_UINT32_LE (map.data + 4 * 4);
-  sampleCountHigh = GST_READ_UINT32_LE (map.data + 5 * 4);
-  gst_buffer_unmap (buf, &map);
-  if (dataSizeHigh != 0xFFFFFFFF && dataSizeLow != 0xFFFFFFFF) {
-    wav->datasize = ((guint64) dataSizeHigh << 32) | dataSizeLow;
-  }
-  if (sampleCountHigh != 0xFFFFFFFF && sampleCountLow != 0xFFFFFFFF) {
-    wav->fact = ((guint64) sampleCountHigh << 32) | sampleCountLow;
-  }
-
-  GST_DEBUG_OBJECT (wav, "Got 'ds64' TAG, datasize : %" G_GINT64_FORMAT
-      " fact: %" G_GINT64_FORMAT, wav->datasize, wav->fact);
-  return TRUE;
-}
-
 static GstFlowReturn
 gst_wavparse_stream_headers (GstWavParse * wav)
 {
@@ -1080,13 +1040,15 @@ gst_wavparse_stream_headers (GstWavParse * wav)
   gboolean gotdata = FALSE;
   GstCaps *caps = NULL;
   gchar *codec_name = NULL;
+  GstEvent **event_p;
   gint64 upstream_size = 0;
   GstStructure *s;
 
-  /* search for "_fmt" chunk, which must be before "data" */
+  /* search for "_fmt" chunk, which should be first */
   while (!wav->got_fmt) {
     GstBuffer *extra;
 
+    /* The header starts with a 'fmt ' tag */
     if (wav->streaming) {
       if (!gst_wavparse_peek_chunk (wav, &tag, &size))
         return res;
@@ -1108,20 +1070,22 @@ gst_wavparse_stream_headers (GstWavParse * wav)
         return res;
     }
 
-    if (tag == GST_RS64_TAG_DS64) {
-      if (!parse_ds64 (wav, buf))
-        goto fail;
-      else
-        continue;
-    }
-
-    if (tag != GST_RIFF_TAG_fmt) {
+    if (tag == GST_RIFF_TAG_JUNK || tag == GST_RIFF_TAG_JUNQ ||
+        tag == GST_RIFF_TAG_bext || tag == GST_RIFF_TAG_BEXT ||
+        tag == GST_RIFF_TAG_LIST || tag == GST_RIFF_TAG_ID32 ||
+        tag == GST_RIFF_TAG_id3 || tag == GST_RIFF_TAG_IDVX ||
+        tag == GST_BWF_TAG_iXML || tag == GST_BWF_TAG_qlty ||
+        tag == GST_BWF_TAG_mext || tag == GST_BWF_TAG_levl ||
+        tag == GST_BWF_TAG_link || tag == GST_BWF_TAG_axml) {
       GST_DEBUG_OBJECT (wav, "skipping %" GST_FOURCC_FORMAT " chunk",
           GST_FOURCC_ARGS (tag));
       gst_buffer_unref (buf);
       buf = NULL;
       continue;
     }
+
+    if (tag != GST_RIFF_TAG_fmt)
+      goto invalid_wav;
 
     if (!(gst_riff_parse_strf_auds (GST_ELEMENT_CAST (wav), buf, &header,
                 &extra)))
@@ -1224,25 +1188,9 @@ gst_wavparse_stream_headers (GstWavParse * wav)
 
     wav->got_fmt = TRUE;
 
-    if (wav->tags == NULL)
+    if (codec_name) {
       wav->tags = gst_tag_list_new_empty ();
 
-    {
-      GstCaps *templ_caps = gst_pad_get_pad_template_caps (wav->sinkpad);
-      gst_pb_utils_add_codec_description_to_tag_list (wav->tags,
-          GST_TAG_CONTAINER_FORMAT, templ_caps);
-      gst_caps_unref (templ_caps);
-    }
-
-    /* If bps is nonzero, then we do have a valid bitrate that can be
-     * announced in a tag list. */
-    if (wav->bps) {
-      guint bitrate = wav->bps * 8;
-      gst_tag_list_add (wav->tags, GST_TAG_MERGE_REPLACE,
-          GST_TAG_BITRATE, bitrate, NULL);
-    }
-
-    if (codec_name) {
       gst_tag_list_add (wav->tags, GST_TAG_MERGE_REPLACE,
           GST_TAG_AUDIO_CODEC, codec_name, NULL);
 
@@ -1275,33 +1223,18 @@ gst_wavparse_stream_headers (GstWavParse * wav)
     }
 
     GST_INFO_OBJECT (wav,
-        "Got TAG: %" GST_FOURCC_FORMAT ", offset %" G_GUINT64_FORMAT ", size %"
-        G_GUINT32_FORMAT, GST_FOURCC_ARGS (tag), wav->offset, size);
-
-    /* Maximum valid size is INT_MAX */
-    if (size & 0x80000000) {
-      GST_WARNING_OBJECT (wav, "Invalid size, clipping to 0x7fffffff");
-      size = 0x7fffffff;
-    }
-
-    /* Clip to upstream size if known */
-    if (wav->datasize > 0 && size + wav->offset > wav->datasize) {
-      GST_WARNING_OBJECT (wav, "Clipping chunk size to file size");
-      size = wav->datasize - wav->offset;
-    }
+        "Got TAG: %" GST_FOURCC_FORMAT ", offset %" G_GUINT64_FORMAT,
+        GST_FOURCC_ARGS (tag), wav->offset);
 
     /* wav is a st00pid format, we don't know for sure where data starts.
      * So we have to go bit by bit until we find the 'data' header
      */
     switch (tag) {
       case GST_RIFF_TAG_data:{
-        guint64 size64;
-
         GST_DEBUG_OBJECT (wav, "Got 'data' TAG, size : %u", size);
-        size64 = size;
         if (wav->ignore_length) {
           GST_DEBUG_OBJECT (wav, "Ignoring length");
-          size64 = 0;
+          size = 0;
         }
         if (wav->streaming) {
           gst_adapter_flush (wav->adapter, 8);
@@ -1311,33 +1244,27 @@ gst_wavparse_stream_headers (GstWavParse * wav)
         }
         wav->offset += 8;
         wav->datastart = wav->offset;
-        /* use size from ds64 chunk if available */
-        if (size64 == -1 && wav->datasize > 0) {
-          GST_DEBUG_OBJECT (wav, "Using ds64 datasize");
-          size64 = wav->datasize;
-        }
         /* If size is zero, then the data chunk probably actually extends to
            the end of the file */
-        if (size64 == 0 && upstream_size) {
-          size64 = upstream_size - wav->datastart;
+        if (size == 0 && upstream_size) {
+          size = upstream_size - wav->datastart;
         }
         /* Or the file might be truncated */
         else if (upstream_size) {
-          size64 = MIN (size64, (upstream_size - wav->datastart));
+          size = MIN (size, (upstream_size - wav->datastart));
         }
-        wav->datasize = size64;
-        wav->dataleft = size64;
-        wav->end_offset = size64 + wav->datastart;
+        wav->datasize = (guint64) size;
+        wav->dataleft = (guint64) size;
+        wav->end_offset = size + wav->datastart;
         if (!wav->streaming) {
           /* We will continue parsing tags 'till end */
-          wav->offset += size64;
+          wav->offset += size;
         }
-        GST_DEBUG_OBJECT (wav, "datasize = %" G_GUINT64_FORMAT, size64);
+        GST_DEBUG_OBJECT (wav, "datasize = %u", size);
         break;
       }
       case GST_RIFF_TAG_fact:{
-        if (wav->fact == 0 &&
-            wav->format != GST_RIFF_WAVE_FORMAT_MPEGL12 &&
+        if (wav->format != GST_RIFF_WAVE_FORMAT_MPEGL12 &&
             wav->format != GST_RIFF_WAVE_FORMAT_MPEGL3) {
           const guint data_size = 4;
 
@@ -1374,7 +1301,7 @@ gst_wavparse_stream_headers (GstWavParse * wav)
             wav->fact = GUINT32_FROM_LE (wav->fact);
             gst_buffer_unref (buf);
           }
-          GST_DEBUG_OBJECT (wav, "have fact %" G_GUINT64_FORMAT, wav->fact);
+          GST_DEBUG_OBJECT (wav, "have fact %u", wav->fact);
           wav->offset += 8 + GST_ROUND_UP_2 (size);
           break;
         } else {
@@ -1678,7 +1605,8 @@ gst_wavparse_stream_headers (GstWavParse * wav)
    * the right newsegment event downstream. */
   gst_wavparse_perform_seek (wav, wav->seek_event);
   /* remove pending event */
-  gst_event_replace (&wav->seek_event, NULL);
+  event_p = &wav->seek_event;
+  gst_event_replace (event_p, NULL);
 
   /* we just started, we are discont */
   wav->discont = TRUE;
@@ -1704,8 +1632,10 @@ gst_wavparse_stream_headers (GstWavParse * wav)
   /* ERROR */
 exit:
   {
-    g_free (codec_name);
-    g_free (header);
+    if (codec_name)
+      g_free (codec_name);
+    if (header)
+      g_free (header);
     if (caps)
       gst_caps_unref (caps);
     return res;
@@ -1714,6 +1644,13 @@ fail:
   {
     res = GST_FLOW_ERROR;
     goto exit;
+  }
+invalid_wav:
+  {
+    GST_ELEMENT_ERROR (wav, STREAM, TYPE_NOT_FOUND, (NULL),
+        ("Invalid WAV header (no fmt at start): %"
+            GST_FOURCC_FORMAT, GST_FOURCC_ARGS (tag)));
+    goto fail;
   }
 parse_header_error:
   {
@@ -1809,6 +1746,7 @@ gst_wavparse_send_event (GstElement * element, GstEvent * event)
 {
   GstWavParse *wav = GST_WAVPARSE (element);
   gboolean res = FALSE;
+  GstEvent **event_p;
 
   GST_DEBUG_OBJECT (wav, "received event %s", GST_EVENT_TYPE_NAME (event));
 
@@ -1820,7 +1758,8 @@ gst_wavparse_send_event (GstElement * element, GstEvent * event)
       } else {
         GST_DEBUG_OBJECT (wav, "queuing seek for later");
 
-        gst_event_replace (&wav->seek_event, event);
+        event_p = &wav->seek_event;
+        gst_event_replace (event_p, event);
 
         /* we always return true */
         res = TRUE;
@@ -1841,16 +1780,12 @@ gst_wavparse_have_dts_caps (const GstCaps * caps, GstTypeFindProbability prob)
   s = gst_caps_get_structure (caps, 0);
   if (!gst_structure_has_name (s, "audio/x-dts"))
     return FALSE;
-  /* typefind behavior for DTS:
-   *  MAXIMUM: multiple frame syncs detected, certainly DTS
-   *  LIKELY: single frame sync at offset 0.  Maybe DTS?
-   *  POSSIBLE: single frame sync, not at offset 0.  Highly unlikely
-   *    to be DTS.  */
-  if (prob > GST_TYPE_FIND_LIKELY)
+  if (prob >= GST_TYPE_FIND_LIKELY)
     return TRUE;
-  if (prob <= GST_TYPE_FIND_POSSIBLE)
+  /* DTS at non-0 offsets and without second sync may yield POSSIBLE .. */
+  if (prob < GST_TYPE_FIND_POSSIBLE)
     return FALSE;
-  /* for maybe, check for at least a valid-looking rate and channels */
+  /* .. in which case we want at least a valid-looking rate and channels */
   if (!gst_structure_has_field (s, "channels"))
     return FALSE;
   /* and for extra assurance we could also check the rate from the DTS frame
@@ -1914,6 +1849,7 @@ gst_wavparse_add_src_pad (GstWavParse * wav, GstBuffer * buf)
   }
 
   gst_pad_set_caps (wav->srcpad, wav->caps);
+  gst_caps_replace (&wav->caps, NULL);
 
   if (wav->start_segment) {
     GST_DEBUG_OBJECT (wav, "Send start segment event on newpad");
@@ -2215,7 +2151,7 @@ pause:
         else if (wav->segment.rate < 0.0)
           wav->segment.position = wav->segment.start;
       }
-      if (wav->state == GST_WAVPARSE_START || !wav->caps) {
+      if (wav->state == GST_WAVPARSE_START) {
         GST_ELEMENT_ERROR (wav, STREAM, WRONG_TYPE, (NULL),
             ("No valid input found before end of stream"));
         gst_pad_push_event (wav->srcpad, gst_event_new_eos ());
@@ -2245,7 +2181,9 @@ pause:
     } else if (ret == GST_FLOW_NOT_LINKED || ret < GST_FLOW_EOS) {
       /* for fatal errors we post an error message, post the error
        * first so the app knows about the error first. */
-      GST_ELEMENT_FLOW_ERROR (wav, ret);
+      GST_ELEMENT_ERROR (wav, STREAM, FAILED,
+          (_("Internal data flow error.")),
+          ("streaming task paused, reason %s (%d)", reason, ret));
       gst_pad_push_event (wav->srcpad, gst_event_new_eos ());
     }
     return;
@@ -2312,6 +2250,8 @@ gst_wavparse_flush_data (GstWavParse * wav)
   guint av;
 
   if ((av = gst_adapter_available (wav->adapter)) > 0) {
+    wav->dataleft = av;
+    wav->end_offset = wav->offset + av;
     ret = gst_wavparse_stream_data (wav);
   }
 
@@ -2361,8 +2301,8 @@ gst_wavparse_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
         }
         if (stop > 0) {
           end_offset = stop;
-          stop -= wav->datastart;
-          stop = MAX (stop, 0);
+          segment.stop -= wav->datastart;
+          segment.stop = MAX (stop, 0);
         }
         if (wav->segment.format == GST_FORMAT_TIME) {
           guint64 bps = wav->bps;
@@ -2410,12 +2350,7 @@ gst_wavparse_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
       /* and set up streaming thread for next one */
       wav->offset = offset;
       wav->end_offset = end_offset;
-
-      if (wav->datasize > 0 && (wav->end_offset == -1
-              || wav->end_offset > wav->datastart + wav->datasize))
-        wav->end_offset = wav->datastart + wav->datasize;
-
-      if (wav->end_offset != -1) {
+      if (wav->end_offset > 0) {
         wav->dataleft = wav->end_offset - wav->offset;
       } else {
         /* infinity; upstream will EOS when done */
@@ -2426,7 +2361,7 @@ gst_wavparse_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
       break;
     }
     case GST_EVENT_EOS:
-      if (wav->state == GST_WAVPARSE_START || !wav->caps) {
+      if (wav->state == GST_WAVPARSE_START) {
         GST_ELEMENT_ERROR (wav, STREAM, WRONG_TYPE, (NULL),
             ("No valid input found before end of stream"));
       } else {
@@ -2445,8 +2380,7 @@ gst_wavparse_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
     {
       GstClockTime dur;
 
-      if (wav->adapter)
-        gst_adapter_clear (wav->adapter);
+      gst_adapter_clear (wav->adapter);
       wav->discont = TRUE;
       dur = wav->segment.duration;
       gst_segment_init (&wav->segment, wav->segment.format);
@@ -2466,7 +2400,7 @@ gst_wavparse_sink_event (GstPad * pad, GstObject * parent, GstEvent * event)
 static const GstFormat *
 gst_wavparse_get_formats (GstPad * pad)
 {
-  static const GstFormat formats[] = {
+  static GstFormat formats[] = {
     GST_FORMAT_TIME,
     GST_FORMAT_BYTES,
     GST_FORMAT_DEFAULT,         /* a "frame", ie a set of samples per Hz */
