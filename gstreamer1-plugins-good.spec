@@ -9,7 +9,7 @@
 
 Name:           gstreamer1-plugins-good
 Version:        1.4.5
-Release:        2%{?dist}
+Release:        3%{?dist}
 Summary:        GStreamer plugins with good code and licensing
 
 License:        LGPLv2+
@@ -100,6 +100,7 @@ to be installed.
   --disable-aalib \
   --disable-cairo \
   --disable-libcaca \
+  --disable-flx \
 %if %{with extras}
   --enable-jack \
 %else
@@ -145,7 +146,6 @@ find $RPM_BUILD_ROOT -name '*.la' -exec rm -f {} ';'
 %{_libdir}/gstreamer-%{majorminor}/libgsteffectv.so
 %{_libdir}/gstreamer-%{majorminor}/libgstequalizer.so
 %{_libdir}/gstreamer-%{majorminor}/libgstflv.so
-%{_libdir}/gstreamer-%{majorminor}/libgstflxdec.so
 %{_libdir}/gstreamer-%{majorminor}/libgstgoom2k1.so
 %{_libdir}/gstreamer-%{majorminor}/libgstgoom.so
 %{_libdir}/gstreamer-%{majorminor}/libgsticydemux.so
@@ -206,6 +206,10 @@ find $RPM_BUILD_ROOT -name '*.la' -exec rm -f {} ';'
 
 
 %changelog
+* Tue Dec 06 2016 Wim Taymans <wtaymans@redhat.com> - 1.4.5-3
+- Remove insecure FLX plugin
+Resolves: rhbz#1400892
+
 * Tue Jun 23 2015 Wim Taymans <wtaymans@redhat.com> - 1.4.5-2
 - update SSL certificates in unit test
 - Resolves: #1174398
